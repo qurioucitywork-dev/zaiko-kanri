@@ -1,0 +1,30 @@
+{{define "content"}}
+<div class="detail-head">
+  <div><p class="eyebrow dark">SHIPMENT SLIP</p><h2>{{.Shipment.ShipmentNumber}}</h2><p>{{.Shipment.RecipientName}} / {{.Shipment.ShipmentDate}}</p></div>
+  <div><span class="status-badge large transaction-{{.Shipment.Status}}">{{shipmentStatus .Shipment.Status}}</span><a class="button secondary" href="/shipments">一覧へ戻る</a></div>
+</div>
+{{if .Shipment.Warning}}<div class="alert warning-alert">⚠ {{.Shipment.Warning}}。売上を確定すると自動的に関連付けます。</div>{{end}}
+<section class="card">
+  <div class="card-header"><div><h3>出荷明細</h3><p>売上明細との割当は確定時にトランザクションで検証されます。</p></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>商品</th><th>今回数量</th><th>売上伝票</th><th>割当数量</th><th>判定</th></tr></thead>
+      <tbody>{{range .Shipment.Lines}}<tr>
+        <td><a class="record-link" href="/products/{{.ProductID}}">{{.ProductCode}}</a><span class="table-sub">{{.Brand}} {{.ModelNumber}}</span></td>
+        <td>{{.Quantity}}</td><td>{{if .SalesSlipNumber}}{{.SalesSlipNumber}}{{else}}—{{end}}</td><td>{{.AllocatedQuantity}}</td>
+        <td>{{if eq $.Shipment.Status "draft"}}確定時に判定{{else if .Warning}}<span class="warning-text">⚠ {{.Warning}}</span>{{else}}<span class="success-text">✓ 売上関連済み</span>{{end}}</td>
+      </tr>{{end}}</tbody>
+    </table>
+  </div>
+  {{if eq .Shipment.Status "draft"}}
+  <div class="confirm-panel"><div><strong>出荷を確定しますか？</strong><p>売上済みの場合は残数を検証し、未確定の場合は警告付きで確定します。</p></div>
+    <form method="post" action="/shipments/{{.Shipment.ID}}/confirm"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="button primary" type="submit">出荷を確定</button></form>
+  </div>
+  {{else if eq .Shipment.Status "confirmed"}}
+  <div class="transaction-actions">
+    <div class="confirmed-panel">✓ 出荷確定済み</div>
+    <form method="post" action="/shipments/{{.Shipment.ID}}/cancel" class="cancel-form"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input name="reason" placeholder="取消理由（必須）" required><button class="button danger" type="submit">{{if eq .User.Role "admin"}}出荷取消{{else}}取消を承認申請{{end}}</button></form>
+  </div>
+  {{else}}<div class="cancelled-panel">取消済み — 売上の出荷済み数量と商品状態を再計算しました。</div>{{end}}
+</section>
+{{end}}

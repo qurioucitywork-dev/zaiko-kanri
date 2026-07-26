@@ -1,0 +1,17 @@
+{{define "content"}}
+<section class="card">
+  <div class="card-header"><div><h2>未確定値の設定</h2><p>本番値を決め打ちせず、組織ごとに後から設定できます。</p></div><span class="badge warning">未設定項目あり</span></div>
+  <div class="settings-list">
+  {{range .Settings}}
+    <form method="post" action="/settings" class="setting-row">
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <input type="hidden" name="key" value="{{.Key}}">
+      <div><strong>{{settingName .Key}}</strong><code>{{.Key}}</code></div>
+      <input name="value" value="{{.Value}}" placeholder="未設定" aria-label="{{settingName .Key}}">
+      <span class="badge {{if .IsConfigured}}configured{{else}}unconfigured{{end}}">{{if .IsConfigured}}設定済み{{else}}未設定{{end}}</span>
+      <button class="button secondary" type="submit">保存</button>
+    </form>
+  {{end}}
+  </div>
+</section>
+{{end}}

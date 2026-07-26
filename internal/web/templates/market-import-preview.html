@@ -1,0 +1,32 @@
+{{define "content"}}
+<div class="detail-head">
+  <div><p class="eyebrow dark">CSV IMPORT PREVIEW</p><h2>{{.ImportBatch.FileName}}</h2><p>バッチID：{{.ImportBatch.ID}}</p></div>
+  <div><span class="status-badge large {{.ImportBatch.Status}}">{{if eq .ImportBatch.Status "previewed"}}プレビュー済み{{else if eq .ImportBatch.Status "pending_approval"}}承認待ち{{else if eq .ImportBatch.Status "committed"}}反映済み{{else}}{{.ImportBatch.Status}}{{end}}</span><a class="button secondary" href="/market-prices/import">戻る</a></div>
+</div>
+<section class="import-summary">
+  <article><small>全行</small><strong>{{.ImportBatch.TotalRows}}</strong></article>
+  <article class="valid"><small>有効</small><strong>{{.ImportBatch.ValidRows}}</strong></article>
+  <article class="error"><small>エラー</small><strong>{{.ImportBatch.ErrorRows}}</strong></article>
+  <article class="duplicate"><small>重複候補</small><strong>{{.ImportBatch.DuplicateRows}}</strong></article>
+</section>
+<section class="card">
+  <div class="card-header"><div><h3>行別検証結果</h3><p>エラー内容を修正して再アップロードできます。</p></div></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>行</th><th>判定</th><th>相場日</th><th>ブランド</th><th>型番</th><th>商品種別</th><th>価格</th><th>取得元</th><th>エラー</th></tr></thead>
+      <tbody>{{range .ImportBatch.Rows}}<tr class="{{if not .Valid}}error-row{{end}}"><td>{{.RowNumber}}</td><td><span class="badge {{if .Valid}}configured{{else}}unconfigured{{end}}">{{if .Valid}}有効{{else}}エラー{{end}}</span></td><td>{{.MarketDate}}</td><td>{{.Brand}}</td><td>{{.ModelNumber}}</td><td>{{.ProductType}}</td><td class="money">{{formatMoney .PriceMinor .Currency}}</td><td>{{.Source}}</td><td>{{.ErrorMessage}}</td></tr>{{end}}</tbody>
+    </table>
+  </div>
+  {{if eq .ImportBatch.Status "previewed"}}
+  <div class="confirm-panel">
+    {{if eq .ImportBatch.ErrorRows 0}}
+    <div><strong>検証済みデータを確定しますか？</strong><p>管理者は即時反映、作業者のCSV一括更新は承認待ちになります。</p></div>
+    <form method="post" action="/market-prices/import/{{.ImportBatch.ID}}/commit"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="button primary" type="submit">CSV取込を確定</button></form>
+    {{else}}
+    <div><strong>エラー行を修正してください</strong><p>このバッチは確定できません。元ファイルを直して再度プレビューしてください。</p></div>
+    {{end}}
+  </div>
+  {{else if eq .ImportBatch.Status "pending_approval"}}<div class="confirmed-panel">承認待ちです。フェーズ6の承認画面から管理者が確定します。</div>
+  {{else if eq .ImportBatch.Status "committed"}}<div class="confirmed-panel">✓ 相場表へ反映済みです。</div>{{end}}
+</section>
+{{end}}

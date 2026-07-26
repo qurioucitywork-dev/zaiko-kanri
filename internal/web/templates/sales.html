@@ -1,0 +1,24 @@
+{{define "content"}}
+<section class="toolbar-card">
+  <div class="filter-bar"><div><strong>売上伝票</strong><span class="toolbar-note">売上と出荷は独立管理。確定時点の通貨・為替・換算額を固定します。</span></div><a class="button primary push-right" href="/sales/new">＋ 売上伝票登録</a></div>
+</section>
+<section class="card">
+  <div class="card-header"><div><h2>売上伝票一覧</h2><p>売上確定後も出荷状況を明細数量から追跡します。</p></div><span class="badge">{{len .Sales}}件</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>伝票番号</th><th>売上日</th><th>販売先</th><th>売上金額（JPY）</th><th>売上状態</th><th>出荷状態</th><th>警告</th></tr></thead>
+      <tbody>
+      {{range .Sales}}
+        <tr>
+          <td><a class="record-link" href="/sales/{{.ID}}">{{.SlipNumber}}</a></td><td>{{.SalesDate}}</td><td>{{.CustomerName}}</td>
+          <td class="money">{{formatMoney .TotalJPY "JPY"}}</td>
+          <td><span class="status-badge transaction-{{.Status}}">{{saleStatus .Status}}</span></td>
+          <td><span class="status-badge delivery-{{.ShipmentStatus}}">{{deliveryStatus .ShipmentStatus}}</span></td>
+          <td>{{if .Warning}}<span class="warning-text">⚠ {{.Warning}}</span>{{else}}—{{end}}</td>
+        </tr>
+      {{else}}<tr><td colspan="7" class="empty">売上伝票はありません。</td></tr>{{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}

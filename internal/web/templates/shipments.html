@@ -1,0 +1,18 @@
+{{define "content"}}
+<section class="toolbar-card">
+  <div class="filter-bar"><div><strong>出荷伝票</strong><span class="toolbar-note">売上確定前の出荷も登録できますが、警告として明示されます。</span></div><a class="button primary push-right" href="/shipments/new">＋ 出荷伝票登録</a></div>
+</section>
+<section class="card">
+  <div class="card-header"><div><h2>出荷伝票一覧</h2><p>複数伝票による分納と累計出荷数量を管理します。</p></div><span class="badge">{{len .Shipments}}件</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>伝票番号</th><th>出荷日</th><th>届け先</th><th>状態</th><th>売上関連</th></tr></thead>
+      <tbody>{{range .Shipments}}<tr>
+        <td><a class="record-link" href="/shipments/{{.ID}}">{{.ShipmentNumber}}</a></td><td>{{.ShipmentDate}}</td><td>{{.RecipientName}}</td>
+        <td><span class="status-badge transaction-{{.Status}}">{{shipmentStatus .Status}}</span></td>
+        <td>{{if eq .Status "draft"}}確定時に判定{{else if .Warning}}<span class="warning-text">⚠ {{.Warning}}</span>{{else}}関連済み{{end}}</td>
+      </tr>{{else}}<tr><td colspan="5" class="empty">出荷伝票はありません。</td></tr>{{end}}</tbody>
+    </table>
+  </div>
+</section>
+{{end}}

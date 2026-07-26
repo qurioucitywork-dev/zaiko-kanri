@@ -1,0 +1,19 @@
+{{define "content"}}
+<section class="card">
+  <div class="card-header"><div><h2>利用者一覧</h2><p>ロール名は確定仕様に従い「管理者」「作業者」に統一しています。</p></div><button class="button primary" disabled>＋ 利用者追加 <small>今後対応</small></button></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ユーザーID</th><th>表示名</th><th>ロール</th><th>状態</th><th>操作</th></tr></thead>
+      <tbody>
+      {{range .Users}}
+        <tr><td><strong>{{.Username}}</strong></td><td>{{.DisplayName}}</td><td><span class="badge {{.Role}}">{{roleName .Role}}</span></td><td><span class="status-dot">●</span> 有効</td><td><button class="text-button" disabled>権限を確認</button></td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+<section class="card note-card">
+  <h3>権限設計</h3>
+  <p>画面を非表示にするだけでなく、すべての保護対象ルートでサーバー側の権限判定を実行します。個別権限の許可・拒否を後から追加できるデータ構造です。</p>
+</section>
+{{end}}

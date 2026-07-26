@@ -1,0 +1,74 @@
+{{define "content"}}
+<section class="toolbar-card">
+  <form method="get" action="/products" class="filter-bar" data-live-filter aria-label="在庫の検索条件"
+        hx-get="/products" hx-trigger="input changed delay:350ms, change" hx-target="#product-results"
+        hx-select="#product-results" hx-swap="outerHTML" hx-push-url="true">
+    <label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">商品検索</span><input name="q" value="{{.Query}}" placeholder="商品コード、SKU、ブランド、型番、シリアル" autocomplete="off"></label>
+    <label class="sr-only" for="product-status">在庫状態</label>
+    <select id="product-status" name="status">
+      <option value="">すべての状態</option>
+      <option value="purchasing" {{if eq .Status "purchasing"}}selected{{end}}>仕入中</option>
+      <option value="in_stock" {{if eq .Status "in_stock"}}selected{{end}}>在庫中</option>
+      <option value="reserved" {{if eq .Status "reserved"}}selected{{end}}>取置中</option>
+      <option value="sold" {{if eq .Status "sold"}}selected{{end}}>販売済み</option>
+      <option value="shipped" {{if eq .Status "shipped"}}selected{{end}}>出荷済み</option>
+      {{if eq .User.Role "admin"}}<option value="cancelled" {{if eq .Status "cancelled"}}selected{{end}}>取消</option>{{end}}
+    </select>
+    <label class="sr-only" for="product-sort">並び順</label>
+    <select id="product-sort" name="sort">
+      <option value="purchase_desc" {{if eq .Sort "purchase_desc"}}selected{{end}}>仕入日の新しい順</option>
+      <option value="purchase_asc" {{if eq .Sort "purchase_asc"}}selected{{end}}>仕入日の古い順</option>
+      <option value="code_asc" {{if eq .Sort "code_asc"}}selected{{end}}>商品コード昇順</option>
+      <option value="code_desc" {{if eq .Sort "code_desc"}}selected{{end}}>商品コード降順</option>
+      <option value="brand_asc" {{if eq .Sort "brand_asc"}}selected{{end}}>ブランド順</option>
+      <option value="sale_price_desc" {{if eq .Sort "sale_price_desc"}}selected{{end}}>基準売価の高い順</option>
+    </select>
+    {{if eq .User.Role "admin"}}
+    <label class="check-field"><input type="checkbox" name="include_cancelled" value="1" {{if .IncludeCancelled}}checked{{end}}>取消を含む</label>
+    {{end}}
+    <button class="button secondary" type="submit">検索</button>
+    <a class="button ghost" href="/products">条件をクリア</a>
+    <a class="button primary push-right" href="/products/new">＋ 商品登録</a>
+  </form>
+</section>
+{{template "product-results" .}}
+{{end}}
+
+{{define "product-results"}}
+<section class="card" id="product-results" aria-live="polite" aria-busy="false">
+  <div class="card-header">
+    <div><h2>在庫商品</h2><p>商品コードは仕入日単位で自動採番され、登録後は変更できません。</p></div>
+    <div class="result-actions">
+      <span class="badge">{{.TotalProducts}}件</span>
+      <a class="button secondary small" href="/products/export.csv?q={{urlquery .Query}}&status={{urlquery .Status}}&sort={{urlquery .Sort}}{{if .IncludeCancelled}}&include_cancelled=1{{end}}">CSV出力</a>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">商品コード</th><th scope="col">商品</th><th scope="col">SKU / シリアル</th><th scope="col">仕入先・仕入日</th><th scope="col">原価</th><th scope="col">基準売価・参考換算</th><th scope="col">粗利・利益率</th><th scope="col">状態</th><th scope="col">画像</th></tr></thead>
+      <tbody>
+      {{range .Products}}
+        <tr class="clickable-row">
+          <td><a class="record-link" href="/products/{{.ID}}">{{.ProductCode}}</a></td>
+          <td><strong>{{.Brand}}</strong><small class="table-sub">{{.ModelNumber}} / {{.ProductType}}</small></td>
+          <td>{{if .SKU}}{{.SKU}}{{else}}—{{end}}<small class="table-sub">{{if .SerialNumber}}{{.SerialNumber}}{{else}}シリアル未入力{{end}}</small></td>
+          <td>{{.SupplierName}}<small class="table-sub">{{.PurchaseDate}}</small></td>
+          <td class="money">{{formatMoney .CostAmountMinor .CostCurrency}}</td>
+          <td class="money">{{formatMoney .BaseSalePriceMinor .BaseSaleCurrency}}{{if .RateAvailable}}<small class="table-sub">参考 {{formatMoney .ReferencePriceMinor .ReferenceCurrency}}</small>{{else}}<small class="table-sub">為替未登録</small>{{end}}</td>
+          <td class="money">{{if .RateAvailable}}{{formatMoney .GrossProfitMinor .GrossProfitCurrency}}<small class="table-sub">{{formatPercent .MarginBasisPoints}}</small>{{else}}—{{end}}</td>
+          <td><span class="status-badge {{.InventoryStatus}}">{{productStatus .InventoryStatus}}</span></td>
+          <td>{{.ImageCount}}枚</td>
+        </tr>
+      {{else}}
+        <tr><td colspan="9" class="empty">条件に一致する商品はありません。検索条件を変更してください。</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  <nav class="pagination" aria-label="在庫一覧のページ">
+    {{if .HasPrevious}}<a class="button ghost small" data-partial-link href="/products?q={{urlquery .Query}}&status={{urlquery .Status}}&sort={{urlquery .Sort}}{{if .IncludeCancelled}}&include_cancelled=1{{end}}&page={{.PreviousPage}}">← 前へ</a>{{else}}<span class="button ghost small disabled" aria-disabled="true">← 前へ</span>{{end}}
+    <span><strong>{{.Page}}</strong> / {{.TotalPages}} ページ</span>
+    {{if .HasNext}}<a class="button ghost small" data-partial-link href="/products?q={{urlquery .Query}}&status={{urlquery .Status}}&sort={{urlquery .Sort}}{{if .IncludeCancelled}}&include_cancelled=1{{end}}&page={{.NextPage}}">次へ →</a>{{else}}<span class="button ghost small disabled" aria-disabled="true">次へ →</span>{{end}}
+  </nav>
+</section>
+{{end}}

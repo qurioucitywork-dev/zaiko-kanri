@@ -1,0 +1,19 @@
+# Local development tools and generated state
+/.tooling/
+/.data/
+/.tmp/
+/bin/
+/.backups/
+
+# Local configuration
+.env
+
+# Test and coverage output
+coverage.out
+*.test
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

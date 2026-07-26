@@ -1,0 +1,31 @@
+{{define "content"}}
+<section class="card">
+  <div class="card-header"><div><h2>仕入伝票登録</h2><p>まず下書き保存し、内容を確認してから確定します。</p></div><span class="badge warning">下書き</span></div>
+  <form method="post" action="/purchases" class="record-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <fieldset>
+      <legend>伝票情報</legend>
+      <div class="form-grid three">
+        <label>仕入先 <b>必須</b><select name="supplier_id" required><option value="">選択してください</option>{{range .Suppliers}}<option value="{{.ID}}">{{.Code}} {{.Name}}</option>{{end}}</select></label>
+        <label>仕入日 <b>必須</b><input type="date" name="purchase_date" value="2026-07-26" required></label>
+        <label>備考<input name="notes" placeholder="任意"></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <div class="fieldset-head"><legend>仕入明細</legend><button class="button secondary" type="button" data-add-purchase-line>＋ 明細追加</button></div>
+      <div class="purchase-lines" data-purchase-lines>
+        <div class="purchase-line" data-purchase-line>
+          <label>ブランド <b>必須</b><input name="brand" required></label>
+          <label>型番<input name="model_number"></label>
+          <label>商品種別 <b>必須</b><input name="product_type" value="腕時計" required></label>
+          <label>数量 <b>必須</b><input type="number" name="quantity" min="1" max="999" value="1" required></label>
+          <label>単価原価 <b>必須</b><input name="unit_cost" inputmode="numeric" value="0" required></label>
+          <label>通貨 <select name="currency"><option>JPY</option><option>USD</option></select></label>
+          <button class="line-remove" type="button" data-remove-purchase-line aria-label="明細を削除">×</button>
+        </div>
+      </div>
+    </fieldset>
+    <div class="form-actions"><a class="button ghost" href="/purchases">キャンセル</a><button class="button primary" type="submit">下書き保存</button></div>
+  </form>
+</section>
+{{end}}

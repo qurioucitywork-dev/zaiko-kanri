@@ -1,0 +1,39 @@
+{{define "content"}}
+<header class="public-header">
+  <a class="brand dark" href="/public/products"><span class="brand-mark">庫</span><span><strong>WATCH STOCK</strong><small>公開商品カタログ</small></span></a>
+  <a class="button secondary" href="/login">社内ログイン</a>
+</header>
+<main class="public-content">
+  {{if .Notice}}<div class="alert success" role="status">{{.Notice}}</div>{{end}}
+  <p class="eyebrow">PUBLIC CATALOG</p>
+  <h1>公開商品</h1>
+  <p class="lead">公開中かつ在庫中の商品だけを掲載しています。購入依頼の送信だけでは在庫は確保されず、担当者の確認後に取置となります。</p>
+  <div class="public-products">
+    {{range .PublicProducts}}
+    <article class="public-product">
+      <div class="public-product-visual"><span>{{.Brand}}</span><strong>{{.ProductType}}</strong></div>
+      <div class="public-product-body">
+        <span class="badge">商品コード {{.ProductCode}}</span>
+        <h2>{{.Brand}} {{.ModelNumber}}</h2>
+        <p>{{if .Condition}}{{.Condition}}{{else}}状態確認済み{{end}} {{if .Accessories}}／付属品：{{.Accessories}}{{end}}</p>
+        <strong class="public-price">{{formatMoney .SalePriceMinor .SaleCurrency}}</strong>
+        <details>
+          <summary class="button primary">購入依頼を送る</summary>
+          <form method="post" action="/public/products/{{.ID}}/purchase-requests" class="public-request-form">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <label>お名前 <b>必須</b><input name="guest_name" required></label>
+            <label>メールアドレス <b>必須</b><input type="email" name="guest_email" required></label>
+            <label>電話番号<input name="guest_phone"></label>
+            <label>ご要望<textarea name="message" placeholder="配送先やご質問など"></textarea></label>
+            <button class="button primary full" type="submit">内容を確認して送信</button>
+            <small>送信時点では在庫は確保されません。</small>
+          </form>
+        </details>
+      </div>
+    </article>
+    {{else}}
+    <div class="empty-catalog"><span>◇</span><h2>現在公開中の商品はありません</h2><p>公開商品が追加されるまでお待ちください。</p></div>
+    {{end}}
+  </div>
+</main>
+{{end}}

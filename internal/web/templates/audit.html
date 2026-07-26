@@ -1,0 +1,45 @@
+{{define "content"}}
+<section class="toolbar-card">
+  <form method="get" action="/audit" class="filter-bar" aria-label="監査ログ検索">
+    <label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">監査ログ検索</span><input name="q" value="{{.AuditQuery}}" placeholder="操作者、対象、リクエストID"></label>
+    <label class="sr-only" for="audit-action">操作</label>
+    <select id="audit-action" name="action">
+      <option value="">すべての操作</option>
+      <option value="inventory.cost_csv.exported" {{if eq .AuditAction "inventory.cost_csv.exported"}}selected{{end}}>原価CSV出力</option>
+      <option value="product.created" {{if eq .AuditAction "product.created"}}selected{{end}}>商品登録</option>
+      <option value="product.status.changed" {{if eq .AuditAction "product.status.changed"}}selected{{end}}>在庫状態変更</option>
+      <option value="sale.confirmed" {{if eq .AuditAction "sale.confirmed"}}selected{{end}}>売上確定</option>
+      <option value="approval.approved" {{if eq .AuditAction "approval.approved"}}selected{{end}}>承認</option>
+      <option value="login.succeeded" {{if eq .AuditAction "login.succeeded"}}selected{{end}}>ログイン</option>
+    </select>
+    <label class="sr-only" for="audit-result">結果</label>
+    <select id="audit-result" name="result">
+      <option value="">すべての結果</option>
+      <option value="success" {{if eq .AuditResult "success"}}selected{{end}}>成功</option>
+      <option value="denied" {{if eq .AuditResult "denied"}}selected{{end}}>拒否</option>
+      <option value="error" {{if eq .AuditResult "error"}}selected{{end}}>エラー</option>
+    </select>
+    <button class="button secondary" type="submit">検索</button>
+    <a class="button ghost" href="/audit">条件をクリア</a>
+  </form>
+</section>
+<section class="card">
+  <div class="card-header"><div><h2>監査ログ</h2><p>通常のアプリ機能から変更・削除できない操作履歴です。</p></div><span class="badge">{{len .AuditLogs}}件表示</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th scope="col">日時</th><th scope="col">操作者</th><th scope="col">操作</th><th scope="col">対象</th><th scope="col">結果</th><th scope="col">リクエストID</th></tr></thead>
+      <tbody>
+      {{range .AuditLogs}}
+        <tr>
+          <td class="nowrap">{{formatTime .CreatedAt}}</td><td>{{.ActorName}}</td><td><code>{{.Action}}</code></td>
+          <td>{{.TargetType}} / {{.TargetID}}</td><td><span class="badge {{if eq .Result "success"}}configured{{else}}unconfigured{{end}}">{{.Result}}</span></td>
+          <td><code class="request-id">{{.RequestID}}</code></td>
+        </tr>
+      {{else}}
+        <tr><td colspan="6" class="empty">条件に一致する監査ログはありません。</td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}

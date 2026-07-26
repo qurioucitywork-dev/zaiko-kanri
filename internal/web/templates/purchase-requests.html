@@ -1,0 +1,29 @@
+{{define "content"}}
+<section class="toolbar-card">
+  <div class="filter-bar"><div><strong>購入依頼・取置</strong><span class="toolbar-note">依頼送信時は未確保。承認直前に在庫競合を再確認し、取置期限を固定します。</span></div><span class="badge push-right">{{len .PurchaseRequests}}件</span></div>
+</section>
+<section class="card">
+  <div class="card-header"><div><h2>購入依頼一覧</h2><p>同一商品への複数申請を受け付け、承認できる有効取置は1件だけです。</p></div></div>
+  <div class="request-list">
+  {{range .PurchaseRequests}}
+    <article class="request-card">
+      <div class="request-main">
+        <div><span class="status-badge request-{{.Status}}">{{requestStatus .Status}}</span><strong>{{.RequestNumber}}</strong><time>{{formatTime .RequestedAt}}</time></div>
+        <h3>{{.ProductCode}}｜{{.Brand}} {{.ModelNumber}}</h3>
+        <p><strong>{{.GuestName}}</strong>　{{.GuestEmail}} {{if .GuestPhone}}／{{.GuestPhone}}{{end}}</p>
+        {{if .Message}}<blockquote>{{.Message}}</blockquote>{{end}}
+        {{if .ReservationExpires}}<p class="reservation-expiry">取置期限：{{formatTime .ReservationExpires}}</p>{{end}}
+      </div>
+      <div class="request-actions">
+        {{if eq .Status "pending"}}
+        <form method="post" action="/purchase-requests/{{.ID}}/approve"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><button class="button primary full" type="submit">承認して取置</button></form>
+        <form method="post" action="/purchase-requests/{{.ID}}/reject" class="reason-action"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="reason" placeholder="却下理由（必須）" required><button class="button danger" type="submit">却下</button></form>
+        {{else if eq .Status "approved"}}
+        <form method="post" action="/purchase-requests/{{.ID}}/cancel" class="reason-action"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="reason" placeholder="解除理由（必須）" required><button class="button danger" type="submit">取置解除・取消</button></form>
+        {{else}}<span class="closed-request">処理完了</span>{{end}}
+      </div>
+    </article>
+  {{else}}<div class="empty">購入依頼はありません。</div>{{end}}
+  </div>
+</section>
+{{end}}

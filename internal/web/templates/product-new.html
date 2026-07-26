@@ -1,0 +1,54 @@
+{{define "content"}}
+<div class="form-page">
+  <section class="card">
+    <div class="card-header"><div><h2>商品単品登録</h2><p>内部で簡易仕入伝票を自動生成し、仕入履歴を必ず残します。</p></div><span class="badge phase">自動採番</span></div>
+    {{if .Duplicates}}
+    <div class="duplicate-warning">
+      <h3>⚠ 同じシリアル番号の商品が見つかりました</h3>
+      <p>候補を比較し、別個体として登録する場合は理由を入力してください。</p>
+      <div class="duplicate-grid">
+      {{range .Duplicates}}
+        <article><strong>{{.ProductCode}}</strong><span>{{.Brand}} {{.ModelNumber}}</span><span>仕入先：{{.SupplierName}}</span><span>仕入日：{{.PurchaseDate}}</span><span>状態：{{productStatus .InventoryStatus}}</span></article>
+      {{end}}
+      </div>
+    </div>
+    {{end}}
+    <form method="post" action="/products" class="record-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <fieldset>
+        <legend>仕入情報</legend>
+        <div class="form-grid three">
+          <label>仕入先 <b>必須</b>
+            <select name="supplier_id" required>
+              <option value="">選択してください</option>
+              {{range .Suppliers}}<option value="{{.ID}}" {{if eq $.ProductForm.SupplierID .ID}}selected{{end}}>{{.Code}} {{.Name}}</option>{{end}}
+            </select>
+          </label>
+          <label>仕入日 <b>必須</b><input type="date" name="purchase_date" value="{{.ProductForm.PurchaseDate}}" required></label>
+          <label>原価 <b>必須</b><div class="input-pair"><select name="cost_currency"><option {{if eq .ProductForm.CostCurrency "JPY"}}selected{{end}}>JPY</option><option {{if eq .ProductForm.CostCurrency "USD"}}selected{{end}}>USD</option></select><input name="cost_amount" inputmode="numeric" value="{{.ProductForm.CostAmount}}" placeholder="0" required></div></label>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>商品情報</legend>
+        <div class="form-grid three">
+          <label>ブランド <b>必須</b><input name="brand" value="{{.ProductForm.Brand}}" required></label>
+          <label>型番<input name="model_number" value="{{.ProductForm.ModelNumber}}"></label>
+          <label>商品種別 <b>必須</b><input name="product_type" value="{{.ProductForm.ProductType}}" required></label>
+          <label>SKU <small>任意・重複可</small><input name="sku" value="{{.ProductForm.SKU}}"></label>
+          <label>シリアル番号 <small>未入力・重複可</small><input name="serial_number" value="{{.ProductForm.SerialNumber}}"></label>
+          <label>基準売価<div class="input-pair"><select name="base_sale_currency"><option {{if eq .ProductForm.BaseSaleCurrency "USD"}}selected{{end}}>USD</option><option {{if eq .ProductForm.BaseSaleCurrency "JPY"}}selected{{end}}>JPY</option></select><input name="base_sale_price" inputmode="numeric" value="{{.ProductForm.BaseSalePrice}}" placeholder="0"></div></label>
+          <label>商品状態<input name="condition" value="{{.ProductForm.Condition}}" placeholder="例：極美品 (S)"></label>
+          <label class="span-two">付属品<input name="accessories" value="{{.ProductForm.Accessories}}" placeholder="例：BOX, GUARANTEE"></label>
+        </div>
+      </fieldset>
+      {{if .Duplicates}}
+      <fieldset class="danger-fieldset">
+        <legend>重複シリアル登録理由</legend>
+        <label>確認内容・続行理由 <b>必須</b><textarea name="duplicate_reason" required>{{.ProductForm.DuplicateReason}}</textarea></label>
+      </fieldset>
+      {{end}}
+      <div class="form-actions"><a class="button ghost" href="/products">キャンセル</a><button class="button primary" type="submit">商品を登録する</button></div>
+    </form>
+  </section>
+</div>
+{{end}}

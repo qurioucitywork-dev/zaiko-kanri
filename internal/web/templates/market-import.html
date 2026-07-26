@@ -1,0 +1,25 @@
+{{define "content"}}
+<div class="form-page">
+  <section class="card">
+    <div class="card-header"><div><h2>相場CSV取込</h2><p>ファイルを直接反映せず、全行を検証してから確定します。</p></div><span class="badge phase">UTF-8 / BOM対応</span></div>
+    <form method="post" action="/market-prices/import/preview" enctype="multipart/form-data" class="csv-upload">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label class="drop-zone">CSVファイル
+        <input type="file" name="csv_file" accept=".csv,text/csv" required>
+        <span>2MB以下のCSVを選択してください</span>
+      </label>
+      <button class="button primary" type="submit">検証してプレビュー</button>
+    </form>
+  </section>
+  <section class="card format-card">
+    <div class="card-header"><div><h3>CSV列定義</h3><p>ヘッダー名と順序は以下のとおりです。</p></div></div>
+    <pre>market_date,brand,model_number,product_type,price,currency,source
+2026-07-26,ロレックス,126610LN,腕時計,1450000,JPY,手動調査
+2026-07-26,オメガ,310.30.42.50.01.001,腕時計,6800,USD,海外相場</pre>
+    <ul>
+      <li>日付：YYYY-MM-DD</li><li>通貨：JPYまたはUSD</li><li>価格：0以上の整数</li>
+      <li>エラー行・重複候補が1件でもある場合は確定できません。</li>
+    </ul>
+  </section>
+</div>
+{{end}}

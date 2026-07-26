@@ -1,0 +1,42 @@
+{{define "content"}}
+<main class="login-page">
+  <section class="login-intro">
+    <div class="intro-inner">
+      <div class="login-brand"><span class="brand-mark large">庫</span><strong>在庫管理ツール</strong></div>
+      <p class="intro-subtitle">時計・貴金属 業務管理システム</p>
+      <ul class="feature-list">
+        <li><span>✓</span>仕入・在庫・売上・出荷を一元管理</li>
+        <li><span>✓</span>組織境界と権限をサーバー側で保護</li>
+        <li><span>✓</span>重要操作を監査ログへ記録</li>
+        <li><span>✓</span>段階的に機能を追加できるGo基盤</li>
+      </ul>
+      <small class="login-version">© 2026 在庫管理ツール — Phase 1 preview</small>
+    </div>
+  </section>
+  <section class="login-panel">
+    <div class="login-card">
+      <div class="demo-label">⚡ 制作プレビュー — サンプルデータで動作します</div>
+      <h1>ログイン</h1>
+      <p class="muted">利用者区分に応じた画面を表示します</p>
+      {{if .Notice}}<div class="alert success">{{.Notice}}</div>{{end}}
+      {{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+      <form method="post" action="/login" class="form-stack">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <label>ユーザーID
+          <input name="username" value="admin" autocomplete="username" required>
+        </label>
+        <label>パスワード
+          <input type="password" name="password" value="preview-admin-2026" autocomplete="current-password" required>
+        </label>
+        <button class="button primary full" type="submit">管理画面へログイン</button>
+      </form>
+      <div class="demo-credentials">
+        <strong>プレビュー用認証情報</strong>
+        <span>管理者：admin / preview-admin-2026</span>
+        <span>作業者：worker / preview-worker-2026</span>
+      </div>
+      <a class="public-link" href="/public/products">ゲスト向け公開画面を見る →</a>
+    </div>
+  </section>
+</main>
+{{end}}

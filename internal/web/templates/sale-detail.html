@@ -1,0 +1,31 @@
+{{define "content"}}
+<div class="detail-head">
+  <div><p class="eyebrow dark">SALES SLIP</p><h2>{{.Sale.SlipNumber}}</h2><p>{{.Sale.CustomerName}} / {{.Sale.SalesDate}}</p></div>
+  <div><span class="status-badge large transaction-{{.Sale.Status}}">{{saleStatus .Sale.Status}}</span><a class="button secondary" href="/sales">一覧へ戻る</a></div>
+</div>
+{{if .Sale.Warning}}<div class="alert warning-alert">⚠ {{.Sale.Warning}}</div>{{end}}
+<section class="card">
+  <div class="card-header"><div><h3>売上明細と出荷進捗</h3><p>確定後の換算額は、後日の為替更新では変化しません。</p></div><strong class="money">{{formatMoney .Sale.TotalJPY "JPY"}}</strong></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>商品</th><th>数量</th><th>売上単価</th><th>確定レート</th><th>換算合計</th><th>出荷済み</th><th>残数</th></tr></thead>
+      <tbody>{{range .Sale.Lines}}<tr>
+        <td><a class="record-link" href="/products/{{.ProductID}}">{{.ProductCode}}</a><span class="table-sub">{{.Brand}} {{.ModelNumber}}</span></td>
+        <td>{{.Quantity}}</td><td class="money">{{formatMoney .UnitPriceMinor .SaleCurrency}}</td>
+        <td>{{if .ExchangeRateSnapshotID}}1 USD = {{formatRate .ExchangeRateScaled .ExchangeRateScale}} JPY{{else if eq $.Sale.Status "confirmed"}}JPY（換算不要）{{else}}確定時に固定{{end}}</td>
+        <td class="money">{{formatMoney .ConvertedTotalJPY "JPY"}}</td><td>{{.ShippedQuantity}}</td><td><strong>{{.RemainingQuantity}}</strong></td>
+      </tr>{{end}}</tbody>
+    </table>
+  </div>
+  {{if eq .Sale.Status "draft"}}
+  <div class="confirm-panel"><div><strong>売上を確定しますか？</strong><p>価格・通貨・為替・換算額を固定し、商品を販売済みにします。</p></div>
+    <form method="post" action="/sales/{{.Sale.ID}}/confirm"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="button primary" type="submit">売上を確定</button></form>
+  </div>
+  {{else if eq .Sale.Status "confirmed"}}
+  <div class="transaction-actions">
+    <div class="confirmed-panel">✓ 売上確定済み — 出荷状態：{{deliveryStatus .Sale.ShipmentStatus}}</div>
+    <form method="post" action="/sales/{{.Sale.ID}}/cancel" class="cancel-form"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><input name="reason" placeholder="取消理由（必須）" required><button class="button danger" type="submit">{{if eq .User.Role "admin"}}売上取消{{else}}取消を承認申請{{end}}</button></form>
+  </div>
+  {{else}}<div class="cancelled-panel">取消済み — 関連する商品・出荷状態は再計算されています。</div>{{end}}
+</section>
+{{end}}

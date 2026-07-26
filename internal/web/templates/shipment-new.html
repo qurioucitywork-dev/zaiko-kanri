@@ -1,0 +1,27 @@
+{{define "content"}}
+<section class="card form-page">
+  <div class="card-header"><div><h2>出荷伝票登録</h2><p>売上済み商品は自動関連付け。売上未確定の商品も警告付きで登録できます。</p></div><span class="badge warning">下書き</span></div>
+  <form method="post" action="/shipments" class="record-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <fieldset>
+      <legend>伝票情報</legend>
+      <div class="form-grid three">
+        <label>届け先 <b>必須</b><input name="recipient_name" placeholder="例：佐藤 様" required></label>
+        <label>出荷日 <b>必須</b><input type="date" name="shipment_date" value="2026-07-26" required></label>
+        <label>備考<input name="notes" placeholder="配送方法・追跡番号など"></label>
+      </div>
+    </fieldset>
+    <fieldset>
+      <legend>出荷明細</legend>
+      <div class="form-grid three">
+        <label class="span-two">商品 <b>必須</b>
+          <select name="product_id" required><option value="">選択してください</option>{{range .Products}}<option value="{{.ID}}">{{.ProductCode}}｜{{.Brand}} {{.ModelNumber}}（{{productStatus .InventoryStatus}}）</option>{{end}}</select>
+        </label>
+        <label>今回出荷数量 <b>必須</b><input type="number" name="quantity" min="1" max="999" value="1" required></label>
+      </div>
+      <p class="form-hint">確定時に売上数量と累計出荷数量を再検証し、超過出荷を拒否します。</p>
+    </fieldset>
+    <div class="form-actions"><a class="button ghost" href="/shipments">キャンセル</a><button class="button primary" type="submit">下書き保存</button></div>
+  </form>
+</section>
+{{end}}

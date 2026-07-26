@@ -1,0 +1,23 @@
+{{define "content"}}
+<div class="detail-head">
+  <div><p class="eyebrow dark">PURCHASE SLIP</p><h2>{{.Purchase.SlipNumber}}</h2><p>{{.Purchase.SupplierName}} / {{.Purchase.PurchaseDate}}</p></div>
+  <div><span class="status-badge large purchase-{{.Purchase.Status}}">{{purchaseStatus .Purchase.Status}}</span><a class="button secondary" href="/purchases">一覧へ戻る</a></div>
+</div>
+<section class="card">
+  <div class="card-header"><div><h3>仕入明細</h3><p>確定時に合計数量分の商品コードを採番します。</p></div><strong class="money">{{formatMoney .Purchase.TotalMinor .Purchase.Currency}}</strong></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>No.</th><th>ブランド</th><th>型番</th><th>商品種別</th><th>数量</th><th>単価原価</th><th>生成済み</th></tr></thead>
+      <tbody>{{range .Purchase.Lines}}<tr><td>{{.LineNumber}}</td><td><strong>{{.Brand}}</strong></td><td>{{.ModelNumber}}</td><td>{{.ProductType}}</td><td>{{.Quantity}}</td><td class="money">{{formatMoney .UnitCostMinor .Currency}}</td><td>{{.GeneratedProductCount}}件</td></tr>{{end}}</tbody>
+    </table>
+  </div>
+  {{if eq .Purchase.Status "draft"}}
+  <div class="confirm-panel">
+    <div><strong>仕入伝票を確定しますか？</strong><p>確定後は通常編集できません。商品生成と採番は同一トランザクションで実行されます。</p></div>
+    <form method="post" action="/purchases/{{.Purchase.ID}}/confirm"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="button primary" type="submit">仕入を確定・商品生成</button></form>
+  </div>
+  {{else}}
+  <div class="confirmed-panel">✓ 確定済み — 商品は生成済みです。再送しても重複生成されません。</div>
+  {{end}}
+</section>
+{{end}}

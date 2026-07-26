@@ -1,0 +1,61 @@
+{{define "content"}}
+<div class="detail-head">
+  <div><p class="eyebrow dark">PRODUCT</p><h2>{{.Product.ProductCode}}</h2><p>{{.Product.Brand}} {{.Product.ModelNumber}}</p></div>
+  <div><span class="status-badge large {{.Product.InventoryStatus}}">{{productStatus .Product.InventoryStatus}}</span><a class="button secondary" href="/products">一覧へ戻る</a></div>
+</div>
+<div class="detail-grid">
+  <section class="card">
+    <div class="card-header"><div><h3>商品情報</h3><p>商品コードは変更できません</p></div></div>
+    <dl class="data-grid">
+      <div><dt>商品コード</dt><dd>{{.Product.ProductCode}}</dd></div><div><dt>SKU</dt><dd>{{if .Product.SKU}}{{.Product.SKU}}{{else}}—{{end}}</dd></div>
+      <div><dt>ブランド</dt><dd>{{.Product.Brand}}</dd></div><div><dt>型番</dt><dd>{{if .Product.ModelNumber}}{{.Product.ModelNumber}}{{else}}—{{end}}</dd></div>
+      <div><dt>シリアル番号</dt><dd>{{if .Product.SerialNumber}}{{.Product.SerialNumber}}{{else}}未入力{{end}}</dd></div><div><dt>商品種別</dt><dd>{{.Product.ProductType}}</dd></div>
+      <div><dt>仕入先</dt><dd>{{.Product.SupplierName}}</dd></div><div><dt>仕入日</dt><dd>{{.Product.PurchaseDate}}</dd></div>
+      <div><dt>原価</dt><dd class="money">{{formatMoney .Product.CostAmountMinor .Product.CostCurrency}}</dd></div><div><dt>基準売価</dt><dd class="money">{{formatMoney .Product.BaseSalePriceMinor .Product.BaseSaleCurrency}}</dd></div>
+      <div><dt>参考換算価格</dt><dd class="money">{{if .Product.RateAvailable}}{{formatMoney .Product.ReferencePriceMinor .Product.ReferenceCurrency}}{{else}}為替未登録{{end}}</dd></div>
+      <div><dt>参考粗利・利益率</dt><dd class="money">{{if .Product.RateAvailable}}{{formatMoney .Product.GrossProfitMinor .Product.GrossProfitCurrency}} / {{formatPercent .Product.MarginBasisPoints}}{{else}}—{{end}}</dd></div>
+      <div><dt>換算レート日時</dt><dd>{{if .Product.RateAvailable}}{{formatTime .Product.ExchangeRateObservedAt}}{{else}}—{{end}}</dd></div>
+      <div><dt>商品状態</dt><dd>{{if .Product.Condition}}{{.Product.Condition}}{{else}}—{{end}}</dd></div><div><dt>付属品</dt><dd>{{if .Product.Accessories}}{{.Product.Accessories}}{{else}}—{{end}}</dd></div>
+    </dl>
+  </section>
+  <aside>
+    <section class="card action-card">
+      <div class="card-header"><div><h3>在庫操作</h3><p>状態遷移はサーバー側で検証します</p></div></div>
+      {{if eq .Product.InventoryStatus "purchasing"}}
+      <form method="post" action="/products/{{.Product.ID}}/status">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="status" value="in_stock">
+        <label>検品メモ<input name="reason" placeholder="例：外装・動作確認済み"></label>
+        <button class="button primary full" type="submit">検品完了・在庫中にする</button>
+      </form>
+      {{else}}<p class="completed-message">✓ 現在のフェーズで必要な在庫化処理は完了しています。</p>{{end}}
+    </section>
+    <section class="card action-card">
+      <div class="card-header"><div><h3>公開設定</h3><p>公開中かつ在庫中の商品だけゲストへ表示</p></div><span class="badge">{{if eq .Product.PublicationStatus "public"}}公開中{{else}}非公開{{end}}</span></div>
+      <form method="post" action="/products/{{.Product.ID}}/publication">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        {{if eq .Product.PublicationStatus "public"}}<input type="hidden" name="publication_status" value="private"><button class="button secondary full" type="submit">非公開にする</button>
+        {{else}}<input type="hidden" name="publication_status" value="public"><button class="button primary full" type="submit" {{if ne .Product.InventoryStatus "in_stock"}}disabled{{end}}>公開する</button>{{end}}
+      </form>
+    </section>
+    <section class="card action-card">
+      <div class="card-header"><div><h3>商品画像</h3><p>JPEG・PNG・WebP、最大10枚</p></div><span class="badge">{{.Product.ImageCount}}枚</span></div>
+      <div class="image-grid">
+        {{range .Product.Images}}<a href="/product-images/{{.ID}}" target="_blank"><img src="/product-images/{{.ID}}" alt="{{.OriginalName}}"></a>{{end}}
+      </div>
+      <form method="post" action="/products/{{.Product.ID}}/images" enctype="multipart/form-data" class="upload-form">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <input type="file" name="image" accept="image/jpeg,image/png,image/webp" required>
+        <button class="button secondary full" type="submit">画像を追加</button>
+      </form>
+    </section>
+  </aside>
+</div>
+<section class="card">
+  <div class="card-header"><div><h3>在庫履歴</h3><p>状態変更を時系列で記録します</p></div></div>
+  <div class="timeline">
+  {{range .Product.Events}}
+    <div><span></span><time>{{formatTime .CreatedAt}}</time><strong>{{.EventType}}</strong><p>{{if .FromStatus}}{{productStatus .FromStatus}} → {{end}}{{productStatus .ToStatus}} {{.Reason}}（{{.ActorName}}）</p></div>
+  {{end}}
+  </div>
+</section>
+{{end}}

@@ -1,0 +1,22 @@
+{{define "content"}}
+<section class="toolbar-card">
+  <div class="filter-bar"><div><strong>仕入伝票</strong><span class="toolbar-note">下書きを確定すると明細数量分の商品を自動生成します。</span></div><a class="button primary push-right" href="/purchases/new">＋ 仕入伝票登録</a></div>
+</section>
+<section class="card">
+  <div class="card-header"><div><h2>仕入伝票一覧</h2><p>確定済み伝票は通常編集できません。</p></div><span class="badge">{{len .Purchases}}件</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>伝票番号</th><th>仕入日</th><th>仕入先</th><th>明細数</th><th>合計</th><th>種別</th><th>状態</th></tr></thead>
+      <tbody>
+      {{range .Purchases}}
+        <tr>
+          <td><a class="record-link" href="/purchases/{{.ID}}">{{.SlipNumber}}</a></td><td>{{.PurchaseDate}}</td><td>{{.SupplierName}}</td>
+          <td>{{.LineCount}}明細</td><td class="money">{{formatMoney .TotalMinor .Currency}}</td>
+          <td>{{if .IsSimple}}単品登録{{else}}通常仕入{{end}}</td><td><span class="status-badge purchase-{{.Status}}">{{purchaseStatus .Status}}</span></td>
+        </tr>
+      {{else}}<tr><td colspan="7" class="empty">仕入伝票はありません。</td></tr>{{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+{{end}}

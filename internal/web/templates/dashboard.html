@@ -1,0 +1,40 @@
+{{define "content"}}
+<section class="welcome">
+  <div><p class="eyebrow">PHASE 8 RELEASE QUALITY</p><h2>{{.User.DisplayName}}さん、お疲れさまです</h2><p>業務機能、承認、監査、バックアップを備えたリリース候補版です。</p></div>
+  <span class="system-status"><i></i>システム正常</span>
+</section>
+
+<section class="metric-grid" aria-label="主要指標">
+  <article class="metric"><span class="metric-icon blue">▣</span><div><small>有効在庫</small><strong>{{.Stats.Total}}</strong><p>在庫中 {{.Stats.InStock}}点</p></div></article>
+  <article class="metric"><span class="metric-icon orange">▤</span><div><small>仕入中</small><strong>{{.Stats.Purchasing}}</strong><p>検品待ち商品</p></div></article>
+  <article class="metric"><span class="metric-icon green">¥</span><div><small>確定売上</small><strong>{{formatMoney .SalesTotalJPY "JPY"}}</strong><p>{{.SalesCount}}伝票</p></div></article>
+  <article class="metric"><span class="metric-icon red">♡</span><div><small>購入依頼</small><strong>{{.RequestCount}}</strong><p>申請中</p></div></article>
+</section>
+
+<div class="dashboard-grid">
+  <section class="card">
+    <div class="card-header"><div><h3>実装ロードマップ</h3><p>確定仕様に沿った全フェーズが完了しました</p></div><span class="progress-label">8 / 8</span></div>
+    <div class="phase-list">
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 0</strong><p>現状監査・差分整理</p></div><em>完了</em></div>
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 1</strong><p>組織・認証・権限・監査基盤</p></div><em>完了</em></div>
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 2</strong><p>仕入・商品・在庫</p></div><em>完了</em></div>
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 3</strong><p>相場・CSV・価格・通貨</p></div><em>完了</em></div>
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 4</strong><p>売上・出荷・分納</p></div><em>完了</em></div>
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 5</strong><p>公開商品・購入依頼・取置</p></div><em>完了</em></div>
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 6</strong><p>承認・差戻し・自己承認禁止</p></div><em>完了</em></div>
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 7</strong><p>検索・部分更新・CSV・操作性</p></div><em>完了</em></div>
+      <div class="phase-row complete"><span>✓</span><div><strong>Phase 8</strong><p>リリース品質・運用準備</p></div><em>完了</em></div>
+    </div>
+  </section>
+  <section class="card">
+    <div class="card-header"><div><h3>基盤ステータス</h3><p>本フェーズの保護機能</p></div></div>
+    <ul class="status-list">
+      <li><span class="status-ok">✓</span><div><strong>組織スコープ</strong><p>すべての業務データを組織単位で分離</p></div></li>
+      <li><span class="status-ok">✓</span><div><strong>サーバー認証</strong><p>有効期限付きセッションと安全なCookie</p></div></li>
+      <li><span class="status-ok">✓</span><div><strong>権限制御</strong><p>管理者・作業者をルート単位で認可</p></div></li>
+      <li><span class="status-ok">✓</span><div><strong>監査ログ</strong><p>ログインと設定変更を追跡</p></div></li>
+      <li><span class="status-ok">✓</span><div><strong>CSRF対策</strong><p>更新処理への不正リクエストを拒否</p></div></li>
+    </ul>
+  </section>
+</div>
+{{end}}

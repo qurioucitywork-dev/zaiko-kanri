@@ -1,0 +1,51 @@
+{{define "content"}}
+<div class="market-actions">
+  <div><p class="eyebrow dark">MARKET & CURRENCY</p><h2>相場・為替管理</h2><p>初期版は手入力とCSV取込で管理し、外部APIへは接続しません。</p></div>
+  <a class="button primary" href="/market-prices/import">CSV取込</a>
+</div>
+
+<div class="market-grid">
+  <section class="card">
+    <div class="card-header"><div><h3>為替レート登録</h3><p>USD → JPY。登録済みレートは上書きせず履歴保存します。</p></div><span class="badge phase">スナップショット</span></div>
+    <form method="post" action="/exchange-rates" class="compact-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <label>通貨ペア<input value="USD / JPY" disabled></label>
+      <label>1 USDあたりのJPY <b>必須</b><input name="rate" inputmode="decimal" placeholder="154.25" required></label>
+      <label>取得元<input name="provider" value="手動登録" required></label>
+      <label>取得日時 <b>必須</b><input type="datetime-local" name="observed_at" value="2026-07-26T12:00" required></label>
+      <button class="button secondary" type="submit">レートを保存</button>
+    </form>
+    <div class="mini-table">
+      <div class="mini-head"><span>取得日時</span><span>レート</span><span>取得元</span></div>
+      {{range .ExchangeRates}}<div><span>{{formatTime .ObservedAt}}</span><strong>1 USD = {{formatRate .RateScaled .Scale}} JPY</strong><span>{{.Provider}}</span></div>{{else}}<p class="empty">為替レートは未登録です。</p>{{end}}
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-header"><div><h3>相場手入力</h3><p>ブランド・型番単位の参考相場を登録します。</p></div></div>
+    <form method="post" action="/market-prices" class="record-form market-form">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <div class="form-grid two">
+        <label>相場日 <b>必須</b><input type="date" name="market_date" value="2026-07-26" required></label>
+        <label>ブランド <b>必須</b><input name="brand" required></label>
+        <label>型番<input name="model_number"></label>
+        <label>商品種別 <b>必須</b><input name="product_type" value="腕時計" required></label>
+        <label>相場価格 <b>必須</b><div class="input-pair"><select name="currency"><option>JPY</option><option>USD</option></select><input name="price" inputmode="numeric" required></div></label>
+        <label>取得元<input name="source" value="手動登録"></label>
+        <label class="span-two">備考<input name="notes"></label>
+      </div>
+      <div class="form-actions"><button class="button primary" type="submit">相場を登録</button></div>
+    </form>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-header"><div><h3>相場表</h3><p>最新の登録順で表示しています。</p></div><span class="badge">{{len .MarketPrices}}件</span></div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>相場日</th><th>ブランド</th><th>型番</th><th>商品種別</th><th>相場価格</th><th>取得元</th><th>備考</th></tr></thead>
+      <tbody>{{range .MarketPrices}}<tr><td>{{.MarketDate}}</td><td><strong>{{.Brand}}</strong></td><td>{{.ModelNumber}}</td><td>{{.ProductType}}</td><td class="money">{{formatMoney .PriceMinor .Currency}}</td><td>{{.Source}}</td><td>{{.Notes}}</td></tr>{{else}}<tr><td colspan="7" class="empty">相場情報はありません。</td></tr>{{end}}</tbody>
+    </table>
+  </div>
+</section>
+{{end}}

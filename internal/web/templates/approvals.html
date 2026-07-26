@@ -1,0 +1,35 @@
+{{define "content"}}
+<section class="toolbar-card">
+  <div class="filter-bar"><div><strong>承認管理</strong><span class="toolbar-note">申請者本人の承認は禁止。承認時に申請スナップショットと現在値を再照合します。</span></div><span class="badge push-right">{{len .Approvals}}件</span></div>
+</section>
+<section class="card">
+  <div class="card-header"><div><h2>承認案件一覧</h2><p>承認・差戻し・却下と実行履歴を保持します。</p></div></div>
+  <div class="approval-list">
+  {{range .Approvals}}
+    <article class="approval-card">
+      <div class="approval-summary">
+        <div><span class="status-badge approval-{{.Status}}">{{approvalStatus .Status}}</span><strong>{{approvalAction .ActionKey}}</strong><time>{{formatTime .RequestedAt}}</time></div>
+        <h3>{{.TargetType}} / {{.TargetID}}</h3>
+        <p>申請者：<strong>{{.ApplicantName}}</strong></p>
+        <blockquote>{{if .RequestReason}}{{.RequestReason}}{{else}}理由記載なし{{end}}</blockquote>
+        <details><summary>申請時スナップショット</summary><pre>{{.RequestedSnapshot}}</pre></details>
+        <div class="approval-history">
+        {{range .Actions}}<p><time>{{formatTime .ActedAt}}</time><strong>{{.ActorName}}</strong>：{{approvalStatus .Action}} {{.Comment}}</p>{{end}}
+        </div>
+      </div>
+      <div class="approval-controls">
+      {{if eq .Status "pending"}}
+        {{if eq $.User.Role "admin"}}
+        {{if ne .ApplicantUserID $.User.ID}}
+        <form method="post" action="/approvals/{{.ID}}/approve"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="comment" placeholder="承認コメント（任意）"><button class="button primary full" type="submit">承認して実行</button></form>
+        <form method="post" action="/approvals/{{.ID}}/return" class="approval-decision"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="comment" placeholder="差戻しコメント（必須）" required><button class="button secondary" type="submit">差戻し</button></form>
+        <form method="post" action="/approvals/{{.ID}}/reject" class="approval-decision"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="comment" placeholder="却下コメント"><button class="button danger" type="submit">却下</button></form>
+        {{else}}<div class="self-approval-note">自分の申請は承認できません。</div>{{end}}
+        {{else}}<div class="approval-note">管理者の判断を待っています。</div>{{end}}
+      {{else}}<span class="closed-request">処理済み</span>{{end}}
+      </div>
+    </article>
+  {{else}}<div class="empty">承認案件はありません。</div>{{end}}
+  </div>
+</section>
+{{end}}
