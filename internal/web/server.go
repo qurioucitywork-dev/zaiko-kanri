@@ -19,11 +19,12 @@ import (
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
 )
 
-//go:embed templates/base.html templates/login.html templates/dashboard.html templates/users.html templates/settings.html templates/audit.html templates/public.html templates/products.html templates/product-new.html templates/product-detail.html templates/purchases.html templates/purchase-new.html templates/purchase-detail.html templates/market.html templates/market-import.html templates/market-import-preview.html templates/sales.html templates/sale-new.html templates/sale-detail.html templates/shipments.html templates/shipment-new.html templates/shipment-detail.html templates/purchase-requests.html templates/approvals.html static/app.css static/app.js
+//go:embed templates/base.html templates/login.html templates/guest-login.html templates/dashboard.html templates/masters.html templates/guest-management.html templates/guest-box-modal.html templates/guest-box-edit-modal.html templates/stocktakes.html templates/performance.html templates/returns.html templates/return-detail.html templates/return-restore-modal.html templates/users.html templates/settings.html templates/audit.html templates/public.html templates/products.html templates/product-modal.html templates/product-edit-modal.html templates/product-new.html templates/product-detail.html templates/purchases.html templates/purchase-new.html templates/purchase-detail.html templates/purchase-slip-modal.html templates/purchase-slip-edit-modal.html templates/purchase-return-new-modal.html templates/purchase-return-slip-modal.html templates/purchase-return-invoice.html templates/shipment-slip-modal.html templates/shipment-slip-edit-modal.html templates/sales-slip-modal.html templates/sales-slip-edit-modal.html templates/sales-return-new-modal.html templates/sales-return-slip-modal.html templates/sales-return-invoice.html templates/invoice-previews.html templates/market.html templates/market-import.html templates/market-import-preview.html templates/sales.html templates/sale-new.html templates/sale-detail.html templates/shipments.html templates/shipment-new.html templates/shipment-detail.html templates/slips.html templates/purchase-requests.html templates/approvals.html static/app.css static/app.js
 var assets embed.FS
 
 const sessionCookie = "zaiko_session"
 const csrfCookie = "zaiko_csrf"
+const guestSessionCookie = "zaiko_guest_session"
 
 type Server struct {
 	cfg       config.Config
@@ -34,51 +35,190 @@ type Server struct {
 }
 
 type pageData struct {
-	Title            string
-	Active           string
-	User             database.User
-	CSRF             string
-	Error            string
-	Notice           string
-	Users            []database.User
-	Settings         []database.Setting
-	AuditLogs        []database.AuditEntry
-	AuditQuery       string
-	AuditAction      string
-	AuditResult      string
-	Suppliers        []database.Supplier
-	Products         []database.Product
-	Product          database.Product
-	Purchases        []database.PurchaseSlip
-	Purchase         database.PurchaseSlip
-	ProductForm      productForm
-	Duplicates       []database.Product
-	Query            string
-	Status           string
-	Sort             string
-	IncludeCancelled bool
-	TotalProducts    int
-	Page             int
-	TotalPages       int
-	PreviousPage     int
-	NextPage         int
-	HasPrevious      bool
-	HasNext          bool
-	Stats            database.InventoryStats
-	MarketPrices     []database.MarketPrice
-	ExchangeRates    []database.ExchangeRate
-	ImportBatch      database.MarketImportBatch
-	Sales            []database.SalesSlip
-	Sale             database.SalesSlip
-	Shipments        []database.ShipmentSlip
-	Shipment         database.ShipmentSlip
-	PublicProducts   []database.PublicProduct
-	PurchaseRequests []database.PurchaseRequest
-	Approvals        []database.ApprovalRequest
-	SalesTotalJPY    int64
-	SalesCount       int
-	RequestCount     int
-	PreviewMode      bool
+	Title                        string
+	Active                       string
+	User                         database.User
+	CSRF                         string
+	Error                        string
+	Notice                       string
+	Users                        []database.User
+	Settings                     []database.Setting
+	AuditLogs                    []database.AuditEntry
+	AuditQuery                   string
+	AuditAction                  string
+	AuditResult                  string
+	Suppliers                    []database.Supplier
+	Products                     []database.Product
+	Product                      database.Product
+	ProductBrands                []string
+	Purchases                    []database.PurchaseSlip
+	Purchase                     database.PurchaseSlip
+	PurchaseProducts             []database.PurchaseProductLine
+	PurchaseRevisions            []database.PurchaseRevision
+	NextPurchaseNumber           string
+	ProductForm                  productForm
+	Duplicates                   []database.Product
+	ProductBrandOptions          []database.MasterRecord
+	ProductMaterialOptions       []database.MasterRecord
+	ProductMovementOptions       []database.MasterRecord
+	ProductConditionOptions      []database.MasterRecord
+	ProductAccessoryOptions      []database.MasterRecord
+	NextProductCode              string
+	Query                        string
+	Brand                        string
+	ModelNumber                  string
+	SerialNumber                 string
+	SKU                          string
+	SupplierID                   string
+	BuyerID                      string
+	Box                          string
+	Accessory                    string
+	PurchaseDateFrom             string
+	PurchaseDateTo               string
+	Status                       string
+	Sort                         string
+	IncludeCancelled             bool
+	InventorySearchRequested     bool
+	TotalProducts                int
+	Page                         int
+	TotalPages                   int
+	PreviousPage                 int
+	NextPage                     int
+	CurrentURL                   string
+	HasPrevious                  bool
+	HasNext                      bool
+	Stats                        database.InventoryStats
+	MarketPrices                 []database.MarketPrice
+	MarketProductPrices          []database.ProductMarketPrice
+	MarketSearchRequested        bool
+	MarketProductPrice           database.ProductMarketPrice
+	ExchangeRates                []database.ExchangeRate
+	USDJPYRate                   database.ExchangeRate
+	USDJPYRateAvailable          bool
+	ImportBatch                  database.MarketImportBatch
+	Sales                        []database.SalesSlip
+	Sale                         database.SalesSlip
+	SalesRevisions               []database.SalesRevision
+	SalesDestinationOptions      []database.MasterRecord
+	NextSalesNumber              string
+	NextShipmentNumber           string
+	Shipments                    []database.ShipmentSlip
+	Shipment                     database.ShipmentSlip
+	ShipmentRevisions            []database.ShipmentRevision
+	PublicProducts               []database.PublicProduct
+	PublicQuery                  string
+	PublicBrand                  string
+	PublicCondition              string
+	PurchaseRequests             []database.PurchaseRequest
+	PurchaseRequestGroups        []purchaseRequestGroupView
+	PurchaseRequestTotal         int64
+	PurchaseRequestPending       int
+	ShipmentPrefillCodes         []string
+	ShipmentPrefillRecipient     string
+	ShipmentPurchaseRequestGroup string
+	Approvals                    []database.ApprovalRequest
+	ApprovalReviewViews          []approvalReviewView
+	ApprovalPendingCount         int
+	SalesTotalJPY                int64
+	SalesCount                   int
+	RequestCount                 int
+	PurchaseTotalJPY             int64
+	PurchaseCount                int
+	AlertCount                   int
+	ApprovalAlertCount           int
+	PurchaseAlertCount           int
+	NotificationCountsSet        bool
+	SalesTrendText               string
+	DashboardSuppliers           []dashboardSupplierSlice
+	DashboardMonths              []dashboardMonthBar
+	DashboardGridlines           []dashboardGridline
+	DashboardRequests            []dashboardRequestCard
+	DashboardSalesTarget         int64
+	DashboardPurchaseBudget      int64
+	MasterCategories             []masterCategory
+	MasterRecords                []database.MasterRecord
+	MasterCategory               masterCategory
+	MasterUsers                  []database.User
+	MasterGuestCredentials       []database.GuestCredential
+	MasterSettings               map[string]string
+	MasterExchangeRates          []masterExchangeRateCard
+	GuestCompanies               []database.GuestCompany
+	GuestBoxes                   []database.GuestBox
+	GuestBoxMatrix               []database.GuestBoxMatrixCell
+	GuestBoxProducts             []database.GuestBoxProduct
+	GuestSelectedBox             database.GuestBox
+	GuestPublicationSummary      database.GuestPublicationSummary
+	GuestPublishedCompanies      []database.GuestCompany
+	GuestProductCandidates       []database.GuestBoxProduct
+	GuestProductSearched         bool
+	GuestProductDateFrom         string
+	GuestProductDateTo           string
+	GuestProductBrand            string
+	GuestProductQuery            string
+	GuestBrands                  []database.MasterRecord
+	Stocktakes                   []database.Stocktake
+	Stocktake                    database.Stocktake
+	StocktakeCanComplete         bool
+	StocktakeInStockCount        int
+	StocktakeShippedCount        int
+	StocktakeInStockCountedCount int
+	StocktakeShippedCountedCount int
+	StocktakeInStockTotal        int64
+	StocktakeShippedTotal        int64
+	StocktakeInStockCountedTotal int64
+	StocktakeShippedCountedTotal int64
+	StocktakeCountedTotal        int64
+	StocktakeDifferenceTotal     int64
+	StocktakePendingCount        int
+	TodayISO                     string
+	PerformanceRows              []performanceRow
+	PerformanceMode              performanceMode
+	PerformanceFrom              string
+	PerformanceTo                string
+	PerformanceTotal             int64
+	PerformanceCount             int
+	ReturnSummaries              []database.ReturnTakehomeSummary
+	ReturnItems                  []database.ReturnTakehomeItem
+	ReturnPendingItems           []database.ReturnTakehomeItem
+	ReturnCompletedItems         []database.ReturnTakehomeItem
+	ReturnReferenceItems         []returnReferenceItem
+	ReturnOriginalTotal          int64
+	ReturnPendingTotal           int64
+	ReturnNetTotal               int64
+	SalesReturnItems             []database.ReturnTakehomeItem
+	SalesReturnNumber            string
+	SalesReturnTotal             int64
+	SalesReturnInvoiceReady      bool
+	SalesReturnCompleted         bool
+	SalesReturnReason            string
+	SalesReturnNotes             string
+	SalesReturnActor             string
+	SalesReturnRequestedAt       time.Time
+	PurchaseReturn               database.PurchaseReturnSlip
+	PurchaseReturnLines          []database.PurchaseReturnLine
+	PurchaseReturnTotal          int64
+	PurchaseReturnCompleted      bool
+	InvoiceCompany               invoiceCompany
+	SalesInvoiceGroups           []salesInvoiceGroup
+	PurchaseInvoiceGroups        []purchaseReturnInvoiceGroup
+	InvoiceSelectedCount         int
+	InvoicePartnerCount          int
+	SlipRows                     []slipListRow
+	SlipTabs                     []slipListTab
+	SlipKind                     string
+	SlipDateFrom                 string
+	SlipDateTo                   string
+	SlipPartner                  string
+	SlipPartners                 []string
+	SlipSummary                  slipListSummary
+	SlipSearchPerformed          bool
+	ApprovalOnly                 bool
+	PreviewMode                  bool
+	LoginAdminPassword           string
+	LoginWorkerPassword          string
+	GuestCompanyCode             string
+	GuestCompanyName             string
+	LoginGuestPassword           string
 }
 
 func New(cfg config.Config, store *database.Store, logger *slog.Logger) (*Server, error) {
@@ -95,33 +235,42 @@ func New(cfg config.Config, store *database.Store, logger *slog.Logger) (*Server
 	mux.HandleFunc("GET /healthz", s.health)
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
-	mux.HandleFunc("GET /public/products", s.publicProducts)
-	mux.HandleFunc("POST /public/products/{id}/purchase-requests", s.publicPurchaseRequest)
+	mux.HandleFunc("GET /guest/login", s.guestLoginPage)
+	mux.HandleFunc("POST /guest/login", s.guestLogin)
+	mux.Handle("GET /public/products", s.guestAuthenticated(http.HandlerFunc(s.publicProducts)))
+	mux.Handle("GET /public/companies/{companyCode}/product-images/{id}", s.guestAuthenticated(http.HandlerFunc(s.publicProductImage)))
+	mux.Handle("POST /public/products/{id}/purchase-requests", s.guestAuthenticated(http.HandlerFunc(s.publicPurchaseRequest)))
+	mux.Handle("POST /public/purchase-requests", s.guestAuthenticated(http.HandlerFunc(s.publicPurchaseRequests)))
 
 	mux.Handle("GET /", s.authenticated("dashboard.read", http.HandlerFunc(s.dashboard)))
 	mux.Handle("POST /logout", s.authenticated("", http.HandlerFunc(s.logout)))
 	mux.Handle("GET /products", s.authenticated("inventory.read", http.HandlerFunc(s.products)))
 	mux.Handle("GET /products/export.csv", s.authenticated("inventory.read", http.HandlerFunc(s.productsCSV)))
 	mux.Handle("GET /products/new", s.authenticated("inventory.write", http.HandlerFunc(s.productNew)))
+	mux.Handle("GET /products/next-code", s.authenticated("inventory.write", http.HandlerFunc(s.productNextCode)))
 	mux.Handle("POST /products", s.authenticated("inventory.write", http.HandlerFunc(s.productCreate)))
 	mux.Handle("GET /products/{id}", s.authenticated("inventory.read", http.HandlerFunc(s.productDetail)))
+	mux.Handle("GET /products/{id}/modal", s.authenticated("inventory.read", http.HandlerFunc(s.productModal)))
+	mux.Handle("GET /products/{id}/edit", s.authenticated("inventory.write", http.HandlerFunc(s.productEditModal)))
+	mux.Handle("POST /products/{id}/edit", s.authenticated("inventory.write", http.HandlerFunc(s.productUpdate)))
 	mux.Handle("POST /products/{id}/status", s.authenticated("inventory.write", http.HandlerFunc(s.productStatus)))
 	mux.Handle("POST /products/{id}/images", s.authenticated("inventory.write", http.HandlerFunc(s.productImageUpload)))
 	mux.Handle("POST /products/{id}/publication", s.authenticated("inventory.publish", http.HandlerFunc(s.productPublication)))
 	mux.Handle("GET /product-images/{id}", s.authenticated("inventory.read", http.HandlerFunc(s.productImage)))
 	mux.Handle("GET /purchases", s.authenticated("purchase.read", http.HandlerFunc(s.purchases)))
+	mux.Handle("GET /purchases/export.csv", s.authenticated("purchase.read", http.HandlerFunc(s.purchasesCSV)))
 	mux.Handle("GET /purchases/new", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseNew)))
 	mux.Handle("POST /purchases", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseCreate)))
 	mux.Handle("GET /purchases/{id}", s.authenticated("purchase.read", http.HandlerFunc(s.purchaseDetail)))
 	mux.Handle("POST /purchases/{id}/confirm", s.authenticated("purchase.confirm", http.HandlerFunc(s.purchaseConfirm)))
 	mux.Handle("GET /market-prices", s.authenticated("market.read", http.HandlerFunc(s.marketPrices)))
-	mux.Handle("POST /market-prices", s.authenticated("market.write", http.HandlerFunc(s.marketPriceCreate)))
-	mux.Handle("POST /exchange-rates", s.authenticated("market.write", http.HandlerFunc(s.exchangeRateCreate)))
-	mux.Handle("GET /market-prices/import", s.authenticated("market.import", http.HandlerFunc(s.marketImportPage)))
-	mux.Handle("POST /market-prices/import/preview", s.authenticated("market.import", http.HandlerFunc(s.marketImportPreview)))
-	mux.Handle("GET /market-prices/import/{id}", s.authenticated("market.import", http.HandlerFunc(s.marketImportDetail)))
-	mux.Handle("POST /market-prices/import/{id}/commit", s.authenticated("market.import", http.HandlerFunc(s.marketImportCommit)))
+	mux.Handle("GET /market-prices/export.csv", s.authenticated("market.read", http.HandlerFunc(s.marketPricesCSV)))
+	mux.Handle("POST /market-prices/import.csv", s.authenticated("market.import", http.HandlerFunc(s.marketPricesCSVImport)))
+	mux.Handle("GET /market-prices/products/{id}/modal", s.authenticated("market.read", http.HandlerFunc(s.marketPriceModal)))
+	mux.Handle("POST /market-prices/products/{id}/edit", s.authenticated("market.write", http.HandlerFunc(s.marketPriceUpdate)))
 	mux.Handle("GET /sales", s.authenticated("sales.read", http.HandlerFunc(s.sales)))
+	mux.Handle("GET /sales/next-number", s.authenticated("sales.write", http.HandlerFunc(s.salesNextNumber)))
+	mux.Handle("GET /sales/shipment-prefill", s.authenticated("sales.write", http.HandlerFunc(s.salesShipmentPrefill)))
 	mux.Handle("GET /sales/new", s.authenticated("sales.write", http.HandlerFunc(s.saleNew)))
 	mux.Handle("POST /sales", s.authenticated("sales.write", http.HandlerFunc(s.saleCreate)))
 	mux.Handle("GET /sales/{id}", s.authenticated("sales.read", http.HandlerFunc(s.saleDetail)))
@@ -133,6 +282,37 @@ func New(cfg config.Config, store *database.Store, logger *slog.Logger) (*Server
 	mux.Handle("GET /shipments/{id}", s.authenticated("shipment.read", http.HandlerFunc(s.shipmentDetail)))
 	mux.Handle("POST /shipments/{id}/confirm", s.authenticated("shipment.confirm", http.HandlerFunc(s.shipmentConfirm)))
 	mux.Handle("POST /shipments/{id}/cancel", s.authenticated("shipment.write", http.HandlerFunc(s.shipmentCancel)))
+	mux.Handle("GET /returns", s.authenticated("sales.read", http.HandlerFunc(s.returns)))
+	mux.Handle("GET /returns/{id}", s.authenticated("sales.read", http.HandlerFunc(s.returnDetail)))
+	mux.Handle("GET /returns/{id}/modal", s.authenticated("sales.read", http.HandlerFunc(s.returnRestoreModal)))
+	mux.Handle("POST /returns/{id}/restore", s.authenticated("sales.write", http.HandlerFunc(s.returnRestore)))
+	mux.Handle("POST /returns/{id}/items", s.authenticated("sales.write", http.HandlerFunc(s.returnCreate)))
+	mux.Handle("POST /returns/{id}/items/{itemID}/complete", s.authenticated("sales.write", http.HandlerFunc(s.returnComplete)))
+	mux.Handle("GET /slips", s.authenticated("dashboard.read", http.HandlerFunc(s.slips)))
+	mux.Handle("GET /slips/export.csv", s.authenticated("dashboard.read", http.HandlerFunc(s.slipsCSV)))
+	mux.Handle("GET /slips/purchases/{id}/modal", s.authenticated("purchase.read", http.HandlerFunc(s.purchaseSlipModal)))
+	mux.Handle("GET /slips/purchases/{id}/edit", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseSlipEditModal)))
+	mux.Handle("POST /slips/purchases/{id}/edit", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseSlipEdit)))
+	mux.Handle("GET /slips/purchases/{id}/return", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseReturnNewModal)))
+	mux.Handle("POST /slips/purchases/{id}/return", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseReturnCreate)))
+	mux.Handle("GET /slips/shipments/{id}/modal", s.authenticated("shipment.read", http.HandlerFunc(s.shipmentSlipModal)))
+	mux.Handle("GET /slips/shipments/{id}/edit", s.authenticated("shipment.write", http.HandlerFunc(s.shipmentSlipEditModal)))
+	mux.Handle("POST /slips/shipments/{id}/edit", s.authenticated("shipment.write", http.HandlerFunc(s.shipmentSlipEdit)))
+	mux.Handle("GET /slips/sales/{id}/modal", s.authenticated("sales.read", http.HandlerFunc(s.salesSlipModal)))
+	mux.Handle("GET /slips/sales/{id}/edit", s.authenticated("sales.write", http.HandlerFunc(s.salesSlipEditModal)))
+	mux.Handle("POST /slips/sales/{id}/edit", s.authenticated("sales.write", http.HandlerFunc(s.salesSlipEdit)))
+	mux.Handle("GET /slips/sales/{id}/return", s.authenticated("sales.write", http.HandlerFunc(s.salesReturnNewModal)))
+	mux.Handle("POST /slips/sales/{id}/return", s.authenticated("sales.write", http.HandlerFunc(s.salesReturnCreate)))
+	mux.Handle("GET /slips/sales-returns/{id}/modal", s.authenticated("sales.read", http.HandlerFunc(s.salesReturnSlipModal)))
+	mux.Handle("POST /slips/sales-returns/{id}/invoice", s.authenticated("sales.write", http.HandlerFunc(s.salesReturnInvoice)))
+	mux.Handle("POST /slips/sales-returns/{id}/complete", s.authenticated("sales.write", http.HandlerFunc(s.salesReturnComplete)))
+	mux.Handle("GET /slips/purchase-returns/{id}/modal", s.authenticated("purchase.read", http.HandlerFunc(s.purchaseReturnSlipModal)))
+	mux.Handle("POST /slips/purchase-returns/{id}/invoice", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseReturnInvoice)))
+	mux.Handle("POST /slips/purchase-returns/{id}/complete", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseReturnComplete)))
+	mux.Handle("POST /slips/purchase-returns/{id}/delivery", s.authenticated("purchase.write", http.HandlerFunc(s.purchaseReturnDelivery)))
+	mux.Handle("POST /slips/sales/invoices/preview", s.authenticated("sales.read", http.HandlerFunc(s.salesInvoicesPreview)))
+	mux.Handle("POST /slips/purchase-returns/invoices/preview", s.authenticated("purchase.read", http.HandlerFunc(s.purchaseReturnInvoicesPreview)))
+	mux.Handle("POST /slips/purchase-returns/invoices.csv", s.authenticated("purchase.read", http.HandlerFunc(s.purchaseReturnInvoicesCSV)))
 	mux.Handle("GET /purchase-requests", s.authenticated("request.read", http.HandlerFunc(s.purchaseRequests)))
 	mux.Handle("POST /purchase-requests/{id}/approve", s.authenticated("request.review", http.HandlerFunc(s.purchaseRequestApprove)))
 	mux.Handle("POST /purchase-requests/{id}/reject", s.authenticated("request.review", http.HandlerFunc(s.purchaseRequestReject)))
@@ -140,7 +320,35 @@ func New(cfg config.Config, store *database.Store, logger *slog.Logger) (*Server
 	mux.Handle("GET /approvals", s.authenticated("approval.read", http.HandlerFunc(s.approvals)))
 	mux.Handle("POST /approvals/{id}/approve", s.authenticated("approval.approve", http.HandlerFunc(s.approvalApprove)))
 	mux.Handle("POST /approvals/{id}/return", s.authenticated("approval.approve", http.HandlerFunc(s.approvalReturn)))
-	mux.Handle("POST /approvals/{id}/reject", s.authenticated("approval.approve", http.HandlerFunc(s.approvalReject)))
+	mux.Handle("GET /masters", s.authenticated("settings.manage", http.HandlerFunc(s.masters)))
+	mux.Handle("POST /masters", s.authenticated("settings.manage", http.HandlerFunc(s.masterCreate)))
+	mux.Handle("POST /masters/{id}/update", s.authenticated("settings.manage", http.HandlerFunc(s.masterUpdate)))
+	mux.Handle("POST /masters/{id}/delete", s.authenticated("settings.manage", http.HandlerFunc(s.masterDelete)))
+	mux.Handle("POST /masters/exchange-rates", s.authenticated("settings.manage", http.HandlerFunc(s.masterExchangeRateUpdate)))
+	mux.Handle("POST /masters/passwords/users", s.authenticated("users.manage", http.HandlerFunc(s.masterPasswordUserCreate)))
+	mux.Handle("POST /masters/passwords/users/{id}/password", s.authenticated("users.manage", http.HandlerFunc(s.masterPasswordUserChange)))
+	mux.Handle("POST /masters/passwords/users/{id}/delete", s.authenticated("users.manage", http.HandlerFunc(s.masterPasswordUserDelete)))
+	mux.Handle("POST /masters/passwords/guests/{id}/password", s.authenticated("users.manage", http.HandlerFunc(s.masterGuestPasswordChange)))
+	mux.Handle("POST /masters/passwords/guests/{id}/delete", s.authenticated("users.manage", http.HandlerFunc(s.masterGuestPasswordDelete)))
+	mux.Handle("POST /masters/passwords/guest-bulk", s.authenticated("users.manage", http.HandlerFunc(s.masterGuestPasswordsBulk)))
+	mux.Handle("POST /masters/passwords/notify", s.authenticated("users.manage", http.HandlerFunc(s.masterPasswordNotify)))
+	mux.Handle("GET /guest-management", s.authenticated("settings.manage", http.HandlerFunc(s.guestManagement)))
+	mux.Handle("POST /guest-management/draft", s.authenticated("settings.manage", http.HandlerFunc(s.guestBoxDraftSave)))
+	mux.Handle("POST /guest-management/publish", s.authenticated("settings.manage", http.HandlerFunc(s.guestBoxPublish)))
+	mux.Handle("POST /guest-management/boxes/{id}", s.authenticated("settings.manage", http.HandlerFunc(s.guestBoxRename)))
+	mux.Handle("GET /guest-management/boxes/{id}/modal", s.authenticated("settings.manage", http.HandlerFunc(s.guestBoxModal)))
+	mux.Handle("GET /guest-management/boxes/{id}/edit-modal", s.authenticated("settings.manage", http.HandlerFunc(s.guestBoxEditModal)))
+	mux.Handle("POST /guest-management/boxes/{id}/products", s.authenticated("settings.manage", http.HandlerFunc(s.guestBoxProductAdd)))
+	mux.Handle("POST /guest-management/boxes/{id}/products/{productID}/remove", s.authenticated("settings.manage", http.HandlerFunc(s.guestBoxProductRemove)))
+	mux.Handle("POST /guest-management/boxes/{id}/products/{productID}/move", s.authenticated("settings.manage", http.HandlerFunc(s.guestBoxProductMove)))
+	mux.Handle("GET /stocktakes", s.authenticated("inventory.read", http.HandlerFunc(s.stocktakes)))
+	mux.Handle("POST /stocktakes", s.authenticated("inventory.write", http.HandlerFunc(s.stocktakeCreate)))
+	mux.Handle("GET /stocktakes/{id}", s.authenticated("inventory.read", http.HandlerFunc(s.stocktakeDetail)))
+	mux.Handle("POST /stocktakes/{id}/lines/{lineID}", s.authenticated("inventory.write", http.HandlerFunc(s.stocktakeLineUpdate)))
+	mux.Handle("POST /stocktakes/{id}/save", s.authenticated("inventory.write", http.HandlerFunc(s.stocktakeSave)))
+	mux.Handle("POST /stocktakes/{id}/complete", s.authenticated("inventory.write", http.HandlerFunc(s.stocktakeComplete)))
+	mux.Handle("GET /performance", s.authenticated("dashboard.read", http.HandlerFunc(s.performance)))
+	mux.Handle("GET /performance/export.csv", s.authenticated("dashboard.read", http.HandlerFunc(s.performanceCSV)))
 	mux.Handle("GET /users", s.authenticated("users.manage", http.HandlerFunc(s.users)))
 	mux.Handle("GET /settings", s.authenticated("settings.manage", http.HandlerFunc(s.settings)))
 	mux.Handle("POST /settings", s.authenticated("settings.manage", http.HandlerFunc(s.updateSetting)))
@@ -183,7 +391,7 @@ func (s *Server) parseTemplates() error {
 		"productStatus": func(status string) string {
 			return map[string]string{
 				"purchasing": "仕入中", "in_stock": "在庫中", "reserved": "取置中",
-				"sold": "販売済み", "shipped": "出荷済み", "cancelled": "取消", "invalid": "無効",
+				"sold": "売上済", "shipped": "出荷済", "cancelled": "取消", "invalid": "無効",
 				"public": "公開", "private": "非公開",
 			}[status]
 		},
@@ -214,6 +422,7 @@ func (s *Server) parseTemplates() error {
 		"approvalAction": func(action string) string {
 			return map[string]string{
 				"sale.confirm": "売上確定", "sale.cancel": "売上取消", "shipment.cancel": "出荷取消",
+				"return_takehome.restore": "返品／持ち帰り在庫戻し",
 			}[action]
 		},
 		"formatRate": func(rate, scale int64) string {
@@ -227,6 +436,68 @@ func (s *Server) parseTemplates() error {
 		"formatPercent": func(basisPoints int64) string {
 			return fmt.Sprintf("%.2f%%", float64(basisPoints)/100)
 		},
+		"stocktakePresent": func(value *bool) bool {
+			return value != nil && *value
+		},
+		"stocktakeAbsent": func(value *bool) bool {
+			return value != nil && !*value
+		},
+		"contains": strings.Contains,
+		"masterHas": func(records []database.MasterRecord, name string) bool {
+			for _, record := range records {
+				if record.Name == name {
+					return true
+				}
+			}
+			return false
+		},
+		"masterDetail": func(record database.MasterRecord, key string) string {
+			if record.Details == nil {
+				return ""
+			}
+			return record.Details[key]
+		},
+		"guestMatrixCell": func(cells []database.GuestBoxMatrixCell, companyID, boxID string) database.GuestBoxMatrixCell {
+			for _, cell := range cells {
+				if cell.CompanyID == companyID && cell.BoxID == boxID {
+					return cell
+				}
+			}
+			return database.GuestBoxMatrixCell{CompanyID: companyID, BoxID: boxID}
+		},
+		"add":   func(left, right int) int { return left + right },
+		"add64": func(left, right int64) int64 { return left + right },
+		"sequence": func(count int) []int {
+			values := make([]int, count)
+			for index := range values {
+				values[index] = index + 1
+			}
+			return values
+		},
+		"productAccessories": func() []string {
+			return []string{"BOX", "CASE", "GUARANTEE", "BRACELET PARTS", "CERTIFICATE", "ARCHIVE"}
+		},
+		"accessoryList": func(value string) []string {
+			items := make([]string, 0)
+			for _, item := range strings.Split(value, ",") {
+				if item = strings.TrimSpace(item); item != "" {
+					items = append(items, item)
+				}
+			}
+			return items
+		},
+		"formatAccessories": func(value string) string {
+			items := make([]string, 0)
+			for _, item := range strings.Split(value, ",") {
+				if item = strings.TrimSpace(item); item != "" {
+					items = append(items, item)
+				}
+			}
+			return strings.Join(items, "・")
+		},
+		"today": func() string {
+			return time.Now().In(time.FixedZone("JST", 9*60*60)).Format("2006年1月2日")
+		},
 	}
 	base, err := template.New("base.html").Funcs(funcs).ParseFS(assets, "templates/base.html")
 	if err != nil {
@@ -234,10 +505,15 @@ func (s *Server) parseTemplates() error {
 	}
 	s.templates = make(map[string]*template.Template)
 	for _, page := range []string{
-		"login", "dashboard", "users", "settings", "audit", "public",
-		"products", "product-new", "product-detail", "purchases", "purchase-new", "purchase-detail",
+		"login", "guest-login", "dashboard", "masters", "guest-management", "guest-box-modal", "guest-box-edit-modal", "stocktakes", "performance", "returns", "return-detail", "return-restore-modal", "users", "settings", "audit", "public",
+		"products", "product-modal", "product-edit-modal", "product-new", "product-detail", "purchases", "purchase-new", "purchase-detail",
+		"purchase-slip-modal", "purchase-slip-edit-modal", "purchase-return-new-modal",
+		"purchase-return-slip-modal", "purchase-return-invoice",
+		"shipment-slip-modal", "shipment-slip-edit-modal",
+		"sales-slip-modal", "sales-slip-edit-modal", "sales-return-new-modal",
+		"sales-return-slip-modal", "sales-return-invoice", "invoice-previews",
 		"market", "market-import", "market-import-preview",
-		"sales", "sale-new", "sale-detail", "shipments", "shipment-new", "shipment-detail",
+		"sales", "sale-new", "sale-detail", "shipments", "shipment-new", "shipment-detail", "slips",
 		"purchase-requests", "approvals",
 	} {
 		clone, err := base.Clone()
@@ -254,6 +530,29 @@ func (s *Server) parseTemplates() error {
 
 func (s *Server) render(w http.ResponseWriter, name string, status int, data pageData) {
 	data.PreviewMode = s.cfg.Environment == "development"
+	if data.User.ID != "" && !data.NotificationCountsSet {
+		if approvals, err := s.store.Approvals(context.Background(), data.User.OrganizationID); err == nil {
+			data.ApprovalAlertCount = 0
+			for _, approval := range approvals {
+				if approval.Status == "pending" {
+					data.ApprovalAlertCount++
+				}
+			}
+			data.AlertCount = data.ApprovalAlertCount
+		}
+		if requestGroups, err := s.store.PurchaseRequestGroups(
+			context.Background(), data.User.OrganizationID, "pending",
+		); err == nil {
+			data.PurchaseAlertCount = len(requestGroups)
+		}
+	}
+	if data.PreviewMode && name == "login" {
+		data.LoginAdminPassword = s.cfg.AdminPassword
+		data.LoginWorkerPassword = s.cfg.WorkerPassword
+	}
+	if data.PreviewMode && name == "guest-login" {
+		data.LoginGuestPassword = "guest-preview-2026"
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	if err := s.templates[name].ExecuteTemplate(w, "base", data); err != nil {
@@ -345,6 +644,65 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+func (s *Server) guestLoginPage(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(guestSessionCookie); err == nil {
+		if _, err := s.store.GuestSession(r.Context(), s.cfg.OrganizationCode, cookie.Value); err == nil {
+			http.Redirect(w, r, "/public/products", http.StatusSeeOther)
+			return
+		}
+	}
+	csrf, err := database.RandomToken()
+	if err != nil || s.store.CreateLoginCSRF(r.Context(), csrf, 10*time.Minute) != nil {
+		http.Error(w, "ゲストログイン画面を準備できませんでした", http.StatusInternalServerError)
+		return
+	}
+	s.render(w, "guest-login", http.StatusOK, pageData{
+		Title: "ゲストログイン", CSRF: csrf, Error: r.URL.Query().Get("error"),
+	})
+}
+
+func (s *Server) guestLogin(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "入力を確認してください", http.StatusBadRequest)
+		return
+	}
+	if !s.store.ConsumeLoginCSRF(r.Context(), r.FormValue("csrf_token")) {
+		http.Redirect(w, r, "/guest/login?error="+url.QueryEscape("画面の有効期限が切れました。"), http.StatusSeeOther)
+		return
+	}
+	loginID := strings.TrimSpace(r.FormValue("guest_id"))
+	guest, err := s.store.AuthenticateGuest(r.Context(), s.cfg.OrganizationCode, loginID, r.FormValue("password"))
+	if err != nil {
+		_ = s.store.WriteAudit(r.Context(), database.AuditEntry{
+			TargetType: "guest_session", TargetID: loginID, Action: "guest.login.failed",
+			Result: "denied", Reason: "invalid credentials", IPAddress: clientIP(r),
+			UserAgent: r.UserAgent(), RequestID: requestID(r.Context()),
+		})
+		http.Redirect(w, r, "/guest/login?error="+url.QueryEscape("ゲストIDまたはパスワードが違います。"), http.StatusSeeOther)
+		return
+	}
+	random, err := database.RandomToken()
+	if err != nil {
+		http.Error(w, "ゲストセッションを作成できませんでした", http.StatusInternalServerError)
+		return
+	}
+	token := guest.CompanyID + "." + random
+	if err := s.store.CreateGuestSession(r.Context(), guest, token, s.cfg.SessionTTL); err != nil {
+		http.Error(w, "ゲストセッションを作成できませんでした", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: guestSessionCookie, Value: token, Path: "/", HttpOnly: true,
+		SameSite: http.SameSiteLaxMode, Secure: s.cfg.CookieSecure, MaxAge: int(s.cfg.SessionTTL.Seconds()),
+	})
+	_ = s.store.WriteAudit(r.Context(), database.AuditEntry{
+		OrganizationID: guest.OrganizationID, TargetType: "guest_session", TargetID: guest.CompanyID,
+		Action: "guest.login.succeeded", Result: "success", IPAddress: clientIP(r),
+		UserAgent: r.UserAgent(), RequestID: requestID(r.Context()),
+	})
+	http.Redirect(w, r, "/public/products", http.StatusSeeOther)
+}
+
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
 	cookie, _ := r.Cookie(sessionCookie)
@@ -358,31 +716,6 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1, SameSite: http.SameSiteLaxMode})
 	http.SetCookie(w, &http.Cookie{Name: csrfCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1, SameSite: http.SameSiteStrictMode})
 	http.Redirect(w, r, "/login?notice="+url.QueryEscape("ログアウトしました。"), http.StatusSeeOther)
-}
-
-func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
-	user, _ := currentUser(r.Context())
-	stats, _ := s.store.InventoryStats(r.Context(), user.OrganizationID)
-	sales, _ := s.store.Sales(r.Context(), user.OrganizationID)
-	var salesTotal int64
-	var salesCount int
-	for _, sale := range sales {
-		if sale.Status == "confirmed" {
-			salesTotal += sale.TotalJPY
-			salesCount++
-		}
-	}
-	requests, _ := s.store.PurchaseRequests(r.Context(), user.OrganizationID)
-	var requestCount int
-	for _, request := range requests {
-		if request.Status == "pending" {
-			requestCount++
-		}
-	}
-	s.render(w, "dashboard", http.StatusOK, pageData{
-		Title: "ダッシュボード", Active: "dashboard", User: user, CSRF: csrfFromRequest(r), Stats: stats,
-		SalesTotalJPY: salesTotal, SalesCount: salesCount, RequestCount: requestCount,
-	})
 }
 
 func (s *Server) users(w http.ResponseWriter, r *http.Request) {
@@ -484,8 +817,8 @@ func (s *Server) authenticated(permission string, next http.Handler) http.Handle
 			formToken := r.Header.Get("X-CSRF-Token")
 			if formToken == "" {
 				if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
-					r.Body = http.MaxBytesReader(w, r.Body, 9<<20)
-					_ = r.ParseMultipartForm(8 << 20)
+					r.Body = http.MaxBytesReader(w, r.Body, 82<<20)
+					_ = r.ParseMultipartForm(16 << 20)
 				} else {
 					_ = r.ParseForm()
 				}
@@ -504,6 +837,26 @@ func (s *Server) authenticated(permission string, next http.Handler) http.Handle
 		}
 		ctx := withSession(withUser(r.Context(), session.User), session)
 		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func (s *Server) guestAuthenticated(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cookie, err := r.Cookie(guestSessionCookie)
+		if err != nil {
+			http.Redirect(w, r, "/guest/login", http.StatusSeeOther)
+			return
+		}
+		guest, err := s.store.GuestSession(r.Context(), s.cfg.OrganizationCode, cookie.Value)
+		if err != nil {
+			http.SetCookie(w, &http.Cookie{
+				Name: guestSessionCookie, Value: "", Path: "/", HttpOnly: true,
+				MaxAge: -1, SameSite: http.SameSiteLaxMode,
+			})
+			http.Redirect(w, r, "/guest/login", http.StatusSeeOther)
+			return
+		}
+		next.ServeHTTP(w, r.WithContext(withGuest(r.Context(), guest)))
 	})
 }
 

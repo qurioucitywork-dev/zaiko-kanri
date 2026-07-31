@@ -1,0 +1,31 @@
+{{define "content"}}
+<form class="purchase-workflow-panel purchase-edit-panel" method="post" action="/slips/purchases/{{.Purchase.ID}}/edit" data-purchase-id="{{.Purchase.ID}}">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <header class="purchase-workflow-head"><h2>✎ 伝票修正</h2><button type="button" data-purchase-workflow-close aria-label="閉じる">×</button></header>
+  <div class="purchase-edit-target"><small>対象伝票</small><strong>▤ 仕入伝票　{{.Purchase.SlipNumber}}</strong></div>
+  <div class="purchase-workflow-scroll purchase-edit-body">
+    <h3>↪ 仕入伝票の内容を編集</h3>
+    <div class="purchase-edit-fields">
+      <label><span>仕入日</span><input type="date" name="purchase_date" value="{{.Purchase.PurchaseDate}}" required></label>
+      <label><span>仕入先</span><input value="{{.Purchase.SupplierName}}" disabled></label>
+      <label><span>担当者</span><input value="{{.Purchase.CreatedByName}}" disabled></label>
+      <label><span>備考</span><input name="notes" value="{{.Purchase.Notes}}"></label>
+    </div>
+    <h3 class="muted-title">☷ 明細編集（SKU・金額）</h3>
+    <div class="purchase-edit-lines">
+      {{range $index, $product := .PurchaseProducts}}
+      <div class="purchase-edit-line">
+        <b>{{add $index 1}}</b><input type="hidden" name="product_id" value="{{$product.ProductID}}">
+        <label><span>商品コード</span><strong>{{$product.ProductCode}}</strong></label>
+        <label><span>SKU</span><input name="sku" value="{{$product.SKU}}"></label>
+        <label><span>仕入金額</span><input name="cost_amount" type="number" min="0" value="{{$product.CostAmountMinor}}" required></label>
+        <label><span>売価</span><input name="sale_amount" type="number" min="0" value="{{$product.BaseSalePriceMinor}}" required></label>
+      </div>
+      {{else}}<p>確定済みの商品がないため、明細金額は編集できません。</p>{{end}}
+    </div>
+    <label class="purchase-edit-memo"><span>● 修正メモ（変更理由・備考）</span><textarea name="memo" required placeholder="例：金額を修正（当初登録額から変更）"></textarea></label>
+    <p class="purchase-edit-info">● 管理者による修正内容と担当者は即時に記録されます。</p>
+  </div>
+  <footer><span></span><button class="button secondary" type="button" data-purchase-workflow-view="detail">× キャンセル</button><button class="button purchase-edit-button" type="submit">✓ 修正を記録する</button></footer>
+</form>
+{{end}}

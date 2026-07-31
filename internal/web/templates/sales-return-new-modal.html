@@ -1,0 +1,33 @@
+{{define "content"}}
+<form class="purchase-workflow-panel sales-return-panel" method="post" action="/slips/sales/{{.Sale.ID}}/return" data-sales-return-form>
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <header class="sales-return-head"><h2>↶ 売上返品伝票を起票</h2><button type="button" data-sales-workflow-close aria-label="閉じる">×</button></header>
+  <div class="purchase-workflow-scroll sales-return-body">
+    <p class="sales-return-guide">▥ 商品コードを入力またはスキャンして返品商品を追加してください。</p>
+    <div class="sales-return-source"><small>返品元 売上伝票</small><strong>{{.Sale.SlipNumber}}</strong><span>▣ {{.Sale.SalesDate}}</span><span>▦ {{.Sale.CustomerName}}</span><b>{{formatMoney .Sale.TotalJPY "JPY"}}</b></div>
+    <h3 class="muted-title">☷ 返品対象商品 <em data-sales-return-selection-count>0点</em></h3>
+    <div class="sales-return-products">
+      {{range .Sale.Lines}}
+      <label data-sales-return-product data-product-code="{{.ProductCode}}">
+        <input type="checkbox" name="sales_line_id" value="{{.ID}}">
+        <span><strong>{{.ProductCode}}　{{.Brand}} {{.ModelNumber}}</strong><small>{{if gt .ConvertedUnitPriceJPY 0}}{{formatMoney .ConvertedUnitPriceJPY "JPY"}}{{else}}{{formatMoney .UnitPriceMinor .SaleCurrency}}{{end}}</small></span>
+      </label>
+      {{else}}
+      <p>返品対象商品がありません。</p>
+      {{end}}
+    </div>
+    <div class="purchase-return-fields">
+      <label><span>返品日 <b>＊</b></span><input type="date" name="return_date" value="{{.TodayISO}}" required></label>
+      <label><span>返品理由</span><select name="reason" required><option value="">-- 選択 --</option><option>商品不良</option><option>注文違い</option><option>品質不適合</option><option>説明と相違</option><option>その他</option></select></label>
+    </div>
+    <label class="purchase-return-notes"><span>備考</span><textarea name="notes" placeholder="返品の詳細や特記事項を記入"></textarea></label>
+  </div>
+  <footer class="purchase-return-footer sales-return-footer">
+    <label>▥ 商品コード：<input type="text" data-sales-return-code-input placeholder="コードを入力 → Enter"></label>
+    <button class="button secondary" type="button" data-sales-return-code-add>＋</button>
+    <button class="button sales-return-scan-button" type="button" data-sales-return-scan>▣ スキャン</button>
+    <button class="button secondary" type="button" data-sales-workflow-view="detail">× キャンセル</button>
+    <button class="button sales-return-submit" type="submit" data-sales-return-submit disabled>↶ 売上返品伝票を起票</button>
+  </footer>
+</form>
+{{end}}

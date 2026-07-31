@@ -1,0 +1,142 @@
+{{define "content"}}
+<section class="card slips-card" data-slips-page>
+  <input type="hidden" value="{{.CSRF}}" data-slips-csrf>
+  <div class="card-header slips-card-title">
+    <h2><span>▦</span> 伝票一覧</h2>
+    <a class="button secondary small" href="/slips/export.csv?kind={{.SlipKind}}&date_from={{.SlipDateFrom}}&date_to={{.SlipDateTo}}&partner={{.SlipPartner}}&q={{.Query}}{{if .ApprovalOnly}}&approval=1{{end}}">▤ CSV出力</a>
+  </div>
+
+  <nav class="slips-tabs" aria-label="伝票種別">
+    {{range .SlipTabs}}
+      <div class="slips-tab {{if eq .Key $.SlipKind}}active{{end}}">
+        <a class="slips-tab-main" href="/slips?kind={{.Key}}">
+          <span>{{.Icon}}</span> {{.Label}}
+        </a>
+        <a class="slips-tab-count {{if and (eq .Key $.SlipKind) $.ApprovalOnly}}active{{end}}"
+           href="/slips?kind={{.Key}}&approval=1"
+           aria-label="{{.Label}}の対応が必要な伝票を表示">{{.Count}}</a>
+      </div>
+    {{end}}
+  </nav>
+
+  <form method="get" action="/slips" class="slips-filter">
+    <input type="hidden" name="kind" value="{{.SlipKind}}">
+    <input type="hidden" name="search" value="1">
+    {{if .ApprovalOnly}}<input type="hidden" name="approval" value="1">{{end}}
+    <label><span>▣ 開始日</span><input type="date" name="date_from" value="{{.SlipDateFrom}}"></label>
+    <label><span>▣ 終了日</span><input type="date" name="date_to" value="{{.SlipDateTo}}"></label>
+    <label><span>▣ {{if or (eq .SlipKind "purchases") (eq .SlipKind "purchase-returns")}}仕入先{{else}}取引先{{end}}</span>
+      <select name="partner">
+        <option value="">すべて</option>
+        {{range .SlipPartners}}<option value="{{.}}" {{if eq . $.SlipPartner}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </label>
+    <label class="slips-keyword"><span>⌕ キーワード</span><input name="q" value="{{.Query}}" placeholder="伝票番号・商品コード・ブランド"></label>
+    <button class="button primary" type="submit">⌕ 絞り込む</button>
+    <a class="button secondary" href="/slips?kind={{.SlipKind}}">↻ リセット</a>
+  </form>
+
+  {{if .ApprovalOnly}}
+  <div class="slips-approval-banner">
+    <span>⚠</span><strong>承認タスク表示中</strong>
+    <p>「承認待ち」または「差戻し」の伝票のみ表示しています</p>
+    <a class="button secondary small" href="/slips?kind={{.SlipKind}}&show_all=1">× 解除（全件表示）</a>
+  </div>
+  {{end}}
+
+  {{if .SlipSearchPerformed}}
+  <div class="slips-summary">
+    <div><span>件数</span><strong>{{.SlipSummary.Count}}件</strong></div>
+    <div><span>合計金額</span><strong>{{formatMoney .SlipSummary.Total "JPY"}}</strong></div>
+    <div><span>商品点数</span><strong class="orange">{{.SlipSummary.ProductCount}}点</strong></div>
+    <div><span>修正あり</span><strong class="orange">{{.SlipSummary.CorrectionCount}}件</strong></div>
+    {{if eq .SlipKind "shipments"}}
+      <button class="button secondary slips-issue" type="button" disabled data-slips-issue>▤ 明細書発行</button>
+      <button class="button primary slips-issue" type="button" disabled data-slips-issue>▤ 請求書発行</button>
+    {{else if eq .SlipKind "sales"}}
+      <button class="button primary slips-issue" type="button" disabled data-slips-issue data-sales-bulk-invoice>▤ 請求書発行</button>
+    {{else if eq .SlipKind "purchase-returns"}}
+      <button class="button primary slips-issue" type="button" disabled data-slips-issue data-purchase-return-bulk-invoice>▤ 請求書発行</button>
+    {{end}}
+  </div>
+
+  {{if .SlipRows}}
+  <div class="table-wrap slips-table-wrap">
+    <table class="slips-table {{.SlipKind}}">
+      <thead>
+        <tr>
+          {{if or (eq .SlipKind "shipments") (eq .SlipKind "sales") (eq .SlipKind "purchase-returns")}}<th class="slips-check"><input type="checkbox" data-slips-check-all aria-label="すべて選択"></th>{{end}}
+          <th>{{if or (eq .SlipKind "sales-returns") (eq .SlipKind "purchase-returns")}}返品伝票番号{{else}}伝票番号{{end}}</th>
+          <th>{{if eq .SlipKind "purchases"}}仕入日{{else if eq .SlipKind "shipments"}}出荷日{{else if eq .SlipKind "sales"}}売上日{{else}}返品日{{end}}</th>
+          <th>{{if or (eq .SlipKind "purchases") (eq .SlipKind "purchase-returns")}}仕入先{{else if eq .SlipKind "shipments"}}出荷先{{else}}販売先{{end}}</th>
+          {{if eq .SlipKind "purchases"}}<th>仕入担当者</th>{{end}}
+          <th>{{if eq .SlipKind "purchases"}}明細数{{else}}点数{{end}}</th>
+          <th>{{if eq .SlipKind "purchases"}}合計仕入金額{{else if or (eq .SlipKind "sales-returns") (eq .SlipKind "purchase-returns")}}金額{{else}}合計金額{{end}}</th>
+          {{if ne .SlipKind "sales-returns"}}<th>{{if eq .SlipKind "purchase-returns"}}返品理由{{else}}備考{{end}}</th>{{end}}
+          <th>{{if eq .SlipKind "purchases"}}ステータス/修正{{else}}ステータス{{end}}</th>
+          {{if eq .SlipKind "purchase-returns"}}<th>配送番号</th>{{end}}
+          {{if or (eq .SlipKind "sales") (eq .SlipKind "shipments")}}<th>修正</th>{{else if ne .SlipKind "purchases"}}<th>操作</th>{{end}}
+        </tr>
+      </thead>
+      <tbody>
+      {{range .SlipRows}}
+        <tr class="{{if eq .Status "pending"}}attention{{end}}" {{if eq $.SlipKind "purchases"}}data-purchase-slip-open="{{.ID}}"{{else if eq $.SlipKind "shipments"}}data-shipment-slip-open="{{.ID}}"{{else if eq $.SlipKind "sales"}}data-sales-slip-open="{{.ID}}"{{else if eq $.SlipKind "sales-returns"}}data-sales-return-slip-open="{{.ID}}"{{else if eq $.SlipKind "purchase-returns"}}data-purchase-return-slip-open="{{.ID}}"{{end}} tabindex="0" role="button" aria-label="{{.Number}}の詳細を表示">
+          {{if or (eq $.SlipKind "shipments") (eq $.SlipKind "sales") (eq $.SlipKind "purchase-returns")}}<td class="slips-check"><input type="checkbox" value="{{.ID}}" data-slips-check aria-label="{{.Number}}を選択"></td>{{end}}
+          <td><strong>{{.Number}}</strong>{{if and .Corrected (or (eq $.SlipKind "purchases") (eq $.SlipKind "sales"))}} <span class="slips-corrected">✎ 修正済</span>{{end}}</td>
+          <td>{{.Date}}</td><td>{{.Partner}}</td>
+          {{if eq $.SlipKind "purchases"}}<td>{{.Staff}}</td>{{end}}
+          <td>{{.Count}}点</td><td class="money {{if eq $.SlipKind "sales-returns"}}return-money{{end}}">{{formatMoney .Total "JPY"}}</td>
+          {{if ne $.SlipKind "sales-returns"}}<td class="slips-note">{{if .Notes}}{{.Notes}}{{else}}—{{end}}</td>{{end}}
+          <td><span class="slips-status {{.Status}}">{{.StatusText}} {{if ne .Status "completed"}}ⓘ{{end}}</span></td>
+          {{if or (eq $.SlipKind "sales") (eq $.SlipKind "shipments")}}<td>{{if .Corrected}}{{if eq $.SlipKind "sales"}}<span class="slips-correction-check" aria-label="修正済">✓</span>{{else}}<span class="slips-corrected">✓ 修正済</span>{{end}}{{else}}—{{end}}</td>{{end}}
+          {{if eq $.SlipKind "purchase-returns"}}
+          <td>
+            <form class="slips-delivery-form" method="post" action="/slips/purchase-returns/{{.ID}}/delivery">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input name="delivery_number" value="{{.DeliveryNumber}}" placeholder="配送番号を入力" aria-label="{{.Number}}の配送番号">
+              <button type="submit" aria-label="{{.Number}}の配送番号を保存">保存</button>
+            </form>
+          </td>
+          {{end}}
+          {{if and (ne $.SlipKind "purchases") (ne $.SlipKind "sales") (ne $.SlipKind "shipments")}}<td class="slips-actions">
+            <a class="button secondary small" href="{{.DetailURL}}">⌕ 詳細</a>
+            {{if eq $.SlipKind "sales-returns"}}<button class="button small slips-invoice sales-return" type="button" data-sales-return-open="{{.ID}}">▤ 請求書</button>{{end}}
+            {{if eq $.SlipKind "purchase-returns"}}<button class="button small slips-invoice purchase-return" type="button" data-purchase-return-open="{{.ID}}">▤ 請求書</button>{{end}}
+          </td>{{end}}
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{else}}
+  <div class="slips-empty">
+    <span>⌕</span><p>該当する伝票はありません</p>
+    <small>検索条件を変更するか、別の伝票種別を選択してください</small>
+    <a class="button secondary" href="/slips?kind={{.SlipKind}}&show_all=1">☷ 全件表示</a>
+  </div>
+  {{end}}
+  {{else}}
+  <div class="slips-empty slips-search-prompt">
+    <span>⌕</span><p>検索条件を入力して「絞り込む」ボタンを押してください</p>
+    <a class="button secondary" href="/slips?kind={{.SlipKind}}&show_all=1">☷ 全件表示</a>
+  </div>
+  {{end}}
+</section>
+
+{{if eq .SlipKind "purchases"}}
+<dialog class="purchase-workflow-dialog" data-purchase-workflow-dialog aria-label="仕入伝票"><div class="purchase-workflow-loading">仕入伝票を読み込んでいます…</div></dialog>
+{{end}}
+{{if eq .SlipKind "shipments"}}
+<dialog class="purchase-workflow-dialog shipment-workflow-dialog" data-shipment-workflow-dialog aria-label="出荷伝票"><div class="purchase-workflow-loading">出荷伝票を読み込んでいます…</div></dialog>
+{{end}}
+{{if eq .SlipKind "sales"}}
+<dialog class="purchase-workflow-dialog sales-workflow-dialog" data-sales-workflow-dialog aria-label="売上伝票"><div class="purchase-workflow-loading">売上伝票を読み込んでいます…</div></dialog>
+{{end}}
+{{if eq .SlipKind "sales-returns"}}
+<dialog class="purchase-workflow-dialog sales-return-workflow-dialog" data-sales-return-workflow-dialog aria-label="売上返品伝票"><div class="purchase-workflow-loading">売上返品伝票を読み込んでいます…</div></dialog>
+{{end}}
+{{if eq .SlipKind "purchase-returns"}}
+<dialog class="purchase-workflow-dialog purchase-return-workflow-dialog" data-purchase-return-workflow-dialog aria-label="仕入返品伝票"><div class="purchase-workflow-loading">仕入返品伝票を読み込んでいます…</div></dialog>
+{{end}}
+<dialog class="invoice-preview-dialog" data-invoice-preview-dialog aria-label="請求書プレビュー"><div class="purchase-workflow-loading">請求書プレビューを読み込んでいます…</div></dialog>
+{{end}}

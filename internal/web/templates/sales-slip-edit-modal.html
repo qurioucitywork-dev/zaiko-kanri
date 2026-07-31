@@ -1,0 +1,28 @@
+{{define "content"}}
+<form class="purchase-workflow-panel sales-workflow-panel sales-edit-panel" method="post" action="/slips/sales/{{.Sale.ID}}/edit" data-sales-id="{{.Sale.ID}}">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <header class="purchase-workflow-head"><h2>✎ 伝票修正</h2><button type="button" data-sales-workflow-close aria-label="閉じる">×</button></header>
+  <div class="purchase-edit-target"><small>対象伝票</small><strong>▤ 売上伝票　{{.Sale.SlipNumber}}</strong></div>
+  <div class="purchase-workflow-scroll purchase-edit-body">
+    <h3>￥ 売上伝票の内容を編集</h3>
+    <div class="purchase-edit-fields">
+      <label><span>売上日</span><input type="date" name="sales_date" value="{{.Sale.SalesDate}}" required></label>
+      <label><span>販売先</span><input value="{{.Sale.CustomerName}}" disabled></label>
+    </div>
+    <h3 class="muted-title">☷ 商品明細</h3>
+    <div class="sales-edit-lines">
+      <div class="sales-edit-line sales-edit-heading"><span></span><span>商品コード</span><span>ブランド</span><span>モデル</span><span>販売金額</span></div>
+      {{range $index, $line := .Sale.Lines}}
+      <div class="sales-edit-line">
+        <b>{{add $index 1}}</b><input type="hidden" name="line_id" value="{{$line.ID}}">
+        <strong>{{$line.ProductCode}}</strong><span>{{$line.Brand}}</span><span>{{$line.ModelNumber}}</span>
+        <input name="sale_price" type="number" min="0" value="{{if gt $line.ConvertedUnitPriceJPY 0}}{{$line.ConvertedUnitPriceJPY}}{{else}}{{$line.UnitPriceMinor}}{{end}}" aria-label="{{$line.ProductCode}}の販売金額" required>
+      </div>
+      {{end}}
+    </div>
+    <label class="purchase-edit-memo sales-notes"><span>備考</span><textarea name="notes">{{.Sale.Notes}}</textarea></label>
+    <label class="purchase-edit-memo"><span>● 修正メモ（変更理由・備考）</span><textarea name="memo" required placeholder="例：金額を修正（当初登録額から変更）"></textarea></label>
+  </div>
+  <footer><span></span><button class="button secondary" type="button" data-sales-workflow-view="detail">× キャンセル</button><button class="button purchase-edit-button" type="submit">✓ 修正を記録する</button></footer>
+</form>
+{{end}}

@@ -1,0 +1,59 @@
+{{define "content"}}
+<form class="product-edit-modal-panel" method="post" action="/products/{{.Product.ID}}/edit" data-product-edit-form data-product-id="{{.Product.ID}}">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <header class="product-edit-header"><h2>✎ 商品情報を編集</h2><button type="button" data-product-modal-close aria-label="閉じる">×</button></header>
+  <div class="product-edit-body">
+    <div class="product-edit-identity"><span><small>商品コード</small><strong>{{.Product.ProductCode}}</strong></span><span><small>SKU</small><strong>{{if .Product.SKU}}{{.Product.SKU}}{{else}}—{{end}}</strong></span></div>
+    <section class="product-edit-section">
+      <h3>▰ 基本情報</h3>
+      <div class="product-edit-grid">
+        <label><span>ブランド</span><select name="brand"><option value="" {{if not .Product.Brand}}selected{{end}}>-- 選択 --</option>{{if .Product.Brand}}<option value="{{.Product.Brand}}" selected>{{.Product.Brand}}</option>{{end}}{{range .ProductBrandOptions}}{{if ne $.Product.Brand .Name}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}</select></label>
+        <label><span>モデル名</span><input name="product_type" value="{{.Product.ProductType}}"></label>
+        <label><span>型番（Ref.）</span><input name="model_number" value="{{.Product.ModelNumber}}"></label>
+        <label><span>シリアルNo.</span><input name="serial_number" value="{{.Product.SerialNumber}}"></label>
+        <label><span>ステータス</span><select name="inventory_status">
+          {{if eq .Product.InventoryStatus "purchasing"}}<option value="purchasing" selected hidden>仕入中</option>{{end}}
+          <option value="in_stock" {{if eq .Product.InventoryStatus "in_stock"}}selected{{end}}>在庫中</option>
+          <option value="sold" {{if eq .Product.InventoryStatus "sold"}}selected{{end}}>売上済</option>
+          <option value="shipped" {{if eq .Product.InventoryStatus "shipped"}}selected{{end}}>出荷済</option>
+          <option value="reserved" {{if eq .Product.InventoryStatus "reserved"}}selected{{end}}>取置中</option>
+          <option value="invalid" {{if eq .Product.InventoryStatus "invalid"}}selected{{end}}>修理中</option>
+          <option value="cancelled" {{if eq .Product.InventoryStatus "cancelled"}}selected{{end}}>廃棄</option>
+        </select></label>
+        <label><span>コンディション</span><select name="condition"><option value="" {{if not .Product.Condition}}selected{{end}}>-- 選択 --</option>{{if and .Product.Condition (not (masterHas .ProductConditionOptions .Product.Condition))}}<option value="{{.Product.Condition}}" selected hidden>{{.Product.Condition}}</option>{{end}}{{range .ProductConditionOptions}}<option value="{{.Name}}" {{if eq $.Product.Condition .Name}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}</select></label>
+      </div>
+    </section>
+    <section class="product-edit-section">
+      <h3>◆ 商品スペック</h3>
+      <div class="product-edit-grid">
+        <label><span>素材（本体）</span><select name="material"><option value="" {{if not .Product.Material}}selected{{end}}>-- 選択 --</option>{{if and .Product.Material (not (masterHas .ProductMaterialOptions .Product.Material))}}<option value="{{.Product.Material}}" selected hidden>{{.Product.Material}}</option>{{end}}{{range .ProductMaterialOptions}}<option value="{{.Name}}" {{if eq $.Product.Material .Name}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}</select></label>
+        <label><span>駆動方式</span><select name="movement"><option value="" {{if not .Product.Movement}}selected{{end}}>-- 選択 --</option>{{if and .Product.Movement (not (masterHas .ProductMovementOptions .Product.Movement))}}<option value="{{.Product.Movement}}" selected hidden>{{.Product.Movement}}</option>{{end}}{{range .ProductMovementOptions}}<option value="{{.Name}}" {{if eq $.Product.Movement .Name}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}</select></label>
+        <label><span>ベルト素材</span><input name="belt_material" value="{{.Product.BeltMaterial}}"></label>
+        <label><span>文字盤</span><input name="dial" value="{{.Product.Dial}}"></label>
+      </div>
+    </section>
+    <section class="product-edit-section">
+      <h3>¥ 価格・仕入情報</h3>
+      <div class="product-edit-grid">
+        <label><span>仕入金額（税抜・{{.Product.CostCurrency}}）</span><input type="number" min="0" name="cost_amount" value="{{.Product.CostAmountMinor}}"></label>
+        <label class="money-input-stack"><span>売価（{{.Product.BaseSaleCurrency}}）</span><input type="number" min="0" name="base_sale_price" value="{{.Product.BaseSalePriceMinor}}">{{if and .Product.RateAvailable (eq .Product.BaseSaleCurrency "USD")}}<small class="currency-conversion">約 {{formatMoney .Product.ReferencePriceMinor "JPY"}}</small>{{end}}</label>
+        <label><span>仕入日</span><input type="date" name="purchase_date" value="{{.Product.PurchaseDate}}" required></label>
+        <label><span>仕入担当者</span><select name="buyer_id" required>{{if eq .Product.BuyerID "usr_admin"}}<option value="{{.Product.BuyerID}}" selected hidden>{{.Product.BuyerName}}</option>{{end}}{{range .Users}}{{if .Active}}<option value="{{.ID}}" {{if eq $.Product.BuyerID .ID}}selected{{end}}>{{.DisplayName}}</option>{{end}}{{end}}</select></label>
+        <label><span>仕入先</span><select name="supplier_id" required>{{range .Suppliers}}<option value="{{.ID}}" {{if eq $.Product.SupplierID .ID}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}</select></label>
+        <label><span>BOX</span><select name="box"><option value="">-- 選択なし --</option><option value="BOX1" {{if eq .Product.Box "BOX1"}}selected{{end}}>BOX1 — ロレックス特集</option><option value="BOX2" {{if eq .Product.Box "BOX2"}}selected{{end}}>BOX2 — 高額品セレクト</option><option value="BOX3" {{if eq .Product.Box "BOX3"}}selected{{end}}>BOX3 — 春の新入荷</option>{{range $number := sequence 7}}{{$box := printf "BOX%d" (add $number 3)}}<option value="{{$box}}" {{if eq $.Product.Box $box}}selected{{end}}>{{$box}}</option>{{end}}</select></label>
+      </div>
+    </section>
+    <section class="product-edit-section">
+      <h3>▣ 付属品</h3>
+      <div class="product-edit-accessories">{{range $item := productAccessories}}<label><input type="checkbox" name="accessories" value="{{$item}}" {{if contains $.Product.Accessories $item}}checked{{end}}><span>{{$item}}</span></label>{{end}}</div>
+    </section>
+    <section class="product-edit-section">
+      <h3>備考・変更メモ</h3>
+      <label class="product-edit-wide"><span>特徴・備考</span><textarea name="features">{{.Product.Features}}</textarea></label>
+      <label class="product-edit-wide"><span>変更メモ（理由・コメント） <small>※履歴に記録されます</small></span><textarea name="change_memo" placeholder="変更内容や理由を入力してください"></textarea></label>
+    </section>
+    <p class="product-edit-error" data-product-edit-error hidden></p>
+  </div>
+  <footer><button class="button secondary" type="button" data-product-edit-cancel="{{.Product.ID}}">キャンセル</button><button class="button inventory-edit" type="submit">✓ 確定する</button></footer>
+</form>
+{{end}}

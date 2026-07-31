@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -14,6 +15,8 @@ var (
 	ErrShipmentAlreadyConfirmed = errors.New("出荷伝票はすでに確定されています")
 	ErrShipmentExceedsSale      = errors.New("累計出荷数量が売上数量を超えます")
 	ErrProductAlreadySold       = errors.New("この商品は別の売上で確定済みです")
+	ErrProductAlreadyShipped    = errors.New("この商品は別の出荷伝票で出荷済みです")
+	ErrShipmentAlreadyUsed      = errors.New("この出荷伝票は既に売上伝票へ取り込まれています")
 )
 
 type SalesLineInput struct {
@@ -24,28 +27,38 @@ type SalesLineInput struct {
 }
 
 type CreateSaleInput struct {
-	OrganizationID string
-	SalesDate      string
-	CustomerName   string
-	Notes          string
-	CreatedBy      string
-	Lines          []SalesLineInput
+	OrganizationID   string
+	SlipNumber       string
+	SourceShipmentID string
+	SalesDate        string
+	CustomerName     string
+	CustomerAddress  string
+	CustomerPhone    string
+	Notes            string
+	CreatedBy        string
+	Lines            []SalesLineInput
 }
 
+var salesSlipNumberPattern = regexp.MustCompile(`^SL-[0-9]{4}-[0-9]{4}$`)
+
 type SalesSlip struct {
-	ID             string
-	OrganizationID string
-	SlipNumber     string
-	SalesDate      string
-	CustomerName   string
-	Status         string
-	Notes          string
-	TotalJPY       int64
-	ShipmentStatus string
-	Warning        string
-	CreatedAt      time.Time
-	ConfirmedAt    *time.Time
-	Lines          []SalesLine
+	ID                     string
+	OrganizationID         string
+	SlipNumber             string
+	SalesDate              string
+	CustomerName           string
+	CustomerAddress        string
+	CustomerPhone          string
+	QualifiedInvoiceNumber string
+	Status                 string
+	Notes                  string
+	TotalJPY               int64
+	ShipmentStatus         string
+	Warning                string
+	CreatedAt              time.Time
+	ConfirmedAt            *time.Time
+	Lines                  []SalesLine
+	RevisionCount          int
 }
 
 type SalesLine struct {
@@ -68,44 +81,53 @@ type SalesLine struct {
 }
 
 type ShipmentLineInput struct {
-	ProductID string
-	Quantity  int
+	ProductID           string
+	Quantity            int
+	WholesalePriceMinor int64
 }
 
 type CreateShipmentInput struct {
-	OrganizationID string
-	ShipmentDate   string
-	RecipientName  string
-	Notes          string
-	CreatedBy      string
-	Lines          []ShipmentLineInput
+	OrganizationID         string
+	PurchaseRequestGroupID string
+	ShipmentDate           string
+	RecipientName          string
+	Notes                  string
+	CreatedBy              string
+	Lines                  []ShipmentLineInput
 }
 
 type ShipmentSlip struct {
-	ID             string
-	OrganizationID string
-	ShipmentNumber string
-	ShipmentDate   string
-	RecipientName  string
-	Status         string
-	Notes          string
-	Warning        string
-	CreatedAt      time.Time
-	ConfirmedAt    *time.Time
-	Lines          []ShipmentLine
+	ID                string
+	OrganizationID    string
+	ShipmentNumber    string
+	LinkedSalesSlipID string
+	ShipmentDate      string
+	RecipientName     string
+	RecipientAddress  string
+	RecipientPhone    string
+	TrackingNumber    string
+	Status            string
+	Notes             string
+	Warning           string
+	CreatedAt         time.Time
+	ConfirmedAt       *time.Time
+	Lines             []ShipmentLine
+	RevisionCount     int
+	TotalJPY          int64
 }
 
 type ShipmentLine struct {
-	ID                string
-	ProductID         string
-	ProductCode       string
-	Brand             string
-	ModelNumber       string
-	Quantity          int
-	SalesLineID       string
-	SalesSlipNumber   string
-	AllocatedQuantity int
-	Warning           string
+	ID                  string
+	ProductID           string
+	ProductCode         string
+	Brand               string
+	ModelNumber         string
+	Quantity            int
+	SalesLineID         string
+	SalesSlipNumber     string
+	AllocatedQuantity   int
+	Warning             string
+	WholesalePriceMinor int64
 }
 
 func (s *Store) SeedSalesPreview(ctx context.Context) error {
@@ -159,13 +181,14 @@ func (s *Store) SeedSalesPreview(ctx context.Context) error {
 }
 
 func (s *Store) CreateSaleDraft(ctx context.Context, input CreateSaleInput) (SalesSlip, error) {
-	if input.OrganizationID == "" || input.CreatedBy == "" || strings.TrimSpace(input.CustomerName) == "" {
+	if input.OrganizationID == "" || input.CreatedBy == "" ||
+		(input.SourceShipmentID == "" && strings.TrimSpace(input.CustomerName) == "") {
 		return SalesSlip{}, errors.New("販売先と操作者は必須です")
 	}
 	if _, err := time.Parse("2006-01-02", input.SalesDate); err != nil {
 		return SalesSlip{}, errors.New("売上日を正しく入力してください")
 	}
-	if len(input.Lines) == 0 {
+	if input.SourceShipmentID == "" && len(input.Lines) == 0 {
 		return SalesSlip{}, errors.New("売上明細を1件以上入力してください")
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -173,19 +196,119 @@ func (s *Store) CreateSaleDraft(ctx context.Context, input CreateSaleInput) (Sal
 		return SalesSlip{}, err
 	}
 	defer tx.Rollback()
-	number, err := nextTransactionNumberTx(ctx, tx, "sales_slips", "sales_date", "SL", input.OrganizationID, input.SalesDate)
-	if err != nil {
-		return SalesSlip{}, err
+	if input.SourceShipmentID != "" {
+		var status, linkedSaleID string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT recipient_name,recipient_address,recipient_phone,status,
+			       COALESCE(
+			         sales_slip_id,
+			         (
+			           SELECT MIN(sales_line.sales_slip_id)
+			           FROM shipment_lines AS shipment_line
+			           JOIN sales_shipment_allocations AS allocation
+			             ON allocation.shipment_line_id=shipment_line.id
+			           JOIN sales_lines AS sales_line
+			             ON sales_line.id=allocation.sales_line_id
+			           WHERE shipment_line.shipment_slip_id=shipment_slips.id
+			         ),
+			         ''
+			       )
+			FROM shipment_slips
+			WHERE id=? AND organization_id=?`,
+			input.SourceShipmentID, input.OrganizationID).
+			Scan(&input.CustomerName, &input.CustomerAddress, &input.CustomerPhone, &status, &linkedSaleID); err != nil {
+			return SalesSlip{}, errors.New("指定された出荷伝票が見つかりません")
+		}
+		if status != "confirmed" {
+			return SalesSlip{}, errors.New("確定済みの出荷伝票だけを売上伝票へ取り込めます")
+		}
+		if linkedSaleID != "" {
+			return SalesSlip{}, ErrShipmentAlreadyUsed
+		}
+		rows, err := tx.QueryContext(ctx, `
+			SELECT sl.product_id,sl.quantity,
+			       CASE WHEN sl.wholesale_price_minor>0 THEN sl.wholesale_price_minor
+			            ELSE p.base_sale_price_minor END
+			FROM shipment_lines sl
+			JOIN products p ON p.id=sl.product_id AND p.organization_id=sl.organization_id
+			WHERE sl.shipment_slip_id=? AND sl.organization_id=?
+			ORDER BY sl.line_number`, input.SourceShipmentID, input.OrganizationID)
+		if err != nil {
+			return SalesSlip{}, err
+		}
+		input.Lines = nil
+		for rows.Next() {
+			var line SalesLineInput
+			if err := rows.Scan(&line.ProductID, &line.Quantity, &line.UnitPriceMinor); err != nil {
+				rows.Close()
+				return SalesSlip{}, err
+			}
+			line.Currency = "JPY"
+			input.Lines = append(input.Lines, line)
+		}
+		if err := rows.Close(); err != nil {
+			return SalesSlip{}, err
+		}
+		if len(input.Lines) == 0 {
+			return SalesSlip{}, errors.New("出荷伝票に明細がありません")
+		}
+	}
+	number := strings.TrimSpace(input.SlipNumber)
+	if input.SourceShipmentID != "" {
+		// A shipment number is only a lookup key. Imported sales always receive
+		// a new sales-slip number in the SL namespace.
+		number = ""
+	}
+	if number == "" {
+		number, err = nextTransactionNumberTx(ctx, tx, "sales_slips", "sales_date", "SL", input.OrganizationID, input.SalesDate)
+		if err != nil {
+			return SalesSlip{}, err
+		}
+	} else {
+		if !salesSlipNumberPattern.MatchString(number) {
+			return SalesSlip{}, errors.New("伝票番号は SL-YYYY-NNNN 形式で入力してください")
+		}
+		var count int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM sales_slips WHERE organization_id=? AND slip_number=?`,
+			input.OrganizationID, number).Scan(&count); err != nil {
+			return SalesSlip{}, err
+		}
+		if count > 0 {
+			return SalesSlip{}, errors.New("同じ伝票番号が既に登録されています")
+		}
 	}
 	id, _ := NewID("sal")
 	now := s.now().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO sales_slips(
-			id,organization_id,slip_number,sales_date,customer_name,status,notes,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,'draft',?,?,?,?)`,
+			id,organization_id,slip_number,sales_date,customer_name,customer_address,customer_phone,
+			status,notes,created_by,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,'draft',?,?,?,?)`,
 		id, input.OrganizationID, number, input.SalesDate, strings.TrimSpace(input.CustomerName),
+		strings.TrimSpace(input.CustomerAddress), strings.TrimSpace(input.CustomerPhone),
 		strings.TrimSpace(input.Notes), input.CreatedBy, now, now); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique constraint failed") {
+			return SalesSlip{}, errors.New("同じ伝票番号が既に登録されています")
+		}
 		return SalesSlip{}, err
+	}
+	if input.SourceShipmentID != "" {
+		result, err := tx.ExecContext(ctx, `
+			UPDATE shipment_slips
+			SET sales_slip_id=?,updated_at=?
+			WHERE id=? AND organization_id=? AND status='confirmed' AND sales_slip_id IS NULL`,
+			id, now, input.SourceShipmentID, input.OrganizationID)
+		if err != nil {
+			return SalesSlip{}, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return SalesSlip{}, err
+		}
+		if affected != 1 {
+			return SalesSlip{}, ErrShipmentAlreadyUsed
+		}
 	}
 	for index, line := range input.Lines {
 		if line.Quantity < 1 || line.UnitPriceMinor < 0 || (line.Currency != "JPY" && line.Currency != "USD") {
@@ -221,8 +344,15 @@ func (s *Store) ConfirmSale(ctx context.Context, organizationID, saleID, actorID
 		return SalesSlip{}, err
 	}
 	defer tx.Rollback()
-	var status string
-	if err := tx.QueryRowContext(ctx, `SELECT status FROM sales_slips WHERE id=? AND organization_id=?`, saleID, organizationID).Scan(&status); err != nil {
+	var status, sourceShipmentID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT s.status,COALESCE((
+			SELECT ss.id FROM shipment_slips ss
+			WHERE ss.organization_id=s.organization_id AND ss.sales_slip_id=s.id
+			LIMIT 1
+		),'')
+		FROM sales_slips s WHERE s.id=? AND s.organization_id=?`,
+		saleID, organizationID).Scan(&status, &sourceShipmentID); err != nil {
 		return SalesSlip{}, err
 	}
 	if status == "confirmed" {
@@ -299,22 +429,34 @@ func (s *Store) ConfirmSale(ctx context.Context, organizationID, saleID, actorID
 			return SalesSlip{}, err
 		}
 		var shipped int
-		if err := tx.QueryRowContext(ctx, `
+		shippedQuery := `
 			SELECT COALESCE(SUM(sl.quantity),0)
 			FROM shipment_lines sl JOIN shipment_slips ss ON ss.id=sl.shipment_slip_id
-			WHERE sl.organization_id=? AND sl.product_id=? AND ss.status='confirmed'`,
-			organizationID, line.ProductID).Scan(&shipped); err != nil {
+			WHERE sl.organization_id=? AND sl.product_id=? AND ss.status='confirmed'`
+		shippedArgs := []any{organizationID, line.ProductID}
+		if sourceShipmentID != "" {
+			shippedQuery += ` AND ss.id=?`
+			shippedArgs = append(shippedArgs, sourceShipmentID)
+		}
+		if err := tx.QueryRowContext(ctx, shippedQuery, shippedArgs...).Scan(&shipped); err != nil {
 			return SalesSlip{}, err
 		}
 		if shipped > line.Quantity {
 			return SalesSlip{}, ErrShipmentExceedsSale
 		}
 		if shipped > 0 {
-			shipmentRows, queryErr := tx.QueryContext(ctx, `
+			shipmentQuery := `
 				SELECT sl.id,sl.quantity FROM shipment_lines sl
 				JOIN shipment_slips ss ON ss.id=sl.shipment_slip_id
 				WHERE sl.organization_id=? AND sl.product_id=? AND ss.status='confirmed'
-				ORDER BY ss.shipment_date,ss.created_at`, organizationID, line.ProductID)
+			`
+			shipmentArgs := []any{organizationID, line.ProductID}
+			if sourceShipmentID != "" {
+				shipmentQuery += ` AND ss.id=?`
+				shipmentArgs = append(shipmentArgs, sourceShipmentID)
+			}
+			shipmentQuery += ` ORDER BY ss.shipment_date,ss.created_at`
+			shipmentRows, queryErr := tx.QueryContext(ctx, shipmentQuery, shipmentArgs...)
 			if queryErr != nil {
 				return SalesSlip{}, queryErr
 			}
@@ -401,6 +543,12 @@ func (s *Store) CancelSale(ctx context.Context, organizationID, saleID, actorID,
 		WHERE id=? AND organization_id=?`, now, actorID, strings.TrimSpace(reason), now, saleID, organizationID); err != nil {
 		return err
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE shipment_slips SET sales_slip_id=NULL,updated_at=?
+		WHERE organization_id=? AND sales_slip_id=?`,
+		now, organizationID, saleID); err != nil {
+		return err
+	}
 	for _, value := range items {
 		if err := recomputeProductTransactionStateTx(ctx, tx, organizationID, value.productID, actorID, "sale.cancelled", now); err != nil {
 			return err
@@ -424,6 +572,43 @@ func (s *Store) CreateShipmentDraft(ctx context.Context, input CreateShipmentInp
 		return ShipmentSlip{}, err
 	}
 	defer tx.Rollback()
+	if input.PurchaseRequestGroupID != "" {
+		rows, queryErr := tx.QueryContext(ctx, `
+			SELECT product_id,status FROM purchase_requests
+			WHERE organization_id=? AND request_group_id=?`,
+			input.OrganizationID, input.PurchaseRequestGroupID)
+		if queryErr != nil {
+			return ShipmentSlip{}, queryErr
+		}
+		approved := make(map[string]struct{})
+		pending := 0
+		for rows.Next() {
+			var productID, status string
+			if scanErr := rows.Scan(&productID, &status); scanErr != nil {
+				rows.Close()
+				return ShipmentSlip{}, scanErr
+			}
+			if status == "pending" {
+				pending++
+			}
+			if status == "approved" {
+				approved[productID] = struct{}{}
+			}
+		}
+		if rowsErr := rows.Err(); rowsErr != nil {
+			rows.Close()
+			return ShipmentSlip{}, rowsErr
+		}
+		rows.Close()
+		if pending > 0 || len(approved) == 0 || len(approved) != len(input.Lines) {
+			return ShipmentSlip{}, errors.New("購入依頼の全商品を判定してから、承認済み商品を出荷してください")
+		}
+		for _, line := range input.Lines {
+			if _, ok := approved[line.ProductID]; !ok {
+				return ShipmentSlip{}, errors.New("購入依頼で承認されていない商品が含まれています")
+			}
+		}
+	}
 	number, err := nextTransactionNumberTx(ctx, tx, "shipment_slips", "shipment_date", "SH", input.OrganizationID, input.ShipmentDate)
 	if err != nil {
 		return ShipmentSlip{}, err
@@ -432,9 +617,9 @@ func (s *Store) CreateShipmentDraft(ctx context.Context, input CreateShipmentInp
 	now := s.now().Format(time.RFC3339Nano)
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO shipment_slips(
-			id,organization_id,shipment_number,shipment_date,recipient_name,status,notes,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,'draft',?,?,?,?)`,
-		id, input.OrganizationID, number, input.ShipmentDate, strings.TrimSpace(input.RecipientName),
+			id,organization_id,purchase_request_group_id,shipment_number,shipment_date,recipient_name,status,notes,created_by,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,'draft',?,?,?,?)`,
+		id, input.OrganizationID, input.PurchaseRequestGroupID, number, input.ShipmentDate, strings.TrimSpace(input.RecipientName),
 		strings.TrimSpace(input.Notes), input.CreatedBy, now, now); err != nil {
 		return ShipmentSlip{}, err
 	}
@@ -452,9 +637,9 @@ func (s *Store) CreateShipmentDraft(ctx context.Context, input CreateShipmentInp
 		lineID, _ := NewID("shl")
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO shipment_lines(
-				id,organization_id,shipment_slip_id,line_number,product_id,quantity,created_at
-			) VALUES(?,?,?,?,?,?,?)`,
-			lineID, input.OrganizationID, id, index+1, line.ProductID, line.Quantity, now); err != nil {
+				id,organization_id,shipment_slip_id,line_number,product_id,quantity,wholesale_price_minor,created_at
+			) VALUES(?,?,?,?,?,?,?,?)`,
+			lineID, input.OrganizationID, id, index+1, line.ProductID, line.Quantity, line.WholesalePriceMinor, now); err != nil {
 			return ShipmentSlip{}, err
 		}
 	}
@@ -526,6 +711,20 @@ func (s *Store) ConfirmShipment(ctx context.Context, organizationID, shipmentID,
 			}
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return ShipmentSlip{}, err
+		} else {
+			var alreadyShipped int
+			if err := tx.QueryRowContext(ctx, `
+				SELECT COALESCE(SUM(sl.quantity),0)
+				FROM shipment_lines sl
+				JOIN shipment_slips ss ON ss.id=sl.shipment_slip_id
+				WHERE sl.organization_id=? AND sl.product_id=?
+				  AND ss.status='confirmed' AND ss.id<>?`,
+				organizationID, line.ProductID, shipmentID).Scan(&alreadyShipped); err != nil {
+				return ShipmentSlip{}, err
+			}
+			if alreadyShipped > 0 {
+				return ShipmentSlip{}, ErrProductAlreadyShipped
+			}
 		}
 		if err := recomputeProductTransactionStateTx(ctx, tx, organizationID, line.ProductID, actorID, "shipment.confirmed", now); err != nil {
 			return ShipmentSlip{}, err
@@ -590,7 +789,10 @@ func (s *Store) CancelShipment(ctx context.Context, organizationID, shipmentID, 
 func (s *Store) Sales(ctx context.Context, organizationID string) ([]SalesSlip, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT s.id,s.organization_id,s.slip_number,s.sales_date,s.customer_name,s.status,s.notes,s.created_at,s.confirmed_at,
-		       COALESCE(SUM(l.converted_total_jpy),0)
+		       COALESCE(SUM(CASE WHEN l.converted_total_jpy > 0 THEN l.converted_total_jpy
+		                         WHEN l.sale_currency='JPY' THEN l.unit_price_minor*l.quantity ELSE 0 END),0),
+		       s.customer_address,s.customer_phone,s.qualified_invoice_number,
+		       (SELECT COUNT(*) FROM sales_slip_revisions r WHERE r.sales_slip_id=s.id)
 		FROM sales_slips s LEFT JOIN sales_lines l ON l.sales_slip_id=s.id
 		WHERE s.organization_id=? GROUP BY s.id ORDER BY s.sales_date DESC,s.created_at DESC`, organizationID)
 	if err != nil {
@@ -624,10 +826,42 @@ func (s *Store) Sales(ctx context.Context, organizationID string) ([]SalesSlip, 
 	return sales, nil
 }
 
+func (s *Store) NextSalesSlipNumber(ctx context.Context, organizationID, salesDate string) (string, error) {
+	if len(salesDate) < 4 {
+		return "", errors.New("売上日を正しく入力してください")
+	}
+	var maxSequence int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(CAST(substr(slip_number,9) AS INTEGER)),0)
+		FROM sales_slips
+		WHERE organization_id=? AND substr(sales_date,1,4)=?
+		  AND slip_number GLOB ?`,
+		organizationID, salesDate[:4], "SL-"+salesDate[:4]+"-[0-9][0-9][0-9][0-9]").Scan(&maxSequence); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("SL-%s-%04d", salesDate[:4], maxSequence+1), nil
+}
+
+func (s *Store) NextShipmentSlipNumber(ctx context.Context, organizationID, shipmentDate string) (string, error) {
+	if len(shipmentDate) < 4 {
+		return "", errors.New("出荷日を正しく入力してください")
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM shipment_slips WHERE organization_id=? AND substr(shipment_date,1,4)=?`,
+		organizationID, shipmentDate[:4]).Scan(&count); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("SH-%s-%04d", shipmentDate[:4], count+1), nil
+}
+
 func (s *Store) Sale(ctx context.Context, organizationID, saleID string) (SalesSlip, error) {
 	sale, err := scanSaleHeader(s.db.QueryRowContext(ctx, `
 		SELECT s.id,s.organization_id,s.slip_number,s.sales_date,s.customer_name,s.status,s.notes,s.created_at,s.confirmed_at,
-		       COALESCE(SUM(l.converted_total_jpy),0)
+		       COALESCE(SUM(CASE WHEN l.converted_total_jpy > 0 THEN l.converted_total_jpy
+		                         WHEN l.sale_currency='JPY' THEN l.unit_price_minor*l.quantity ELSE 0 END),0),
+		       s.customer_address,s.customer_phone,s.qualified_invoice_number,
+		       (SELECT COUNT(*) FROM sales_slip_revisions r WHERE r.sales_slip_id=s.id)
 		FROM sales_slips s LEFT JOIN sales_lines l ON l.sales_slip_id=s.id
 		WHERE s.organization_id=? AND s.id=? GROUP BY s.id`, organizationID, saleID))
 	if err != nil {
@@ -673,7 +907,10 @@ func (s *Store) Sale(ctx context.Context, organizationID, saleID string) (SalesS
 
 func (s *Store) Shipments(ctx context.Context, organizationID string) ([]ShipmentSlip, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id,organization_id,shipment_number,shipment_date,recipient_name,status,notes,created_at,confirmed_at
+		SELECT id,organization_id,shipment_number,shipment_date,recipient_name,status,notes,created_at,confirmed_at,
+		       recipient_address,recipient_phone,tracking_number,
+		       COALESCE(sales_slip_id,''),
+		       (SELECT COUNT(*) FROM shipment_slip_revisions r WHERE r.shipment_slip_id=shipment_slips.id)
 		FROM shipment_slips WHERE organization_id=? ORDER BY shipment_date DESC,created_at DESC`, organizationID)
 	if err != nil {
 		return nil, err
@@ -711,7 +948,10 @@ func (s *Store) Shipments(ctx context.Context, organizationID string) ([]Shipmen
 
 func (s *Store) Shipment(ctx context.Context, organizationID, shipmentID string) (ShipmentSlip, error) {
 	shipment, err := scanShipmentHeader(s.db.QueryRowContext(ctx, `
-		SELECT id,organization_id,shipment_number,shipment_date,recipient_name,status,notes,created_at,confirmed_at
+		SELECT id,organization_id,shipment_number,shipment_date,recipient_name,status,notes,created_at,confirmed_at,
+		       recipient_address,recipient_phone,tracking_number,
+		       COALESCE(sales_slip_id,''),
+		       (SELECT COUNT(*) FROM shipment_slip_revisions r WHERE r.shipment_slip_id=shipment_slips.id)
 		FROM shipment_slips WHERE organization_id=? AND id=?`, organizationID, shipmentID))
 	if err != nil {
 		return ShipmentSlip{}, err
@@ -719,6 +959,10 @@ func (s *Store) Shipment(ctx context.Context, organizationID, shipmentID string)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT sl.id,sl.product_id,p.product_code,p.brand,p.model_number,sl.quantity,
 		       COALESCE(a.sales_line_id,''),COALESCE(ss.slip_number,''),COALESCE(a.allocated_quantity,0)
+		       ,CASE WHEN sl.wholesale_price_minor>0 THEN sl.wholesale_price_minor
+		             WHEN sal.converted_unit_price_jpy>0 THEN sal.converted_unit_price_jpy
+		             WHEN sal.sale_currency='JPY' THEN sal.unit_price_minor
+		             ELSE p.base_sale_price_minor END
 		FROM shipment_lines sl
 		JOIN products p ON p.id=sl.product_id AND p.organization_id=sl.organization_id
 		LEFT JOIN sales_shipment_allocations a ON a.shipment_line_id=sl.id
@@ -733,9 +977,11 @@ func (s *Store) Shipment(ctx context.Context, organizationID, shipmentID string)
 	for rows.Next() {
 		var line ShipmentLine
 		if err := rows.Scan(&line.ID, &line.ProductID, &line.ProductCode, &line.Brand, &line.ModelNumber,
-			&line.Quantity, &line.SalesLineID, &line.SalesSlipNumber, &line.AllocatedQuantity); err != nil {
+			&line.Quantity, &line.SalesLineID, &line.SalesSlipNumber, &line.AllocatedQuantity,
+			&line.WholesalePriceMinor); err != nil {
 			return ShipmentSlip{}, err
 		}
+		shipment.TotalJPY += int64(line.Quantity) * line.WholesalePriceMinor
 		if shipment.Status == "confirmed" && line.SalesLineID == "" {
 			line.Warning = "売上未確定"
 			shipment.Warning = "出荷済み・売上未確定"
@@ -743,6 +989,17 @@ func (s *Store) Shipment(ctx context.Context, organizationID, shipmentID string)
 		shipment.Lines = append(shipment.Lines, line)
 	}
 	return shipment, rows.Err()
+}
+
+func (s *Store) ShipmentByNumber(ctx context.Context, organizationID, shipmentNumber string) (ShipmentSlip, error) {
+	var shipmentID string
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT id FROM shipment_slips
+		WHERE organization_id=? AND shipment_number=?`,
+		organizationID, strings.TrimSpace(shipmentNumber)).Scan(&shipmentID); err != nil {
+		return ShipmentSlip{}, err
+	}
+	return s.Shipment(ctx, organizationID, shipmentID)
 }
 
 func (s *Store) TransactionProducts(ctx context.Context, organizationID string) ([]Product, error) {
@@ -813,12 +1070,24 @@ func nextTransactionNumberTx(ctx context.Context, tx *sql.Tx, table, dateColumn,
 	if table != "sales_slips" && table != "shipment_slips" {
 		return "", errors.New("unsupported transaction table")
 	}
-	query := fmt.Sprintf(`SELECT COUNT(*) FROM %s WHERE organization_id=? AND substr(%s,1,4)=?`, table, dateColumn)
-	var count int
-	if err := tx.QueryRowContext(ctx, query, organizationID, date[:4]).Scan(&count); err != nil {
+	sequenceStart := len(prefix) + 7
+	query := fmt.Sprintf(`
+		SELECT COALESCE(MAX(CAST(substr(%s_number,?) AS INTEGER)),0)
+		FROM %s
+		WHERE organization_id=? AND substr(%s,1,4)=?
+		  AND %s_number GLOB ?`, map[string]string{
+		"sales_slips":    "slip",
+		"shipment_slips": "shipment",
+	}[table], table, dateColumn, map[string]string{
+		"sales_slips":    "slip",
+		"shipment_slips": "shipment",
+	}[table])
+	var maxSequence int
+	numberPattern := fmt.Sprintf("%s-%s-[0-9][0-9][0-9][0-9]", prefix, date[:4])
+	if err := tx.QueryRowContext(ctx, query, sequenceStart, organizationID, date[:4], numberPattern).Scan(&maxSequence); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%s-%s-%04d", prefix, date[:4], count+1), nil
+	return fmt.Sprintf("%s-%s-%04d", prefix, date[:4], maxSequence+1), nil
 }
 
 type rowScanner interface {
@@ -830,7 +1099,8 @@ func scanSaleHeader(row rowScanner) (SalesSlip, error) {
 	var created string
 	var confirmed sql.NullString
 	err := row.Scan(&sale.ID, &sale.OrganizationID, &sale.SlipNumber, &sale.SalesDate, &sale.CustomerName,
-		&sale.Status, &sale.Notes, &created, &confirmed, &sale.TotalJPY)
+		&sale.Status, &sale.Notes, &created, &confirmed, &sale.TotalJPY,
+		&sale.CustomerAddress, &sale.CustomerPhone, &sale.QualifiedInvoiceNumber, &sale.RevisionCount)
 	if err != nil {
 		return SalesSlip{}, err
 	}
@@ -847,7 +1117,9 @@ func scanShipmentHeader(row rowScanner) (ShipmentSlip, error) {
 	var created string
 	var confirmed sql.NullString
 	err := row.Scan(&shipment.ID, &shipment.OrganizationID, &shipment.ShipmentNumber, &shipment.ShipmentDate,
-		&shipment.RecipientName, &shipment.Status, &shipment.Notes, &created, &confirmed)
+		&shipment.RecipientName, &shipment.Status, &shipment.Notes, &created, &confirmed,
+		&shipment.RecipientAddress, &shipment.RecipientPhone, &shipment.TrackingNumber,
+		&shipment.LinkedSalesSlipID, &shipment.RevisionCount)
 	if err != nil {
 		return ShipmentSlip{}, err
 	}

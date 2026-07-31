@@ -1,0 +1,2 @@
+-- SQLite does not support a portable rollback for an added column.
+-- The application keeps the column when rolling back this migration.

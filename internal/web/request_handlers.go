@@ -2,25 +2,115 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
 )
 
+type purchaseRequestGroupView struct {
+	ID            string
+	DisplayNumber string
+	GuestName     string
+	Message       string
+	RequestedAt   time.Time
+	Status        string
+	ItemCount     int
+	PendingCount  int
+	ApprovedCount int
+	Total         int64
+	ApprovedTotal int64
+	Currency      string
+	CanCreateShip bool
+	Items         []database.PurchaseRequest
+}
+
+func purchaseRequestDisplayNumber(requestNumber string) string {
+	parts := strings.Split(requestNumber, "-")
+	if len(parts) == 0 {
+		return requestNumber
+	}
+	sequence, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return requestNumber
+	}
+	return fmt.Sprintf("PR-%03d", sequence)
+}
+
+func buildPurchaseRequestGroupViews(groups []database.PurchaseRequestGroup) ([]purchaseRequestGroupView, int) {
+	views := make([]purchaseRequestGroupView, 0, len(groups))
+	pendingGroups := 0
+	for _, group := range groups {
+		if len(group.Items) == 0 {
+			continue
+		}
+		first := group.Items[0]
+		view := purchaseRequestGroupView{
+			ID: group.ID, DisplayNumber: purchaseRequestDisplayNumber(first.RequestNumber),
+			GuestName: first.GuestName, Message: first.Message, RequestedAt: first.RequestedAt,
+			ItemCount: len(group.Items), Currency: first.SaleCurrency, Items: group.Items,
+		}
+		for _, item := range group.Items {
+			view.Total += item.SalePriceMinor
+			switch item.Status {
+			case "pending":
+				view.PendingCount++
+			case "approved":
+				view.ApprovedCount++
+				view.ApprovedTotal += item.SalePriceMinor
+			}
+		}
+		switch {
+		case view.PendingCount > 0:
+			view.Status = "pending"
+			pendingGroups++
+		case view.ApprovedCount > 0:
+			view.Status = "approved"
+		default:
+			view.Status = "handled"
+		}
+		view.CanCreateShip = view.PendingCount == 0 && view.ApprovedCount > 0
+		views = append(views, view)
+	}
+	return views, pendingGroups
+}
+
 func (s *Server) publicProducts(w http.ResponseWriter, r *http.Request) {
+	guest, ok := currentGuest(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/guest/login", http.StatusSeeOther)
+		return
+	}
 	organizationID, err := s.store.OrganizationIDByCode(r.Context(), s.cfg.OrganizationCode)
 	if err != nil {
 		http.Error(w, "公開カタログを準備できませんでした。", http.StatusServiceUnavailable)
 		return
 	}
 	_ = s.store.ExpireReservations(r.Context(), organizationID)
-	products, err := s.store.PublicProducts(r.Context(), s.cfg.OrganizationCode)
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	brand := strings.TrimSpace(r.URL.Query().Get("brand"))
+	condition := strings.TrimSpace(r.URL.Query().Get("condition"))
+	filter := database.PublicProductFilter{
+		Query: query, Brand: brand, Condition: condition,
+	}
+	products, err := s.store.PublicProductsForGuest(r.Context(), s.cfg.OrganizationCode, guest.CompanyCode, filter)
 	if err != nil {
-		http.Error(w, "公開商品を取得できませんでした。", http.StatusInternalServerError)
+		http.Error(w, "公開商品を検索できませんでした。", http.StatusInternalServerError)
 		return
+	}
+	brandSeen := make(map[string]bool)
+	var brands []string
+	for _, product := range products {
+		if !brandSeen[product.Brand] {
+			brandSeen[product.Brand] = true
+			brands = append(brands, product.Brand)
+		}
 	}
 	csrf, err := database.RandomToken()
 	if err != nil || s.store.CreateLoginCSRF(r.Context(), csrf, 30*time.Minute) != nil {
@@ -28,11 +118,85 @@ func (s *Server) publicProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "public", http.StatusOK, pageData{
-		Title: "公開商品", PublicProducts: products, CSRF: csrf, Notice: r.URL.Query().Get("notice"),
+		Title: "公開商品", PublicProducts: products, ProductBrands: brands,
+		PublicQuery: query, PublicBrand: brand, PublicCondition: condition,
+		GuestCompanyCode: guest.CompanyCode, GuestCompanyName: guest.CompanyName,
+		CSRF: csrf, Notice: r.URL.Query().Get("notice"),
 	})
 }
 
+func (s *Server) publicProductImage(w http.ResponseWriter, r *http.Request) {
+	guest, ok := currentGuest(r.Context())
+	if !ok || !strings.EqualFold(r.PathValue("companyCode"), guest.CompanyCode) {
+		http.NotFound(w, r)
+		return
+	}
+	image, err := s.store.GuestPublishedProductImage(r.Context(), guest.OrganizationID, guest.CompanyID, r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	base, err := filepath.Abs(s.cfg.UploadDirectory)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	target, err := filepath.Abs(filepath.Join(base, image.StoragePath))
+	if err != nil || (!strings.HasPrefix(target, base+string(os.PathSeparator)) && target != base) {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", image.ContentType)
+	w.Header().Set("Content-Disposition", `inline; filename="`+url.PathEscape(image.OriginalName)+`"`)
+	http.ServeFile(w, r, target)
+}
+
+func (s *Server) publicPurchaseRequests(w http.ResponseWriter, r *http.Request) {
+	guest, ok := currentGuest(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/guest/login", http.StatusSeeOther)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "入力を確認してください。", http.StatusBadRequest)
+		return
+	}
+	if !s.store.ConsumeLoginCSRF(r.Context(), r.FormValue("csrf_token")) {
+		http.Error(w, "画面の有効期限が切れました。読み込み直してください。", http.StatusForbidden)
+		return
+	}
+	group, err := s.store.CreatePurchaseRequestGroup(r.Context(), database.PurchaseRequestGroupInput{
+		OrganizationCode: s.cfg.OrganizationCode,
+		GuestCompanyID:   guest.CompanyID,
+		ProductIDs:       r.Form["product_id"],
+		GuestName:        r.FormValue("guest_name"),
+		GuestEmail:       r.FormValue("guest_email"),
+		GuestPhone:       r.FormValue("guest_phone"),
+		Message:          r.FormValue("message"),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	for _, request := range group.Items {
+		after, _ := json.Marshal(request)
+		_ = s.store.WriteAudit(r.Context(), database.AuditEntry{
+			OrganizationID: request.OrganizationID, TargetType: "purchase_request", TargetID: request.ID,
+			Action: "purchase_request.submitted", AfterJSON: string(after), Result: "success",
+			IPAddress: clientIP(r), UserAgent: r.UserAgent(), RequestID: requestID(r.Context()),
+		})
+	}
+	http.Redirect(w, r, "/public/products?notice="+url.QueryEscape(
+		strconv.Itoa(len(group.Items))+"点の購入依頼を受け付けました。担当者からの連絡をお待ちください。"), http.StatusSeeOther)
+}
+
 func (s *Server) publicPurchaseRequest(w http.ResponseWriter, r *http.Request) {
+	guest, ok := currentGuest(r.Context())
+	if !ok {
+		http.Redirect(w, r, "/guest/login", http.StatusSeeOther)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "入力を確認してください。", http.StatusBadRequest)
@@ -44,6 +208,7 @@ func (s *Server) publicPurchaseRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	request, err := s.store.CreatePurchaseRequest(r.Context(), database.PurchaseRequestInput{
 		OrganizationCode: s.cfg.OrganizationCode,
+		GuestCompanyID:   guest.CompanyID,
 		ProductID:        r.PathValue("id"), GuestName: r.FormValue("guest_name"),
 		GuestEmail: r.FormValue("guest_email"), GuestPhone: r.FormValue("guest_phone"),
 		Message: r.FormValue("message"),
@@ -64,13 +229,19 @@ func (s *Server) publicPurchaseRequest(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) purchaseRequests(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
-	requests, err := s.store.PurchaseRequests(r.Context(), user.OrganizationID)
+	groups, err := s.store.PurchaseRequestGroups(r.Context(), user.OrganizationID, "")
 	if err != nil {
 		http.Error(w, "購入依頼を取得できませんでした。", http.StatusInternalServerError)
 		return
 	}
+	groupViews, pendingCount := buildPurchaseRequestGroupViews(groups)
+	var total int64
+	for _, group := range groupViews {
+		total += group.Total
+	}
 	s.render(w, "purchase-requests", http.StatusOK, pageData{
-		Title: "購入依頼・取置", Active: "requests", User: user, PurchaseRequests: requests,
+		Title: "購入一覧", Active: "requests", User: user, PurchaseRequestGroups: groupViews,
+		PurchaseRequestTotal: total, PurchaseRequestPending: pendingCount,
 		CSRF: csrfFromRequest(r), Notice: r.URL.Query().Get("notice"),
 	})
 }

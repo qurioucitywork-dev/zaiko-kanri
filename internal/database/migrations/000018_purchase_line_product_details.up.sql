@@ -1,0 +1,11 @@
+ALTER TABLE purchase_slip_lines ADD COLUMN requested_product_code TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN sku TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN serial_number TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN material_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN movement_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN condition_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN belt_material_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN dial_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN box_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN accessories TEXT NOT NULL DEFAULT '';
+ALTER TABLE purchase_slip_lines ADD COLUMN features_text TEXT NOT NULL DEFAULT '';

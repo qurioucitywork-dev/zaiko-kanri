@@ -48,6 +48,57 @@ func TestPurchaseRequestDoesNotReserveAndAllowsMultiplePending(t *testing.T) {
 	}
 }
 
+func TestPublicCatalogFiltersAndImageScope(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	product := requestTestProduct(t, store)
+	image, err := store.AddProductImage(ctx, ProductImage{
+		ProductID: product.ID, StoragePath: "catalog/test.webp", OriginalName: "test.webp",
+		ContentType: "image/webp", SizeBytes: 128,
+	}, "org_preview", "usr_admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filtered, err := store.PublicProductsFiltered(ctx, "PREVIEW", PublicProductFilter{
+		Query: product.ModelNumber, Brand: product.Brand, Condition: product.Condition,
+	})
+	if err != nil || len(filtered) != 1 || len(filtered[0].Images) != 1 {
+		t.Fatalf("filtered=%+v err=%v", filtered, err)
+	}
+	if _, err := store.PublicProductImage(ctx, "PREVIEW", image.ID); err != nil {
+		t.Fatalf("published image: %v", err)
+	}
+	if err := store.SetProductPublication(ctx, "org_preview", product.ID, "usr_admin", "private"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PublicProductImage(ctx, "PREVIEW", image.ID); err == nil {
+		t.Fatal("private product image must not be publicly available")
+	}
+}
+
+func TestSeedGuestCatalogPreviewIsIdempotent(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	if err := store.SeedInventoryPreview(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SeedGuestCatalogPreview(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SeedGuestCatalogPreview(ctx); err != nil {
+		t.Fatal(err)
+	}
+	products, err := store.PublicProducts(ctx, "PREVIEW")
+	if err != nil || len(products) < 7 {
+		t.Fatalf("public products=%d err=%v", len(products), err)
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM products WHERE organization_id='org_preview' AND sku='GUEST-OMEGA-SPEED'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("guest seed duplicates=%d err=%v", count, err)
+	}
+}
+
 func TestOnlyOneConcurrentRequestCanReserveProduct(t *testing.T) {
 	store := testStore(t)
 	product := requestTestProduct(t, store)

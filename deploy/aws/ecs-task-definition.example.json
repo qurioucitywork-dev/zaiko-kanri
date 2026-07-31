@@ -1,0 +1,63 @@
+{
+  "family": "zaiko-web",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "REPLACE_WITH_EXECUTION_ROLE_ARN",
+  "taskRoleArn": "REPLACE_WITH_TASK_ROLE_ARN",
+  "containerDefinitions": [
+    {
+      "name": "zaiko-web",
+      "image": "REPLACE_WITH_ECR_IMAGE_DIGEST",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "ZAIKO_ADDRESS",
+          "value": "0.0.0.0:8080"
+        },
+        {
+          "name": "ZAIKO_ENV",
+          "value": "production"
+        },
+        {
+          "name": "ZAIKO_DB_PROVIDER",
+          "value": "postgres"
+        },
+        {
+          "name": "ZAIKO_OBJECT_PROVIDER",
+          "value": "s3"
+        },
+        {
+          "name": "ZAIKO_COOKIE_SECURE",
+          "value": "true"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "ZAIKO_POSTGRES_DSN",
+          "valueFrom": "REPLACE_WITH_DB_SECRET_ARN"
+        },
+        {
+          "name": "ZAIKO_SESSION_SECRET",
+          "valueFrom": "REPLACE_WITH_SESSION_SECRET_ARN"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/zaiko-web",
+          "awslogs-region": "REPLACE_WITH_AWS_REGION",
+          "awslogs-stream-prefix": "web"
+        }
+      },
+      "readonlyRootFilesystem": true
+    }
+  ]
+}

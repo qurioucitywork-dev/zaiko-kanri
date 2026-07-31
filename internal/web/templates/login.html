@@ -1,42 +1,52 @@
 {{define "content"}}
-<main class="login-page">
-  <section class="login-intro">
-    <div class="intro-inner">
-      <div class="login-brand"><span class="brand-mark large">庫</span><strong>在庫管理ツール</strong></div>
-      <p class="intro-subtitle">時計・貴金属 業務管理システム</p>
-      <ul class="feature-list">
-        <li><span>✓</span>仕入・在庫・売上・出荷を一元管理</li>
-        <li><span>✓</span>組織境界と権限をサーバー側で保護</li>
-        <li><span>✓</span>重要操作を監査ログへ記録</li>
-        <li><span>✓</span>段階的に機能を追加できるGo基盤</li>
-      </ul>
-      <small class="login-version">© 2026 在庫管理ツール — Phase 1 preview</small>
-    </div>
-  </section>
-  <section class="login-panel">
-    <div class="login-card">
-      <div class="demo-label">⚡ 制作プレビュー — サンプルデータで動作します</div>
-      <h1>ログイン</h1>
-      <p class="muted">利用者区分に応じた画面を表示します</p>
-      {{if .Notice}}<div class="alert success">{{.Notice}}</div>{{end}}
-      {{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
-      <form method="post" action="/login" class="form-stack">
-        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-        <label>ユーザーID
-          <input name="username" value="admin" autocomplete="username" required>
-        </label>
-        <label>パスワード
-          <input type="password" name="password" value="preview-admin-2026" autocomplete="current-password" required>
-        </label>
-        <button class="button primary full" type="submit">管理画面へログイン</button>
-      </form>
-      <div class="demo-credentials">
-        <strong>プレビュー用認証情報</strong>
-        <span>管理者：admin / preview-admin-2026</span>
-        <span>作業者：worker / preview-worker-2026</span>
+<div class="login-page">
+  <div class="login-shell">
+    <section class="login-intro">
+      <div class="intro-inner">
+        <div class="login-brand"><span>♜</span><strong>在庫管理ツール</strong></div>
+        <p class="intro-subtitle">時計・貴金属 業務管理システム v1.0</p>
+        <ul class="feature-list">
+          <li><span>✓</span>仕入・売上・出荷をワンシステムで管理</li>
+          <li><span>✓</span>古物営業法対応の個品採番機能</li>
+          <li><span>✓</span>マスター元管理（ブランド・仕入先等）</li>
+          <li><span>✓</span>実績分析・構成比グラフ</li>
+          <li><span>✓</span>ゲスト（取引先）アクセス対応</li>
+        </ul>
+        <small class="login-version">© 2026 在庫管理ツール — プロトタイプ v1.0</small>
       </div>
-      <a class="public-link" href="/public/products">ゲスト向け公開画面を見る →</a>
-    </div>
-  </section>
-</main>
+    </section>
+    <section class="login-panel">
+      <div class="login-card" data-login-card
+           {{if .PreviewMode}}data-admin-password="{{.LoginAdminPassword}}" data-worker-password="{{.LoginWorkerPassword}}"{{end}}>
+        {{if .PreviewMode}}<div class="demo-label">⚡ デモ版 — サンプルデータで動作します</div>{{end}}
+        <h1>ログイン</h1>
+        <p class="muted">ログイン種別を選択してください</p>
+        {{if .Notice}}<div class="alert success">{{.Notice}}</div>{{end}}
+        {{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+        <div class="login-role-tabs" role="tablist" aria-label="ログイン種別">
+          <button type="button" class="active" role="tab" aria-selected="true" data-login-role="admin">♟ 管理者</button>
+          <button type="button" role="tab" aria-selected="false" data-login-role="worker">▣ 作業員</button>
+          <a role="tab" aria-selected="false" href="/guest/login">▦ ゲスト</a>
+        </div>
+        <form method="post" action="/login" class="login-form">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <label>ユーザーID
+            <span class="login-input"><i>♟</i><input name="username" value="{{if .PreviewMode}}admin{{end}}" autocomplete="username" required data-login-username></span>
+          </label>
+          <label>パスワード
+            <span class="login-input"><i>▣</i><input type="password" name="password" value="{{if .PreviewMode}}{{.LoginAdminPassword}}{{end}}" autocomplete="current-password" required data-login-password></span>
+          </label>
+          <button class="button login-submit" type="submit" data-login-submit>↪ 管理者としてログイン</button>
+        </form>
+        {{if .PreviewMode}}
+        <div class="demo-credentials">
+          <strong>▣ デモ用認証情報</strong>
+          <span>ID: admin ／ PW: {{.LoginAdminPassword}}</span>
+          <span>作業員 ID: worker ／ PW: {{.LoginWorkerPassword}}</span>
+        </div>
+        {{end}}
+      </div>
+    </section>
+  </div>
+</div>
 {{end}}

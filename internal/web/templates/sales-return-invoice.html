@@ -1,0 +1,87 @@
+{{define "sales-return-sheet"}}
+<article class="invoice-sheet sales-return-invoice-sheet" data-invoice-sheet>
+  <header class="invoice-letterhead">
+    <div>
+      <h1>売上返品 請求書</h1>
+      <p class="invoice-subtitle">SALES RETURN INVOICE</p>
+    </div>
+    <div class="invoice-company">
+      <strong>{{.InvoiceCompany.Name}}</strong>
+      <span>{{.InvoiceCompany.PostalCode}} {{.InvoiceCompany.Address}}</span>
+      <span>TEL {{.InvoiceCompany.Phone}} / FAX {{.InvoiceCompany.Fax}}</span>
+      <span>{{.InvoiceCompany.Email}}</span>
+      <span>適格請求書発行事業者登録番号 {{.InvoiceCompany.QualifiedInvoiceNumber}}</span>
+    </div>
+  </header>
+
+  <section class="invoice-identifiers">
+    <div><span>請求書番号</span><strong>INV-{{.SalesReturnNumber}}</strong></div>
+    <div><span>元売上伝票</span><strong>{{.Sale.SlipNumber}}</strong></div>
+    <div><span>売上返品伝票</span><strong>{{.SalesReturnNumber}}</strong></div>
+    <div><span>発行日</span><strong>{{today}}</strong></div>
+    <div><span>返品日</span><strong>{{(index .SalesReturnItems 0).ReturnDate}}</strong></div>
+    <div><span>ステータス</span><strong>{{if .SalesReturnCompleted}}処理済{{else}}差戻し{{end}}</strong></div>
+  </section>
+
+  <section class="invoice-bill-to">
+    <p>請求先（販売先）</p>
+    <h2>{{.Sale.CustomerName}} 御中</h2>
+    <span>{{if .Sale.CustomerAddress}}{{.Sale.CustomerAddress}}{{else}}住所：登録情報なし{{end}}</span>
+    <span>TEL {{if .Sale.CustomerPhone}}{{.Sale.CustomerPhone}}{{else}}登録情報なし{{end}}</span>
+    <span>適格請求書発行事業者登録番号 {{if .Sale.QualifiedInvoiceNumber}}{{.Sale.QualifiedInvoiceNumber}}{{else}}登録情報なし{{end}}</span>
+  </section>
+
+  <section class="invoice-reason">
+    <strong>返品理由</strong>
+    <span>{{.SalesReturnReason}}{{if .SalesReturnNotes}} / {{.SalesReturnNotes}}{{end}}</span>
+  </section>
+
+  <table class="invoice-lines">
+    <thead><tr><th>No.</th><th>商品名 / 詳細</th><th>数量</th><th>単価</th><th>返品金額</th></tr></thead>
+    <tbody>
+      {{range $index, $line := .SalesReturnItems}}
+      <tr>
+        <td>{{add $index 1}}</td>
+        <td><strong>{{$line.Brand}} {{$line.ModelNumber}}</strong><small>商品コード：{{$line.ProductCode}}</small></td>
+        <td>{{$line.Quantity}}</td>
+        <td>{{formatMoney $line.AmountJPY "JPY"}}</td>
+        <td>{{formatMoney $line.AmountJPY "JPY"}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <section class="invoice-totals">
+    <div><span>小計</span><strong>{{formatMoney .SalesReturnTotal "JPY"}}</strong></div>
+    <div class="grand-total"><span>ご請求金額（税込）</span><strong>{{formatMoney .SalesReturnTotal "JPY"}}</strong></div>
+  </section>
+  <footer class="invoice-contact">
+    <strong>お問い合わせ</strong>
+    <span>{{.InvoiceCompany.Name}}　TEL {{.InvoiceCompany.Phone}}　{{.InvoiceCompany.Email}}</span>
+  </footer>
+</article>
+{{end}}
+
+{{define "preview"}}
+<div class="invoice-preview-panel" data-invoice-preview-panel>
+  <header><div><strong>▤ 請求書プレビュー</strong><span>{{.SalesReturnNumber}}</span></div><button type="button" data-invoice-preview-close aria-label="閉じる">×</button></header>
+  <div class="invoice-preview-scroll">{{template "sales-return-sheet" .}}</div>
+  <footer><button class="button secondary" type="button" data-invoice-preview-close>× 閉じる</button><button class="button sales-return-invoice-button" type="button" data-invoice-print>▤ 印刷</button></footer>
+</div>
+{{end}}
+
+{{define "document"}}
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>INV-{{.SalesReturnNumber}} 売上返品請求書</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="invoice-print-document">
+  <div class="invoice-toolbar"><button class="button sales-return-invoice-button" type="button" data-invoice-print>▤ 印刷</button></div>
+  {{template "sales-return-sheet" .}}
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
+{{end}}

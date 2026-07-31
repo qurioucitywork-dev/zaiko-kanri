@@ -1,40 +1,147 @@
 {{define "content"}}
-<section class="welcome">
-  <div><p class="eyebrow">PHASE 8 RELEASE QUALITY</p><h2>{{.User.DisplayName}}さん、お疲れさまです</h2><p>業務機能、承認、監査、バックアップを備えたリリース候補版です。</p></div>
-  <span class="system-status"><i></i>システム正常</span>
+<section class="metric-grid dashboard-metrics" aria-label="主要指標">
+  <article class="metric">
+    <span class="metric-icon blue" aria-hidden="true">▣</span>
+    <div><small>在庫点数</small><strong>{{.Stats.InStock}}<em>点</em></strong><p>今月 +{{.PurchaseCount}}点仕入</p></div>
+  </article>
+  <article class="metric">
+    <span class="metric-icon orange" aria-hidden="true">¥</span>
+    <div><small>今月売上</small><strong>{{formatMoney .SalesTotalJPY "JPY"}}</strong><p class="positive">▲ {{.SalesTrendText}}</p></div>
+  </article>
+  <article class="metric">
+    <span class="metric-icon green" aria-hidden="true">↪</span>
+    <div><small>今月仕入金額</small><strong>{{formatMoney .PurchaseTotalJPY "JPY"}}</strong><p>{{.PurchaseCount}}点仕入</p></div>
+  </article>
+  <article class="metric">
+    <span class="metric-icon purple" aria-hidden="true">🛒</span>
+    <div><small>未対応購入リクエスト</small><strong>{{.RequestCount}}<em>件</em></strong><p class="{{if .RequestCount}}negative{{end}}">{{if .RequestCount}}● 未対応あり{{else}}未対応なし{{end}}</p></div>
+  </article>
 </section>
 
-<section class="metric-grid" aria-label="主要指標">
-  <article class="metric"><span class="metric-icon blue">▣</span><div><small>有効在庫</small><strong>{{.Stats.Total}}</strong><p>在庫中 {{.Stats.InStock}}点</p></div></article>
-  <article class="metric"><span class="metric-icon orange">▤</span><div><small>仕入中</small><strong>{{.Stats.Purchasing}}</strong><p>検品待ち商品</p></div></article>
-  <article class="metric"><span class="metric-icon green">¥</span><div><small>確定売上</small><strong>{{formatMoney .SalesTotalJPY "JPY"}}</strong><p>{{.SalesCount}}伝票</p></div></article>
-  <article class="metric"><span class="metric-icon red">♡</span><div><small>購入依頼</small><strong>{{.RequestCount}}</strong><p>申請中</p></div></article>
-</section>
+<div class="dashboard-panels">
+  <section class="card dashboard-latest">
+    <div class="card-header compact">
+      <h2><span aria-hidden="true">▰</span> 最新仕入（直近5件）</h2>
+      <a class="button secondary small" href="/products">一覧を見る →</a>
+    </div>
+    {{if .Products}}
+    <div class="table-wrap" tabindex="0" aria-label="最新仕入">
+      <table class="dashboard-table">
+        <thead><tr><th>商品コード</th><th>ブランド / モデル</th><th>仕入金額</th><th>ステータス</th></tr></thead>
+        <tbody>
+        {{range .Products}}
+          <tr class="dashboard-product-row" data-product-row="{{.ID}}" tabindex="0" role="button" aria-label="{{.ProductCode}} {{.Brand}} {{.ModelNumber}}の詳細を表示">
+            <td><a class="dashboard-code" href="/products/{{.ID}}" data-product-detail="{{.ID}}">{{.ProductCode}}</a></td>
+            <td><strong>{{if .Brand}}{{.Brand}}{{else}}ブランド未設定{{end}}</strong><span>{{if .ModelNumber}}{{.ModelNumber}}{{else}}モデル未設定{{end}}</span></td>
+            <td class="dashboard-cost">{{formatMoney .CostAmountMinor .CostCurrency}}</td>
+            <td><span class="status-badge {{.InventoryStatus}}"><i></i>{{productStatus .InventoryStatus}}</span></td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}<div class="dashboard-empty"><span>▣</span><p>仕入商品はまだありません</p></div>{{end}}
+  </section>
 
-<div class="dashboard-grid">
-  <section class="card">
-    <div class="card-header"><div><h3>実装ロードマップ</h3><p>確定仕様に沿った全フェーズが完了しました</p></div><span class="progress-label">8 / 8</span></div>
-    <div class="phase-list">
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 0</strong><p>現状監査・差分整理</p></div><em>完了</em></div>
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 1</strong><p>組織・認証・権限・監査基盤</p></div><em>完了</em></div>
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 2</strong><p>仕入・商品・在庫</p></div><em>完了</em></div>
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 3</strong><p>相場・CSV・価格・通貨</p></div><em>完了</em></div>
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 4</strong><p>売上・出荷・分納</p></div><em>完了</em></div>
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 5</strong><p>公開商品・購入依頼・取置</p></div><em>完了</em></div>
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 6</strong><p>承認・差戻し・自己承認禁止</p></div><em>完了</em></div>
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 7</strong><p>検索・部分更新・CSV・操作性</p></div><em>完了</em></div>
-      <div class="phase-row complete"><span>✓</span><div><strong>Phase 8</strong><p>リリース品質・運用準備</p></div><em>完了</em></div>
+  <section class="card dashboard-requests">
+    <div class="card-header compact">
+      <h2><span aria-hidden="true">🛒</span> 購入リクエスト（未対応）</h2>
+      <a class="button secondary small" href="/purchase-requests">すべて見る →</a>
+    </div>
+    <div class="dashboard-request-list">
+      {{range .DashboardRequests}}
+      <article class="dashboard-request-card">
+        <span class="request-cart" aria-hidden="true">🛒</span>
+        <a class="dashboard-request-main" href="/purchase-requests" aria-label="{{.Request.GuestName}}の購入リクエスト一覧へ">
+          <h3>{{.Request.GuestName}} <small>{{len .Items}}点</small></h3>
+          <p>{{.ProductNames}}</p>
+          <div class="request-meta">
+            <time>▦ {{formatTime .Request.RequestedAt}}</time>
+            <span class="dashboard-request-totals" {{if .MixedCurrency}}aria-label="通貨別合計"{{end}}>
+              {{range .Totals}}<strong>{{formatMoney .Amount .Currency}}</strong>{{end}}
+            </span>
+          </div>
+          {{if .Request.Message}}<p class="request-message">○ {{.Request.Message}}</p>{{end}}
+        </a>
+        <button class="button request-detail" type="button" data-purchase-request-open="dashboard-request-{{.Request.ID}}">☷ 詳細</button>
+      </article>
+      {{else}}
+      <div class="dashboard-empty request-empty"><span>✓</span><p>未対応の購入リクエストはありません</p></div>
+      {{end}}
     </div>
   </section>
-  <section class="card">
-    <div class="card-header"><div><h3>基盤ステータス</h3><p>本フェーズの保護機能</p></div></div>
-    <ul class="status-list">
-      <li><span class="status-ok">✓</span><div><strong>組織スコープ</strong><p>すべての業務データを組織単位で分離</p></div></li>
-      <li><span class="status-ok">✓</span><div><strong>サーバー認証</strong><p>有効期限付きセッションと安全なCookie</p></div></li>
-      <li><span class="status-ok">✓</span><div><strong>権限制御</strong><p>管理者・作業者をルート単位で認可</p></div></li>
-      <li><span class="status-ok">✓</span><div><strong>監査ログ</strong><p>ログインと設定変更を追跡</p></div></li>
-      <li><span class="status-ok">✓</span><div><strong>CSRF対策</strong><p>更新処理への不正リクエストを拒否</p></div></li>
-    </ul>
+
+  <section class="card dashboard-chart-card">
+    <div class="card-header compact"><h2><span aria-hidden="true">◕</span> 仕入先別 構成比（今月）</h2></div>
+    <div class="supplier-chart">
+      {{if .DashboardSuppliers}}
+      <svg class="donut-chart" viewBox="0 0 42 42" role="img" aria-label="今月の仕入先別構成比">
+        <circle class="donut-track" cx="21" cy="21" r="15.9155"></circle>
+        {{range .DashboardSuppliers}}<circle class="donut-slice" cx="21" cy="21" r="15.9155" stroke="{{.Color}}" stroke-dasharray="{{.Dash}} 100" stroke-dashoffset="{{.Offset}}"></circle>{{end}}
+        <circle class="donut-hole" cx="21" cy="21" r="9"></circle>
+      </svg>
+      <ul class="chart-legend">
+        {{range .DashboardSuppliers}}<li><i class="{{.Class}}"></i><span>{{.Name}}</span><strong>{{.Percent}}%</strong></li>{{end}}
+      </ul>
+      {{else}}<div class="dashboard-empty chart-empty"><span>◕</span><p>今月の仕入データはありません</p></div>{{end}}
+    </div>
+  </section>
+
+  <section class="card dashboard-chart-card">
+    <div class="card-header compact"><h2><span aria-hidden="true">⌁</span> 月別売上推移</h2></div>
+    <div class="sales-chart-wrap">
+      <svg class="sales-chart" viewBox="0 0 660 250" role="img" aria-label="過去6か月の月別売上">
+        {{range .DashboardGridlines}}
+        <line x1="65" y1="{{.Y}}" x2="640" y2="{{.Y}}" class="chart-gridline"></line>
+        <text x="57" y="{{.Y}}" class="chart-axis-label" text-anchor="end" dominant-baseline="middle">{{.Label}}</text>
+        {{end}}
+        {{range .DashboardMonths}}
+        <rect x="{{.X}}" y="{{.Y}}" width="56" height="{{.Height}}" rx="5" class="sales-bar"><title>{{.Label}} {{.AmountText}}</title></rect>
+        <text x="{{.LabelX}}" y="230" class="chart-month" text-anchor="middle">{{.Label}}</text>
+        {{end}}
+      </svg>
+    </div>
   </section>
 </div>
+
+<dialog class="product-modal" data-product-modal aria-label="在庫詳細"><div class="product-modal-loading">商品情報を読み込んでいます…</div></dialog>
+
+{{range .DashboardRequests}}
+<dialog class="purchase-request-dialog dashboard-request-dialog" id="dashboard-request-{{.Request.ID}}" data-purchase-request-dialog>
+  <div class="purchase-request-dialog-panel">
+    <header>
+      <h2><span>▣</span> {{.Request.RequestNumber}} — {{.Request.GuestName}}</h2>
+      <button type="button" data-purchase-request-close aria-label="閉じる">×</button>
+    </header>
+    <div class="purchase-request-dialog-scroll">
+      <section class="purchase-request-detail-grid">
+        <div><small>▤ リクエストID</small><strong>{{.Request.RequestNumber}}</strong></div>
+        <div><small>▦ 購入者名</small><strong>{{.Request.GuestName}}</strong></div>
+        <div><small>▣ 日時</small><strong>{{formatTime .Request.RequestedAt}}</strong></div>
+        <div><small>▰ 購入点数</small><strong>{{len .Items}}点</strong></div>
+        <div><small>⚑ ステータス</small><span class="purchase-request-status pending">未対応</span></div>
+        <div><small>○ 備考</small><strong>{{if .Request.Message}}{{.Request.Message}}{{else}}—{{end}}</strong></div>
+      </section>
+      <section class="dashboard-request-items" aria-label="購入依頼商品">
+        <div class="dashboard-request-items-head"><span>商品コード</span><span>商品名</span><span>販売価格</span></div>
+        {{range .Items}}
+        <div class="dashboard-request-item">
+          <a href="/products/{{.ProductID}}" data-product-detail="{{.ProductID}}">{{.ProductCode}}</a>
+          <span>{{.Brand}} {{.ModelNumber}}</span>
+          <strong>{{formatMoney .SalePriceMinor .SaleCurrency}}</strong>
+        </div>
+        {{end}}
+      </section>
+      <section class="purchase-request-approved-total dashboard-request-total">
+        <span>{{if .MixedCurrency}}通貨別合計{{else}}リクエスト合計{{end}}</span><span>{{len .Items}}点</span>
+        <strong>{{range .Totals}}{{formatMoney .Amount .Currency}} {{end}}</strong>
+      </section>
+    </div>
+    <footer>
+      <button class="button secondary" type="button" data-purchase-request-close>閉じる</button>
+      <a class="button purchase-request-ship" href="/purchase-requests">購入依頼・取り置きへ</a>
+    </footer>
+  </div>
+</dialog>
+{{end}}
 {{end}}

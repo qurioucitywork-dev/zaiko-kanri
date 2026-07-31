@@ -1,7 +1,7 @@
 {{define "content"}}
 <div class="detail-head">
   <div><p class="eyebrow dark">PRODUCT</p><h2>{{.Product.ProductCode}}</h2><p>{{.Product.Brand}} {{.Product.ModelNumber}}</p></div>
-  <div><span class="status-badge large {{.Product.InventoryStatus}}">{{productStatus .Product.InventoryStatus}}</span><a class="button secondary" href="/products">一覧へ戻る</a></div>
+  <div><label class="currency-display-toggle"><input type="checkbox" data-jpy-conversion-toggle><span class="currency-toggle-track" aria-hidden="true"></span><span>円換算も表示</span></label><span class="status-badge large {{.Product.InventoryStatus}}">{{productStatus .Product.InventoryStatus}}</span><a class="button secondary" href="/products">一覧へ戻る</a></div>
 </div>
 <div class="detail-grid">
   <section class="card">
@@ -11,10 +11,10 @@
       <div><dt>ブランド</dt><dd>{{.Product.Brand}}</dd></div><div><dt>型番</dt><dd>{{if .Product.ModelNumber}}{{.Product.ModelNumber}}{{else}}—{{end}}</dd></div>
       <div><dt>シリアル番号</dt><dd>{{if .Product.SerialNumber}}{{.Product.SerialNumber}}{{else}}未入力{{end}}</dd></div><div><dt>商品種別</dt><dd>{{.Product.ProductType}}</dd></div>
       <div><dt>仕入先</dt><dd>{{.Product.SupplierName}}</dd></div><div><dt>仕入日</dt><dd>{{.Product.PurchaseDate}}</dd></div>
-      <div><dt>原価</dt><dd class="money">{{formatMoney .Product.CostAmountMinor .Product.CostCurrency}}</dd></div><div><dt>基準売価</dt><dd class="money">{{formatMoney .Product.BaseSalePriceMinor .Product.BaseSaleCurrency}}</dd></div>
-      <div><dt>参考換算価格</dt><dd class="money">{{if .Product.RateAvailable}}{{formatMoney .Product.ReferencePriceMinor .Product.ReferenceCurrency}}{{else}}為替未登録{{end}}</dd></div>
-      <div><dt>参考粗利・利益率</dt><dd class="money">{{if .Product.RateAvailable}}{{formatMoney .Product.GrossProfitMinor .Product.GrossProfitCurrency}} / {{formatPercent .Product.MarginBasisPoints}}{{else}}—{{end}}</dd></div>
-      <div><dt>換算レート日時</dt><dd>{{if .Product.RateAvailable}}{{formatTime .Product.ExchangeRateObservedAt}}{{else}}—{{end}}</dd></div>
+      <div><dt>原価</dt><dd class="money">{{formatMoney .Product.CostAmountMinor .Product.CostCurrency}}</dd></div><div><dt>基準売価</dt><dd class="money"><span class="money-display"><strong class="money-primary">{{formatMoney .Product.BaseSalePriceMinor .Product.BaseSaleCurrency}}</strong>{{if and .Product.RateAvailable (eq .Product.BaseSaleCurrency "USD")}}<small class="currency-conversion">約 {{formatMoney .Product.ReferencePriceMinor "JPY"}}</small>{{end}}</span></dd></div>
+      {{if eq .Product.BaseSaleCurrency "USD"}}<div class="currency-conversion currency-detail-row"><dt>参考換算価格</dt><dd class="money">{{if .Product.RateAvailable}}{{formatMoney .Product.ReferencePriceMinor .Product.ReferenceCurrency}}{{else}}為替未登録{{end}}</dd></div>
+      <div class="currency-conversion currency-detail-row"><dt>参考粗利・利益率</dt><dd class="money">{{if .Product.RateAvailable}}{{formatMoney .Product.GrossProfitMinor .Product.GrossProfitCurrency}} / {{formatPercent .Product.MarginBasisPoints}}{{else}}—{{end}}</dd></div>
+      <div class="currency-conversion currency-detail-row"><dt>換算レート日時</dt><dd>{{if .Product.RateAvailable}}{{formatTime .Product.ExchangeRateObservedAt}}{{else}}—{{end}}</dd></div>{{end}}
       <div><dt>商品状態</dt><dd>{{if .Product.Condition}}{{.Product.Condition}}{{else}}—{{end}}</dd></div><div><dt>付属品</dt><dd>{{if .Product.Accessories}}{{.Product.Accessories}}{{else}}—{{end}}</dd></div>
     </dl>
   </section>

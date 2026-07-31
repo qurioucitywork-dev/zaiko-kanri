@@ -1,0 +1,70 @@
+{{define "content"}}
+<section class="card performance-filter-card">
+  <div class="card-header compact"><h2><span>☷</span> 集計条件</h2></div>
+  <form method="get" action="/performance" class="performance-filter">
+    <input type="hidden" name="mode" value="{{.PerformanceMode.Key}}">
+    <div class="performance-dates">
+      <label>集計期間<input type="date" name="date_from" value="{{.PerformanceFrom}}" required data-performance-from></label>
+      <span>〜</span>
+      <label><span class="sr-only">集計終了日</span><input type="date" name="date_to" value="{{.PerformanceTo}}" required data-performance-to></label>
+    </div>
+    <div class="performance-quick">
+      <span>クイック選択：</span>
+      <button type="button" data-performance-months="0">当月</button>
+      <button type="button" data-performance-months="3">3ヶ月</button>
+      <button type="button" data-performance-months="6">6ヶ月</button>
+      <button type="button" data-performance-months="12">12ヶ月</button>
+    </div>
+    <button class="button performance-submit" type="submit">⌕ 集計する</button>
+    <a class="button secondary performance-csv" href="/performance/export.csv?mode={{.PerformanceMode.Key}}&date_from={{.PerformanceFrom}}&date_to={{.PerformanceTo}}">↪ CSV出力</a>
+  </form>
+</section>
+
+<nav class="performance-tabs" aria-label="実績分類">
+  <a class="{{if eq .PerformanceMode.Key "suppliers"}}active{{end}}" href="/performance?mode=suppliers&date_from={{.PerformanceFrom}}&date_to={{.PerformanceTo}}"><span>◧</span>仕入先別</a>
+  <a class="{{if eq .PerformanceMode.Key "buyers"}}active{{end}}" href="/performance?mode=buyers&date_from={{.PerformanceFrom}}&date_to={{.PerformanceTo}}"><span>♟</span>仕入担当者別</a>
+  <a class="{{if eq .PerformanceMode.Key "sales-destinations"}}active{{end}}" href="/performance?mode=sales-destinations&date_from={{.PerformanceFrom}}&date_to={{.PerformanceTo}}"><span>▦</span>販売先別</a>
+</nav>
+
+<div class="performance-grid">
+  <section class="card performance-chart-card">
+    <div class="card-header compact"><h2>{{.PerformanceMode.ChartTitle}}</h2></div>
+    {{if .PerformanceRows}}
+    <div class="performance-chart-body">
+      <svg class="performance-donut" viewBox="0 0 42 42" role="img" aria-label="{{.PerformanceMode.ChartTitle}}">
+        <circle class="donut-track" cx="21" cy="21" r="15.9155"></circle>
+        {{range .PerformanceRows}}<circle class="donut-slice" cx="21" cy="21" r="15.9155" stroke="{{.Color}}" stroke-dasharray="{{.Dash}} 100" stroke-dashoffset="{{.Offset}}"></circle>{{end}}
+        <circle class="donut-hole" cx="21" cy="21" r="8.8"></circle>
+      </svg>
+      <ul class="performance-legend">
+        {{range .PerformanceRows}}<li><i class="{{.Class}}"></i><span>{{.Name}}</span><strong>{{.PercentText}}</strong></li>{{end}}
+      </ul>
+    </div>
+    {{else}}<div class="performance-empty"><span>◔</span><p>指定期間の実績データはありません</p></div>{{end}}
+  </section>
+
+  <section class="card performance-table-card">
+    <div class="card-header compact">
+      <h2>{{.PerformanceMode.Name}} 一覧</h2>
+      <small>合計 {{.PerformanceCount}}点・{{formatMoney .PerformanceTotal "JPY"}}</small>
+    </div>
+    {{if .PerformanceRows}}
+    <div class="table-wrap" tabindex="0" aria-label="{{.PerformanceMode.Name}}実績">
+      <table class="performance-table">
+        <thead><tr><th>{{.PerformanceMode.RowLabel}}</th><th>件数</th><th>{{.PerformanceMode.AmountLabel}}</th><th>構成比</th></tr></thead>
+        <tbody>
+          {{range .PerformanceRows}}
+          <tr>
+            <td><i class="{{.Class}}"></i>{{.Name}}</td>
+            <td>{{.Count}}点</td>
+            <td class="money">{{formatMoney .AmountJPY "JPY"}}</td>
+            <td>{{.PercentText}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}<p class="empty">集計対象がありません。</p>{{end}}
+  </section>
+</div>
+{{end}}

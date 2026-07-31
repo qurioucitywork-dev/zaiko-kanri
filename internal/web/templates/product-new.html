@@ -1,54 +1,147 @@
 {{define "content"}}
-<div class="form-page">
-  <section class="card">
-    <div class="card-header"><div><h2>商品単品登録</h2><p>内部で簡易仕入伝票を自動生成し、仕入履歴を必ず残します。</p></div><span class="badge phase">自動採番</span></div>
-    {{if .Duplicates}}
-    <div class="duplicate-warning">
-      <h3>⚠ 同じシリアル番号の商品が見つかりました</h3>
-      <p>候補を比較し、別個体として登録する場合は理由を入力してください。</p>
-      <div class="duplicate-grid">
-      {{range .Duplicates}}
-        <article><strong>{{.ProductCode}}</strong><span>{{.Brand}} {{.ModelNumber}}</span><span>仕入先：{{.SupplierName}}</span><span>仕入日：{{.PurchaseDate}}</span><span>状態：{{productStatus .InventoryStatus}}</span></article>
-      {{end}}
-      </div>
-    </div>
-    {{end}}
-    <form method="post" action="/products" class="record-form">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <fieldset>
-        <legend>仕入情報</legend>
-        <div class="form-grid three">
-          <label>仕入先 <b>必須</b>
-            <select name="supplier_id" required>
-              <option value="">選択してください</option>
-              {{range .Suppliers}}<option value="{{.ID}}" {{if eq $.ProductForm.SupplierID .ID}}selected{{end}}>{{.Code}} {{.Name}}</option>{{end}}
+{{if .Duplicates}}
+<div class="duplicate-warning product-duplicate-warning">
+  <h3>⚠ 同じシリアル番号の商品が見つかりました</h3>
+  <p>候補を比較し、別個体として登録する場合は理由を入力してください。</p>
+  <div class="duplicate-grid">
+  {{range .Duplicates}}
+    <article><strong>{{.ProductCode}}</strong><span>{{.Brand}} {{.ModelNumber}}</span><span>仕入先：{{.SupplierName}}</span><span>仕入日：{{.PurchaseDate}}</span><span>状態：{{productStatus .InventoryStatus}}</span></article>
+  {{end}}
+  </div>
+</div>
+{{end}}
+
+<form method="post" action="/products" enctype="multipart/form-data" class="product-register-form" data-product-register
+      data-usd-jpy-rate="{{.USDJPYRate.RateScaled}}"
+      data-usd-jpy-scale="{{.USDJPYRate.Scale}}"
+      data-rate-available="{{.USDJPYRateAvailable}}">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <div class="product-register-layout">
+    <div class="product-register-main">
+      <section class="card product-register-card">
+        <div class="card-header product-register-heading"><h2>↪ 基本情報</h2></div>
+        <div class="product-register-grid product-basic-grid">
+          <label>
+            <span>商品コード <b>＊</b></span>
+            <div class="product-code-pair">
+              <input name="product_code" value="{{.ProductForm.ProductCode}}" placeholder="手入力またはバーコードスキャン" data-product-code required>
+              <button class="button secondary" type="button" data-product-number data-next-code="{{.NextProductCode}}" data-next-code-url="/products/next-code">＃ 採番</button>
+            </div>
+          </label>
+          <label><span>仕入日 <b>＊</b></span><input type="date" name="purchase_date" value="{{.ProductForm.PurchaseDate}}" required></label>
+          <label>
+            <span>仕入担当者</span>
+            <select name="buyer_id">
+              <option value="">-- 選択 --</option>
+              {{range .Users}}{{if .Active}}<option value="{{.ID}}" {{if eq $.ProductForm.BuyerID .ID}}selected{{end}}>{{.DisplayName}}</option>{{end}}{{end}}
             </select>
           </label>
-          <label>仕入日 <b>必須</b><input type="date" name="purchase_date" value="{{.ProductForm.PurchaseDate}}" required></label>
-          <label>原価 <b>必須</b><div class="input-pair"><select name="cost_currency"><option {{if eq .ProductForm.CostCurrency "JPY"}}selected{{end}}>JPY</option><option {{if eq .ProductForm.CostCurrency "USD"}}selected{{end}}>USD</option></select><input name="cost_amount" inputmode="numeric" value="{{.ProductForm.CostAmount}}" placeholder="0" required></div></label>
+          <label>
+            <span>仕入先 <b>＊</b></span>
+            <select name="supplier_id" required>
+              <option value="">-- 選択 --</option>
+              {{range .Suppliers}}<option value="{{.ID}}" {{if eq $.ProductForm.SupplierID .ID}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}
+            </select>
+          </label>
+          <label><span>仕入金額（税抜・JPY） <b>＊</b></span><input name="cost_amount" inputmode="numeric" value="{{.ProductForm.CostAmount}}" placeholder="例: 850,000" required></label>
+          <label><span>SKU</span><input name="sku" value="{{.ProductForm.SKU}}" placeholder="例: SKU-ABC-001"></label>
+          <input type="hidden" name="cost_currency" value="JPY">
+          <input type="hidden" name="base_sale_currency" value="USD">
         </div>
-      </fieldset>
-      <fieldset>
-        <legend>商品情報</legend>
-        <div class="form-grid three">
-          <label>ブランド <b>必須</b><input name="brand" value="{{.ProductForm.Brand}}" required></label>
-          <label>型番<input name="model_number" value="{{.ProductForm.ModelNumber}}"></label>
-          <label>商品種別 <b>必須</b><input name="product_type" value="{{.ProductForm.ProductType}}" required></label>
-          <label>SKU <small>任意・重複可</small><input name="sku" value="{{.ProductForm.SKU}}"></label>
-          <label>シリアル番号 <small>未入力・重複可</small><input name="serial_number" value="{{.ProductForm.SerialNumber}}"></label>
-          <label>基準売価<div class="input-pair"><select name="base_sale_currency"><option {{if eq .ProductForm.BaseSaleCurrency "USD"}}selected{{end}}>USD</option><option {{if eq .ProductForm.BaseSaleCurrency "JPY"}}selected{{end}}>JPY</option></select><input name="base_sale_price" inputmode="numeric" value="{{.ProductForm.BaseSalePrice}}" placeholder="0"></div></label>
-          <label>商品状態<input name="condition" value="{{.ProductForm.Condition}}" placeholder="例：極美品 (S)"></label>
-          <label class="span-two">付属品<input name="accessories" value="{{.ProductForm.Accessories}}" placeholder="例：BOX, GUARANTEE"></label>
+      </section>
+
+      <section class="card product-register-card">
+        <div class="card-header product-register-heading">
+          <h2>◆ 商品詳細</h2>
+          <label class="currency-display-toggle">
+            <input type="checkbox" data-jpy-conversion-toggle>
+            <span class="currency-toggle-track" aria-hidden="true"></span>
+            <span>円換算も表示</span>
+          </label>
         </div>
-      </fieldset>
-      {{if .Duplicates}}
-      <fieldset class="danger-fieldset">
-        <legend>重複シリアル登録理由</legend>
-        <label>確認内容・続行理由 <b>必須</b><textarea name="duplicate_reason" required>{{.ProductForm.DuplicateReason}}</textarea></label>
-      </fieldset>
-      {{end}}
-      <div class="form-actions"><a class="button ghost" href="/products">キャンセル</a><button class="button primary" type="submit">商品を登録する</button></div>
-    </form>
-  </section>
-</div>
+        <div class="product-register-grid product-detail-fields">
+          <label>
+            <span>ブランド名</span>
+            <select name="brand">
+              <option value="">-- 選択 --</option>
+              {{range .ProductBrandOptions}}<option value="{{.Name}}" {{if eq $.ProductForm.Brand .Name}}selected{{end}}>{{.Name}}</option>{{end}}
+            </select>
+          </label>
+          <label><span>モデル名</span><input name="product_type" value="{{.ProductForm.ProductType}}" placeholder="例: サブマリーナ"></label>
+          <label><span>型番（Ref.）</span><input name="model_number" value="{{.ProductForm.ModelNumber}}" placeholder="例: 116610LN"></label>
+          <label><span>シリアルNo.</span><input name="serial_number" value="{{.ProductForm.SerialNumber}}" placeholder="例: ZX123456"></label>
+          <label>
+            <span>素材（本体）</span>
+            <select name="material"><option value="">-- 選択 --</option>{{range .ProductMaterialOptions}}<option value="{{.Name}}" {{if eq $.ProductForm.Material .Name}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}</select>
+          </label>
+          <label>
+            <span>BOX</span>
+            <select name="box">
+              <option value="">-- 選択なし --</option>
+              <option value="BOX1" {{if eq .ProductForm.Box "BOX1"}}selected{{end}}>BOX1 — ロレックス特集</option>
+              <option value="BOX2" {{if eq .ProductForm.Box "BOX2"}}selected{{end}}>BOX2 — 高額品セレクト</option>
+              <option value="BOX3" {{if eq .ProductForm.Box "BOX3"}}selected{{end}}>BOX3 — 春の新入荷</option>
+              <option value="BOX4" {{if eq .ProductForm.Box "BOX4"}}selected{{end}}>BOX4</option>
+              <option value="BOX5" {{if eq .ProductForm.Box "BOX5"}}selected{{end}}>BOX5</option>
+              <option value="BOX6" {{if eq .ProductForm.Box "BOX6"}}selected{{end}}>BOX6</option>
+              <option value="BOX7" {{if eq .ProductForm.Box "BOX7"}}selected{{end}}>BOX7</option>
+              <option value="BOX8" {{if eq .ProductForm.Box "BOX8"}}selected{{end}}>BOX8</option>
+              <option value="BOX9" {{if eq .ProductForm.Box "BOX9"}}selected{{end}}>BOX9</option>
+              <option value="BOX10" {{if eq .ProductForm.Box "BOX10"}}selected{{end}}>BOX10</option>
+            </select>
+          </label>
+          <label>
+            <span>駆動方式</span>
+            <select name="movement"><option value="">-- 選択 --</option>{{range .ProductMovementOptions}}<option value="{{.Name}}" {{if eq $.ProductForm.Movement .Name}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}</select>
+          </label>
+          <label>
+            <span>コンディション</span>
+            <select name="condition"><option value="">-- 選択 --</option>{{range .ProductConditionOptions}}<option value="{{.Name}}" {{if eq $.ProductForm.Condition .Name}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}</select>
+          </label>
+          <label><span>ベルト素材</span><input name="belt_material" value="{{.ProductForm.BeltMaterial}}" placeholder="例: ステンレス / レザー"></label>
+          <label class="product-span-two"><span>文字盤</span><input name="dial" value="{{.ProductForm.Dial}}" placeholder="例: ブラック / シルバー"></label>
+          <label class="money-input-stack"><span>売価（USD）</span><input name="base_sale_price" inputmode="numeric" value="{{.ProductForm.BaseSalePrice}}" placeholder="例: 7,650" data-usd-price-input><small class="currency-conversion" data-product-sale-jpy></small></label>
+        </div>
+
+        <div class="product-extra-fields">
+          <fieldset class="product-accessories">
+            <legend>付属品</legend>
+            <div>
+              {{range $value := productAccessories}}
+              <label><input type="checkbox" name="accessories" value="{{$value}}" {{if contains $.ProductForm.Accessories $value}}checked{{end}}><span>{{$value}}</span></label>
+              {{end}}
+            </div>
+          </fieldset>
+          <label><span>特徴・備考（半角英数カナ）</span><textarea name="features" rows="4" placeholder="文字盤：黒　ベゼル：黒　コマ数：8　不備：なし">{{.ProductForm.Features}}</textarea></label>
+          <label class="product-internal-comment"><span>コメント <em>🔒 社内専用</em></span><textarea name="internal_comment" rows="4" placeholder="社内メモ・仕入れ状況・注意事項など（帳票・印刷・CSVには含まれません）">{{.ProductForm.InternalComment}}</textarea></label>
+        </div>
+        {{if .Duplicates}}
+        <div class="product-duplicate-reason">
+          <label><span>重複シリアル登録理由 <b>＊</b></span><textarea name="duplicate_reason" required>{{.ProductForm.DuplicateReason}}</textarea></label>
+        </div>
+        {{end}}
+      </section>
+    </div>
+
+    <aside class="card product-image-card">
+      <div class="card-header product-register-heading"><h2>▣ 商品画像（最大10枚）</h2></div>
+      <div class="product-image-slots">
+        {{range $index := sequence 10}}
+        <label class="product-image-slot" data-product-image-slot>
+          <input type="file" name="images" accept="image/jpeg,image/png,image/webp" data-product-image-input>
+          <img alt="" data-product-image-preview hidden>
+          <span>＋ 画像{{$index}}</span>
+          <button type="button" data-product-image-remove aria-label="画像{{$index}}を削除" hidden>×</button>
+        </label>
+        {{end}}
+      </div>
+      <p>クリックして画像を追加</p>
+    </aside>
+  </div>
+
+  <div class="product-register-actions">
+    <button class="button secondary" type="reset">⟳ リセット</button>
+    <button class="button product-register-submit" type="submit">▣ 登録する</button>
+  </div>
+</form>
 {{end}}

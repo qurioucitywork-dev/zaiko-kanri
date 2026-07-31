@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} | 在庫管理ツール</title>
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/app.css?v=20260731-slips">
 </head>
 <body class="{{if .User.ID}}app-shell{{else}}public-shell{{end}}">
   <a class="skip-link" href="#main-content">本文へ移動</a>
@@ -19,19 +19,24 @@
       <p class="nav-label">メイン</p>
       <a class="{{if eq .Active "dashboard"}}active{{end}}" href="/"><span>⌂</span>ダッシュボード</a>
       <a class="{{if eq .Active "products"}}active{{end}}" href="/products"><span>▣</span>在庫一覧</a>
+      <a class="{{if eq .Active "slips"}}active{{end}}" href="/slips"><span>▦</span>伝票一覧</a>
+      <a class="{{if eq .Active "market"}}active{{end}}" href="/market-prices"><span>⌁</span>相場表</a>
       <p class="nav-label">登録・取引</p>
-      <a class="{{if eq .Active "purchases"}}active{{end}}" href="/purchases"><span>▤</span>仕入管理</a>
-      <a class="{{if eq .Active "product-new"}}active{{end}}" href="/products/new"><span>＋</span>商品単品登録</a>
-      <a class="{{if eq .Active "market"}}active{{end}}" href="/market-prices"><span>⌁</span>相場・為替</a>
-      <a class="{{if eq .Active "sales"}}active{{end}}" href="/sales"><span>¥</span>売上管理</a>
-      <a class="{{if eq .Active "shipments"}}active{{end}}" href="/shipments"><span>▰</span>出荷管理</a>
-      <a class="{{if eq .Active "requests"}}active{{end}}" href="/purchase-requests"><span>♡</span>購入依頼・取置</a>
-      <a class="{{if eq .Active "approvals"}}active{{end}}" href="/approvals"><span>✓</span>承認管理</a>
-      {{if eq .User.Role "admin"}}
+      <a class="{{if eq .Active "purchases"}}active{{end}}" href="/purchases"><span>▤</span>仕入登録</a>
+      <a class="{{if eq .Active "product-new"}}active{{end}}" href="/products/new"><span>＋</span>商品登録</a>
+      <a class="{{if eq .Active "shipments"}}active{{end}}" href="/shipments"><span>▰</span>出荷登録</a>
+      <a class="{{if eq .Active "sales"}}active{{end}}" href="/sales"><span>¥</span>売上登録</a>
+      <a class="{{if eq .Active "returns"}}active{{end}}" href="/returns"><span>↶</span>返品/持ち帰り</a>
+      <a class="{{if eq .Active "requests"}}active{{end}}" href="/purchase-requests"><span>▰</span>購入一覧{{if .PurchaseAlertCount}}<b class="nav-alert-count">{{.PurchaseAlertCount}}</b>{{else if .PurchaseRequestPending}}<b class="nav-alert-count">{{.PurchaseRequestPending}}</b>{{end}}</a>
       <p class="nav-label">管理</p>
-      <a class="{{if eq .Active "users"}}active{{end}}" href="/users"><span>♙</span>利用者・権限</a>
-      <a class="{{if eq .Active "settings"}}active{{end}}" href="/settings"><span>⚙</span>組織設定</a>
-      <a class="{{if eq .Active "audit"}}active{{end}}" href="/audit"><span>≡</span>監査ログ</a>
+      {{if eq .User.Role "admin"}}
+      <a class="{{if eq .Active "masters"}}active{{end}}" href="/masters"><span>⚙</span>マスタ登録</a>
+      <a class="{{if eq .Active "guest-management"}}active{{end}}" href="/guest-management"><span>♣</span>ゲスト管理</a>
+      {{end}}
+      <a class="{{if eq .Active "performance"}}active{{end}}" href="/performance"><span>≡</span>実績管理</a>
+      <a class="{{if eq .Active "stocktakes"}}active{{end}}" href="/stocktakes"><span>▤</span>棚卸</a>
+      {{if eq .User.Role "admin"}}
+      <a class="{{if eq .Active "approvals"}}active{{end}}" href="/approvals"><span>✓</span>承認管理</a>
       {{end}}
     </nav>
     <div class="sidebar-user">
@@ -47,9 +52,12 @@
     <header class="topbar">
       <button class="mobile-menu" type="button" data-menu-button aria-label="メニューを開く" aria-expanded="false">☰</button>
       <div><h1>{{.Title}}</h1><p>在庫管理ツール <span>/</span> {{.Title}}</p></div>
-      <div class="topbar-actions"><span class="date">▦ 2026年7月26日</span><span class="badge phase">Phase 8</span></div>
+      <div class="topbar-actions">
+        <span class="date">▦ {{today}}</span>
+        {{if eq .User.Role "admin"}}<a class="notification-button" href="/approvals" aria-label="未対応承認 {{.AlertCount}}件">🔔{{if .AlertCount}}<b>{{.AlertCount}}</b>{{end}}</a>{{else}}<span class="notification-button" aria-label="通知">🔔</span>{{end}}
+        <a class="button primary topbar-create" href="/products/new">＋ 商品登録</a>
+      </div>
     </header>
-    {{if .PreviewMode}}<div class="preview-banner">制作プレビュー — サンプルデータで動作しています</div>{{end}}
     <main class="content" id="main-content" tabindex="-1">
       {{if .Notice}}<div class="alert success" role="status">{{.Notice}}</div>{{end}}
       {{if .Error}}<div class="alert error" role="alert">{{.Error}}</div>{{end}}
@@ -59,7 +67,7 @@
   {{else}}
     <main id="main-content" tabindex="-1">{{template "content" .}}</main>
   {{end}}
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v=20260730-master" defer></script>
 </body>
 </html>
 {{end}}

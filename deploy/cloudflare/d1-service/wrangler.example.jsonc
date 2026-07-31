@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zaiko-test-d1-service",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "workers_dev": false,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "zaiko-test",
+      "database_id": "REPLACE_WITH_TEST_DATABASE_ID",
+      "preview_database_id": "REPLACE_WITH_PREVIEW_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

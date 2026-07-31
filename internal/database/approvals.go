@@ -72,9 +72,54 @@ func (s *Store) CreateApprovalRequest(ctx context.Context, input CreateApprovalI
 	if err != nil {
 		return ApprovalRequest{}, err
 	}
-	id, _ := NewID("apr")
 	now := s.now().Format(time.RFC3339Nano)
 	hash := approvalSnapshotHash(snapshot)
+	var returnedID string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT id FROM approval_requests
+		WHERE organization_id=? AND target_type=? AND target_id=? AND action_key=?
+		  AND applicant_user_id=? AND status='returned'
+		ORDER BY requested_at DESC LIMIT 1`,
+		input.OrganizationID, input.TargetType, input.TargetID, input.ActionKey, input.ApplicantUserID,
+	).Scan(&returnedID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ApprovalRequest{}, err
+	}
+	if returnedID != "" {
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return ApprovalRequest{}, err
+		}
+		defer tx.Rollback()
+		result, err := tx.ExecContext(ctx, `
+			UPDATE approval_requests
+			SET approval_type=?,status='pending',requested_snapshot=?,requested_snapshot_hash=?,
+			    request_reason=?,action_payload_json=?,requested_at=?,decided_at=NULL,decided_by=NULL,
+			    executed_at=NULL,updated_at=?
+			WHERE id=? AND organization_id=? AND status='returned'`,
+			input.ApprovalType, snapshot, hash, strings.TrimSpace(input.RequestReason), string(payload),
+			now, now, returnedID, input.OrganizationID)
+		if err != nil {
+			return ApprovalRequest{}, err
+		}
+		affected, _ := result.RowsAffected()
+		if affected != 1 {
+			return ApprovalRequest{}, ErrApprovalNotPending
+		}
+		actionID, _ := NewID("apa")
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO approval_actions(id,organization_id,approval_request_id,actor_user_id,action,comment,acted_at)
+			VALUES(?,?,?,?, 'requested',?,?)`,
+			actionID, input.OrganizationID, returnedID, input.ApplicantUserID,
+			"再申請: "+strings.TrimSpace(input.RequestReason), now); err != nil {
+			return ApprovalRequest{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return ApprovalRequest{}, err
+		}
+		return s.ApprovalRequest(ctx, input.OrganizationID, returnedID)
+	}
+	id, _ := NewID("apr")
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return ApprovalRequest{}, err
@@ -305,6 +350,17 @@ func (s *Store) executeApprovedAction(ctx context.Context, approval ApprovalRequ
 		return s.CancelSale(ctx, approval.OrganizationID, approval.TargetID, actorID, reason)
 	case "shipment.cancel":
 		return s.CancelShipment(ctx, approval.OrganizationID, approval.TargetID, actorID, reason)
+	case "return_takehome.restore":
+		var restore RestoreReturnTakehomeInput
+		if err := json.Unmarshal([]byte(approval.ActionPayloadJSON), &restore); err != nil {
+			return err
+		}
+		restore.OrganizationID = approval.OrganizationID
+		restore.SaleID = approval.TargetID
+		restore.ActorID = actorID
+		return s.RestoreReturnTakehomeItems(ctx, restore)
+	case "stocktake.difference.approve":
+		return s.ApproveStocktakeDifference(ctx, approval.OrganizationID, approval.TargetID, actorID)
 	default:
 		return fmt.Errorf("未対応の承認操作です: %s", approval.ActionKey)
 	}
@@ -337,6 +393,41 @@ func (s *Store) approvalTargetSnapshot(ctx context.Context, organizationID, targ
 			Recipient string
 			Lines     []ShipmentLine
 		}{shipment.ID, shipment.Status, shipment.ShipmentDate, shipment.RecipientName, shipment.Lines}
+	case "return_takehome":
+		items, err := s.ReturnTakehomeItems(ctx, organizationID, targetID)
+		if err != nil {
+			return "", err
+		}
+		value = struct {
+			SaleID string
+			Items  []ReturnTakehomeItem
+		}{targetID, items}
+	case "stocktake_line":
+		var snapshot struct {
+			LineID           string `json:"line_id"`
+			StocktakeID      string `json:"stocktake_id"`
+			StocktakeStatus  string `json:"stocktake_status"`
+			ProductID        string `json:"product_id"`
+			CountedPresent   int    `json:"counted_present"`
+			DifferenceReason string `json:"difference_reason"`
+			Notes            string `json:"notes"`
+			ReviewStatus     string `json:"review_status"`
+		}
+		err := s.db.QueryRowContext(ctx, `
+			SELECT sl.id,sl.stocktake_id,st.status,sl.product_id,sl.counted_present,
+			       sl.difference_reason,sl.notes,sl.review_status
+			FROM stocktake_lines sl
+			JOIN stocktakes st ON st.id=sl.stocktake_id
+			WHERE st.organization_id=? AND sl.id=?`,
+			organizationID, targetID).Scan(
+			&snapshot.LineID, &snapshot.StocktakeID, &snapshot.StocktakeStatus,
+			&snapshot.ProductID, &snapshot.CountedPresent, &snapshot.DifferenceReason,
+			&snapshot.Notes, &snapshot.ReviewStatus,
+		)
+		if err != nil {
+			return "", err
+		}
+		value = snapshot
 	default:
 		return "", errors.New("承認対象の種類が正しくありません")
 	}

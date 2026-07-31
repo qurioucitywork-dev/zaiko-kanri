@@ -17,7 +17,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//go:embed migrations/000001_phase1.up.sql migrations/000002_inventory.up.sql migrations/000003_market.up.sql migrations/000004_sales_shipments.up.sql migrations/000005_requests_reservations.up.sql migrations/000006_approvals.up.sql
+//go:embed migrations/000001_phase1.up.sql migrations/000002_inventory.up.sql migrations/000003_market.up.sql migrations/000004_sales_shipments.up.sql migrations/000005_requests_reservations.up.sql migrations/000006_approvals.up.sql migrations/000007_masters.up.sql migrations/000008_stocktakes.up.sql migrations/000009_returns.up.sql migrations/000010_purchase_sale_price.up.sql migrations/000011_product_registration_details.up.sql migrations/000012_purchase_returns.up.sql migrations/000013_purchase_slip_workflow.up.sql migrations/000014_shipment_slip_workflow.up.sql migrations/000015_sales_slip_workflow.up.sql migrations/000016_sales_return_invoice.up.sql migrations/000017_purchase_return_invoice.up.sql migrations/000018_purchase_line_product_details.up.sql migrations/000019_return_inventory_restore.up.sql migrations/000020_phase8_master_alignment.up.sql migrations/000021_product_market_prices.up.sql migrations/000022_phase8_publish_snapshot.up.sql migrations/000023_phase8_sales_destinations.up.sql migrations/000024_guest_snapshot_details.up.sql migrations/000025_stocktake_mock_alignment.up.sql migrations/000026_stocktake_draft_uniqueness.up.sql migrations/000027_purchase_request_groups.up.sql migrations/000028_purchase_currency_split.up.sql migrations/000029_shipment_sales_link.up.sql migrations/000030_backfill_shipment_sales_link.up.sql migrations/000031_purchase_request_shipment_link.up.sql
 var schemaFS embed.FS
 
 const (
@@ -112,6 +112,31 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"000004_sales_shipments", "migrations/000004_sales_shipments.up.sql"},
 		{"000005_requests_reservations", "migrations/000005_requests_reservations.up.sql"},
 		{"000006_approvals", "migrations/000006_approvals.up.sql"},
+		{"000007_masters", "migrations/000007_masters.up.sql"},
+		{"000008_stocktakes", "migrations/000008_stocktakes.up.sql"},
+		{"000009_returns", "migrations/000009_returns.up.sql"},
+		{"000010_purchase_sale_price", "migrations/000010_purchase_sale_price.up.sql"},
+		{"000011_product_registration_details", "migrations/000011_product_registration_details.up.sql"},
+		{"000012_purchase_returns", "migrations/000012_purchase_returns.up.sql"},
+		{"000013_purchase_slip_workflow", "migrations/000013_purchase_slip_workflow.up.sql"},
+		{"000014_shipment_slip_workflow", "migrations/000014_shipment_slip_workflow.up.sql"},
+		{"000015_sales_slip_workflow", "migrations/000015_sales_slip_workflow.up.sql"},
+		{"000016_sales_return_invoice", "migrations/000016_sales_return_invoice.up.sql"},
+		{"000017_purchase_return_invoice", "migrations/000017_purchase_return_invoice.up.sql"},
+		{"000018_purchase_line_product_details", "migrations/000018_purchase_line_product_details.up.sql"},
+		{"000019_return_inventory_restore", "migrations/000019_return_inventory_restore.up.sql"},
+		{"000020_phase8_master_alignment", "migrations/000020_phase8_master_alignment.up.sql"},
+		{"000021_product_market_prices", "migrations/000021_product_market_prices.up.sql"},
+		{"000022_phase8_publish_snapshot", "migrations/000022_phase8_publish_snapshot.up.sql"},
+		{"000023_phase8_sales_destinations", "migrations/000023_phase8_sales_destinations.up.sql"},
+		{"000024_guest_snapshot_details", "migrations/000024_guest_snapshot_details.up.sql"},
+		{"000025_stocktake_mock_alignment", "migrations/000025_stocktake_mock_alignment.up.sql"},
+		{"000026_stocktake_draft_uniqueness", "migrations/000026_stocktake_draft_uniqueness.up.sql"},
+		{"000027_purchase_request_groups", "migrations/000027_purchase_request_groups.up.sql"},
+		{"000028_purchase_currency_split", "migrations/000028_purchase_currency_split.up.sql"},
+		{"000029_shipment_sales_link", "migrations/000029_shipment_sales_link.up.sql"},
+		{"000030_backfill_shipment_sales_link", "migrations/000030_backfill_shipment_sales_link.up.sql"},
+		{"000031_purchase_request_shipment_link", "migrations/000031_purchase_request_shipment_link.up.sql"},
 	} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=?`, migration.version).Scan(&count); err != nil {
@@ -124,19 +149,52 @@ func (s *Store) Migrate(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("read migration %s: %w", migration.version, err)
 		}
+		// Migration 000020 replaces exchange_rate_snapshots while sales_lines
+		// already references it. SQLite enforces the DROP immediately even
+		// when the replacement table and matching IDs are created in the same
+		// transaction, so suspend FK enforcement only for this atomic rebuild.
+		suspendForeignKeys := migration.version == "000020_phase8_master_alignment"
+		if suspendForeignKeys {
+			if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+				return fmt.Errorf("suspend foreign keys for %s: %w", migration.version, err)
+			}
+		}
+		restoreForeignKeys := func() error {
+			if !suspendForeignKeys {
+				return nil
+			}
+			if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+				return fmt.Errorf("restore foreign keys after %s: %w", migration.version, err)
+			}
+			var violations int
+			if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil {
+				return fmt.Errorf("check foreign keys after %s: %w", migration.version, err)
+			}
+			if violations != 0 {
+				return fmt.Errorf("check foreign keys after %s: %d violation(s)", migration.version, violations)
+			}
+			return nil
+		}
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
+			_ = restoreForeignKeys()
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, string(schema)); err != nil {
 			tx.Rollback()
+			_ = restoreForeignKeys()
 			return fmt.Errorf("apply migration %s: %w", migration.version, err)
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)`, migration.version, s.now().Format(time.RFC3339Nano)); err != nil {
 			tx.Rollback()
+			_ = restoreForeignKeys()
 			return fmt.Errorf("record migration %s: %w", migration.version, err)
 		}
 		if err := tx.Commit(); err != nil {
+			_ = restoreForeignKeys()
+			return err
+		}
+		if err := restoreForeignKeys(); err != nil {
 			return err
 		}
 	}
@@ -221,7 +279,11 @@ func (s *Store) SeedPreview(ctx context.Context, adminPassword, workerPassword s
 	}
 	for _, seed := range []struct{ id, username, display, role, password string }{
 		{"usr_admin", "admin", "管理者", RoleAdmin, adminPassword},
+		{"usr_buyer_ito", "buyer-ito", "伊藤 健司", RoleWorker, workerPassword},
+		{"usr_buyer_sato", "buyer-sato", "佐藤 花子", RoleWorker, workerPassword},
 		{"usr_worker", "worker", "山本 太郎", RoleWorker, workerPassword},
+		{"usr_buyer_tanaka", "buyer-tanaka", "田中 美香", RoleWorker, workerPassword},
+		{"usr_buyer_suzuki", "buyer-suzuki", "鈴木 一郎", RoleWorker, workerPassword},
 	} {
 		var count int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM users WHERE organization_id='org_preview' AND username=?`, seed.username).Scan(&count); err != nil {
@@ -458,6 +520,36 @@ func (s *Store) Users(ctx context.Context, organizationID string) ([]User, error
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id,organization_id,username,display_name,role_key,is_active
 		FROM users WHERE organization_id=? AND deleted_at IS NULL ORDER BY role_key,username`, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var users []User
+	for rows.Next() {
+		var u User
+		var active int
+		if err := rows.Scan(&u.ID, &u.OrganizationID, &u.Username, &u.DisplayName, &u.Role, &active); err != nil {
+			return nil, err
+		}
+		u.Active = active == 1
+		users = append(users, u)
+	}
+	return users, rows.Err()
+}
+
+func (s *Store) ProductBuyers(ctx context.Context, organizationID string) ([]User, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id,organization_id,username,display_name,role_key,is_active
+		FROM users
+		WHERE organization_id=? AND deleted_at IS NULL AND role_key=?
+		ORDER BY CASE display_name
+			WHEN '伊藤 健司' THEN 1
+			WHEN '佐藤 花子' THEN 2
+			WHEN '山本 太郎' THEN 3
+			WHEN '田中 美香' THEN 4
+			WHEN '鈴木 一郎' THEN 5
+			ELSE 99
+		END, display_name`, organizationID, RoleWorker)
 	if err != nil {
 		return nil, err
 	}

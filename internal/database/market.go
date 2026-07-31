@@ -54,6 +54,28 @@ type MarketPriceInput struct {
 	CreatedBy      string
 }
 
+type ProductMarketPrice struct {
+	ProductID                string
+	ProductCode              string
+	SKU                      string
+	Brand                    string
+	Model                    string
+	ModelNumber              string
+	SerialNumber             string
+	InventoryStatus          string
+	PurchasePriceMinor       int64
+	BaseSalePriceMinor       int64
+	PurchaseMarketPriceMinor int64
+	SaleMarketPriceMinor     int64
+	HasMarketPrice           bool
+}
+
+type ProductMarketPriceFilter struct {
+	Query       string
+	Brand       string
+	ModelNumber string
+}
+
 type MarketImportBatch struct {
 	ID             string
 	OrganizationID string
@@ -124,7 +146,10 @@ func ParseRate(value string) (int64, error) {
 }
 
 func (s *Store) AddExchangeRate(ctx context.Context, organizationID, base, quote string, rateScaled int64, provider, observedAt, actorID string) (ExchangeRate, error) {
-	if base != "USD" && base != "JPY" || quote != "USD" && quote != "JPY" || base == quote {
+	base = strings.ToUpper(strings.TrimSpace(base))
+	quote = strings.ToUpper(strings.TrimSpace(quote))
+	supportedBase := base == "USD" || base == "EUR" || base == "HKD" || base == "CHF"
+	if !supportedBase || quote != "JPY" || base == quote {
 		return ExchangeRate{}, errors.New("通貨ペアを確認してください")
 	}
 	if rateScaled <= 0 {
@@ -217,7 +242,7 @@ func (s *Store) LatestExchangeRate(ctx context.Context, organizationID, base, qu
 		SELECT id,organization_id,base_currency,quote_currency,rate_scaled,scale,provider,observed_at,created_at
 		FROM exchange_rate_snapshots
 		WHERE organization_id=? AND base_currency=? AND quote_currency=?
-		ORDER BY observed_at DESC LIMIT 1`, organizationID, base, quote).
+		ORDER BY observed_at DESC,created_at DESC,id DESC LIMIT 1`, organizationID, base, quote).
 		Scan(&rate.ID, &rate.OrganizationID, &rate.BaseCurrency, &rate.QuoteCurrency,
 			&rate.RateScaled, &rate.Scale, &rate.Provider, &observed, &created)
 	if err != nil {
@@ -355,6 +380,181 @@ func (s *Store) MarketPrices(ctx context.Context, organizationID string, limit i
 		records = append(records, record)
 	}
 	return records, rows.Err()
+}
+
+func (s *Store) ProductMarketPrices(ctx context.Context, organizationID string, filter ProductMarketPriceFilter) ([]ProductMarketPrice, error) {
+	query := `
+		SELECT p.id,p.product_code,p.sku,p.brand,p.product_type,p.model_number,p.serial_number,
+		       p.inventory_status,p.cost_amount_minor,p.base_sale_price_minor,
+		       COALESCE(mp.purchase_market_price_minor,0),COALESCE(mp.sale_market_price_minor,0),
+		       CASE WHEN mp.product_id IS NULL THEN 0 ELSE 1 END
+		FROM products p
+		LEFT JOIN product_market_prices mp
+		  ON mp.organization_id=p.organization_id AND mp.product_id=p.id
+		WHERE p.organization_id=? AND p.deleted_at IS NULL`
+	args := []any{organizationID}
+	if value := strings.TrimSpace(filter.Query); value != "" {
+		like := "%" + value + "%"
+		query += ` AND (p.product_code LIKE ? OR p.sku LIKE ? OR p.brand LIKE ? OR p.product_type LIKE ? OR p.model_number LIKE ? OR p.serial_number LIKE ?)`
+		args = append(args, like, like, like, like, like, like)
+	}
+	if value := strings.TrimSpace(filter.Brand); value != "" {
+		query += ` AND p.brand=?`
+		args = append(args, value)
+	}
+	if value := strings.TrimSpace(filter.ModelNumber); value != "" {
+		query += ` AND p.model_number LIKE ?`
+		args = append(args, "%"+value+"%")
+	}
+	query += ` ORDER BY p.purchase_date DESC,p.product_code DESC LIMIT 500`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []ProductMarketPrice
+	for rows.Next() {
+		var row ProductMarketPrice
+		var hasPrice int
+		if err := rows.Scan(
+			&row.ProductID, &row.ProductCode, &row.SKU, &row.Brand, &row.Model,
+			&row.ModelNumber, &row.SerialNumber, &row.InventoryStatus,
+			&row.PurchasePriceMinor, &row.BaseSalePriceMinor,
+			&row.PurchaseMarketPriceMinor, &row.SaleMarketPriceMinor, &hasPrice,
+		); err != nil {
+			return nil, err
+		}
+		row.HasMarketPrice = hasPrice == 1
+		result = append(result, row)
+	}
+	return result, rows.Err()
+}
+
+func (s *Store) ProductMarketPriceByProductID(ctx context.Context, organizationID, productID string) (ProductMarketPrice, error) {
+	var row ProductMarketPrice
+	var hasPrice int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.id,p.product_code,p.sku,p.brand,p.product_type,p.model_number,p.serial_number,
+		       p.inventory_status,p.cost_amount_minor,p.base_sale_price_minor,
+		       COALESCE(mp.purchase_market_price_minor,0),COALESCE(mp.sale_market_price_minor,0),
+		       CASE WHEN mp.product_id IS NULL THEN 0 ELSE 1 END
+		FROM products p
+		LEFT JOIN product_market_prices mp
+		  ON mp.organization_id=p.organization_id AND mp.product_id=p.id
+		WHERE p.organization_id=? AND p.id=? AND p.deleted_at IS NULL`,
+		organizationID, productID).Scan(
+		&row.ProductID, &row.ProductCode, &row.SKU, &row.Brand, &row.Model,
+		&row.ModelNumber, &row.SerialNumber, &row.InventoryStatus,
+		&row.PurchasePriceMinor, &row.BaseSalePriceMinor,
+		&row.PurchaseMarketPriceMinor, &row.SaleMarketPriceMinor, &hasPrice,
+	)
+	if err != nil {
+		return ProductMarketPrice{}, err
+	}
+	row.HasMarketPrice = hasPrice == 1
+	return row, nil
+}
+
+func (s *Store) UpdateProductMarketPrice(ctx context.Context, organizationID, productID, actorID string, purchaseMarketPriceMinor, saleMarketPriceMinor int64) error {
+	if purchaseMarketPriceMinor < 0 || saleMarketPriceMinor < 0 {
+		return errors.New("相場価格は0以上で入力してください")
+	}
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM products
+		WHERE organization_id=? AND id=? AND deleted_at IS NULL`,
+		organizationID, productID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return sql.ErrNoRows
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO product_market_prices(
+		  organization_id,product_id,purchase_market_price_minor,sale_market_price_minor,updated_by,updated_at
+		) VALUES(?,?,?,?,?,?)
+		ON CONFLICT(organization_id,product_id) DO UPDATE SET
+		  purchase_market_price_minor=excluded.purchase_market_price_minor,
+		  sale_market_price_minor=excluded.sale_market_price_minor,
+		  updated_by=excluded.updated_by,updated_at=excluded.updated_at`,
+		organizationID, productID, purchaseMarketPriceMinor, saleMarketPriceMinor,
+		actorID, s.now().Format(time.RFC3339Nano))
+	return err
+}
+
+func (s *Store) ImportProductMarketPricesCSV(ctx context.Context, organizationID, actorID string, reader io.Reader) (int, error) {
+	csvReader := csv.NewReader(reader)
+	csvReader.TrimLeadingSpace = true
+	header, err := csvReader.Read()
+	if err != nil {
+		return 0, errors.New("CSVヘッダーを読み取れませんでした")
+	}
+	if len(header) > 0 {
+		header[0] = strings.TrimPrefix(header[0], "\ufeff")
+	}
+	expected := []string{"product_code", "purchase_market_price", "sale_market_price"}
+	if len(header) != len(expected) {
+		return 0, fmt.Errorf("CSV列数は%d列必要です", len(expected))
+	}
+	for index := range expected {
+		if strings.TrimSpace(header[index]) != expected[index] {
+			return 0, fmt.Errorf("CSVヘッダー%d列目は%sが必要です", index+1, expected[index])
+		}
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	count := 0
+	for line := 2; line <= 5001; line++ {
+		values, readErr := csvReader.Read()
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil || len(values) != len(expected) {
+			return 0, fmt.Errorf("%d行目のCSV形式を確認してください", line)
+		}
+		productCode := strings.TrimSpace(values[0])
+		purchasePrice, parseErr := ParseMinorAmount(values[1])
+		if parseErr != nil || purchasePrice < 0 {
+			return 0, fmt.Errorf("%d行目の仕入相場価格を確認してください", line)
+		}
+		salePrice, parseErr := ParseMinorAmount(values[2])
+		if parseErr != nil || salePrice < 0 {
+			return 0, fmt.Errorf("%d行目の売値相場価格を確認してください", line)
+		}
+		var productID string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id FROM products
+			WHERE organization_id=? AND product_code=? AND deleted_at IS NULL`,
+			organizationID, productCode).Scan(&productID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return 0, fmt.Errorf("%d行目の商品コードが見つかりません", line)
+			}
+			return 0, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO product_market_prices(
+			  organization_id,product_id,purchase_market_price_minor,sale_market_price_minor,updated_by,updated_at
+			) VALUES(?,?,?,?,?,?)
+			ON CONFLICT(organization_id,product_id) DO UPDATE SET
+			  purchase_market_price_minor=excluded.purchase_market_price_minor,
+			  sale_market_price_minor=excluded.sale_market_price_minor,
+			  updated_by=excluded.updated_by,updated_at=excluded.updated_at`,
+			organizationID, productID, purchasePrice, salePrice, actorID,
+			s.now().Format(time.RFC3339Nano)); err != nil {
+			return 0, err
+		}
+		count++
+	}
+	if count == 0 {
+		return 0, errors.New("CSVにデータ行がありません")
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *Store) PreviewMarketCSV(ctx context.Context, organizationID, actorID, fileName string, reader io.Reader) (MarketImportBatch, error) {

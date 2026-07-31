@@ -1,0 +1,7 @@
+ALTER TABLE products ADD COLUMN material_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE products ADD COLUMN box_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE products ADD COLUMN movement_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE products ADD COLUMN belt_material_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE products ADD COLUMN dial_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE products ADD COLUMN features_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE products ADD COLUMN internal_comment_text TEXT NOT NULL DEFAULT '';

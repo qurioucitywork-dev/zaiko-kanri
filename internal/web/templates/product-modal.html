@@ -1,0 +1,26 @@
+{{define "content"}}
+<div class="product-modal-panel">
+  <header><h2>▣ {{.Product.ProductCode}} — {{.Product.Brand}} {{.Product.ProductType}}</h2><div class="product-modal-header-actions"><label class="currency-display-toggle"><input type="checkbox" data-jpy-conversion-toggle><span class="currency-toggle-track" aria-hidden="true"></span><span>円換算も表示</span></label><button type="button" data-product-modal-close aria-label="閉じる">×</button></div></header>
+  <div class="product-gallery">
+    <div class="product-main-image">
+      {{if .Product.Images}}{{with index .Product.Images 0}}<img src="/product-images/{{.ID}}" alt="{{$.Product.Brand}} {{$.Product.ModelNumber}}" data-product-main-image>{{end}}
+      {{else}}<div class="product-image-placeholder"><span>{{.Product.Brand}}</span><strong>{{.Product.ModelNumber}}</strong><small>NO IMAGE</small></div>{{end}}
+    </div>
+    {{if .Product.Images}}<div class="product-thumbnails">{{range .Product.Images}}<button type="button" data-product-thumbnail="/product-images/{{.ID}}"><img src="/product-images/{{.ID}}" alt="{{.OriginalName}}"></button>{{end}}</div>{{end}}
+  </div>
+  <dl class="product-modal-data">
+    <div><dt>商品コード</dt><dd>{{.Product.ProductCode}}</dd></div><div><dt>ステータス</dt><dd><span class="status-badge {{.Product.InventoryStatus}}">● {{productStatus .Product.InventoryStatus}}</span></dd></div>
+    <div><dt>ブランド</dt><dd>{{.Product.Brand}}</dd></div><div><dt>モデル名</dt><dd>{{.Product.ProductType}}</dd></div>
+    <div><dt>型番（Ref.）</dt><dd>{{if .Product.ModelNumber}}{{.Product.ModelNumber}}{{else}}—{{end}}</dd></div><div><dt>シリアルNo.</dt><dd>{{if .Product.SerialNumber}}{{.Product.SerialNumber}}{{else}}—{{end}}</dd></div>
+    <div><dt>素材（本体）</dt><dd>{{if .Product.Material}}{{.Product.Material}}{{else}}—{{end}}</dd></div><div><dt>駆動方式</dt><dd>{{if .Product.Movement}}{{.Product.Movement}}{{else}}—{{end}}</dd></div>
+    <div><dt>コンディション</dt><dd>{{if .Product.Condition}}{{.Product.Condition}}{{else}}—{{end}}</dd></div><div><dt>ベルト素材</dt><dd>{{if .Product.BeltMaterial}}{{.Product.BeltMaterial}}{{else}}—{{end}}</dd></div>
+    <div><dt>文字盤</dt><dd>{{if .Product.Dial}}{{.Product.Dial}}{{else}}—{{end}}</dd></div><div><dt>仕入先</dt><dd>{{.Product.SupplierName}}</dd></div>
+    <div><dt>仕入担当者</dt><dd>{{.Product.BuyerName}}</dd></div><div><dt>仕入金額</dt><dd class="money">{{formatMoney .Product.CostAmountMinor .Product.CostCurrency}}</dd></div>
+    <div><dt>売価</dt><dd class="money sale-price"><span class="money-display"><strong class="money-primary">{{formatMoney .Product.BaseSalePriceMinor .Product.BaseSaleCurrency}}</strong>{{if and .Product.RateAvailable (eq .Product.BaseSaleCurrency "USD")}}<small class="currency-conversion">約 {{formatMoney .Product.ReferencePriceMinor "JPY"}}</small>{{end}}</span></dd></div><div><dt>仕入日</dt><dd>{{.Product.PurchaseDate}}</dd></div>
+    <div><dt>SKU</dt><dd>{{if .Product.SKU}}{{.Product.SKU}}{{else}}—{{end}}</dd></div><div><dt>BOX</dt><dd>{{if .Product.Box}}{{.Product.Box}}{{else}}—{{end}}</dd></div>
+    <div class="product-modal-accessories"><dt>付属品</dt><dd class="accessory-tags">{{if .Product.Accessories}}{{range accessoryList .Product.Accessories}}<span>{{.}}</span>{{end}}{{else}}—{{end}}</dd></div>
+  </dl>
+  <div class="product-modal-notes"><strong>特徴・備考</strong><p>{{if .Product.Features}}{{.Product.Features}}{{else}}—{{end}}</p></div>
+  <footer><button class="button secondary" type="button" data-product-modal-close>閉じる</button><button class="button inventory-edit" type="button" data-product-edit="{{.Product.ID}}">✎ 編集する</button></footer>
+</div>
+{{end}}

@@ -1,0 +1,28 @@
+{{define "content"}}
+<form class="purchase-workflow-panel shipment-workflow-panel shipment-edit-panel" method="post" action="/slips/shipments/{{.Shipment.ID}}/edit" data-shipment-id="{{.Shipment.ID}}">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <header class="purchase-workflow-head"><h2>✎ 伝票修正</h2><button type="button" data-shipment-workflow-close aria-label="閉じる">×</button></header>
+  <div class="purchase-edit-target"><small>対象伝票</small><strong>▤ 出荷伝票　{{.Shipment.ShipmentNumber}}</strong></div>
+  <div class="purchase-workflow-scroll purchase-edit-body">
+    <h3>▰ 出荷伝票の内容を編集</h3>
+    <div class="purchase-edit-fields">
+      <label><span>出荷日</span><input type="date" name="shipment_date" value="{{.Shipment.ShipmentDate}}" required></label>
+      <label><span>出荷先</span><input value="{{.Shipment.RecipientName}}" disabled></label>
+    </div>
+    <h3 class="muted-title">☷ 商品明細</h3>
+    <div class="shipment-edit-lines">
+      <div class="shipment-edit-line shipment-edit-heading"><span></span><span>商品コード</span><span>ブランド</span><span>モデル</span><span>卸値</span></div>
+      {{range $index, $line := .Shipment.Lines}}
+      <div class="shipment-edit-line">
+        <b>{{add $index 1}}</b><input type="hidden" name="line_id" value="{{$line.ID}}">
+        <strong>{{$line.ProductCode}}</strong><span>{{$line.Brand}}</span><span>{{$line.ModelNumber}}</span>
+        <input name="wholesale_price" type="number" min="0" value="{{$line.WholesalePriceMinor}}" aria-label="{{$line.ProductCode}}の卸値" required>
+      </div>
+      {{end}}
+    </div>
+    <label class="purchase-edit-memo shipment-notes"><span>備考</span><textarea name="notes">{{.Shipment.Notes}}</textarea></label>
+    <label class="purchase-edit-memo"><span>● 修正メモ（変更理由・備考）</span><textarea name="memo" required placeholder="例：金額を修正（当初登録額から変更）"></textarea></label>
+  </div>
+  <footer><span></span><button class="button secondary" type="button" data-shipment-workflow-view="detail">× キャンセル</button><button class="button purchase-edit-button" type="submit">✓ 修正を記録する</button></footer>
+</form>
+{{end}}

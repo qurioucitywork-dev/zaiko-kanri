@@ -114,3 +114,64 @@ func TestMarketCSVCommitAndWorkerApprovalState(t *testing.T) {
 		t.Fatalf("pending worker batch must not update market records: %+v", records)
 	}
 }
+
+func TestProductMarketPricesSearchUpdateAndCSVImport(t *testing.T) {
+	store := inventoryStore(t)
+	ctx := context.Background()
+	first, err := store.CreateSingleProduct(ctx, singleInput("2026-08-14", "MKT-SKU-1", "MKT-SERIAL-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondInput := singleInput("2026-08-15", "MKT-SKU-2", "MKT-SERIAL-2")
+	secondInput.Brand = "ロレックス"
+	secondInput.ModelNumber = "MKT-REF-2"
+	second, err := store.CreateSingleProduct(ctx, secondInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateProductMarketPrice(ctx, "org_preview", first.ID, "usr_admin", 700_000, 920_000); err != nil {
+		t.Fatal(err)
+	}
+	filtered, err := store.ProductMarketPrices(ctx, "org_preview", ProductMarketPriceFilter{Query: "MKT-SKU-1"})
+	if err != nil || len(filtered) != 1 {
+		t.Fatalf("filtered=%+v err=%v", filtered, err)
+	}
+	if filtered[0].PurchaseMarketPriceMinor != 700_000 || filtered[0].SaleMarketPriceMinor != 920_000 {
+		t.Fatalf("market prices=%+v", filtered[0])
+	}
+	csvText := "product_code,purchase_market_price,sale_market_price\n" +
+		second.ProductCode + ",1250000,1580000\n"
+	count, err := store.ImportProductMarketPricesCSV(ctx, "org_preview", "usr_admin", strings.NewReader(csvText))
+	if err != nil || count != 1 {
+		t.Fatalf("count=%d err=%v", count, err)
+	}
+	imported, err := store.ProductMarketPriceByProductID(ctx, "org_preview", second.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !imported.HasMarketPrice || imported.PurchaseMarketPriceMinor != 1_250_000 ||
+		imported.SaleMarketPriceMinor != 1_580_000 {
+		t.Fatalf("imported=%+v", imported)
+	}
+}
+
+func TestProductMarketPriceCSVImportIsAtomic(t *testing.T) {
+	store := inventoryStore(t)
+	ctx := context.Background()
+	product, err := store.CreateSingleProduct(ctx, singleInput("2026-08-16", "MKT-ATOMIC", "MKT-ATOMIC-SERIAL"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	csvText := "product_code,purchase_market_price,sale_market_price\n" +
+		product.ProductCode + ",100,200\nUNKNOWN,300,400\n"
+	if _, err := store.ImportProductMarketPricesCSV(ctx, "org_preview", "usr_admin", strings.NewReader(csvText)); err == nil {
+		t.Fatal("unknown product must reject the full import")
+	}
+	record, err := store.ProductMarketPriceByProductID(ctx, "org_preview", product.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.HasMarketPrice {
+		t.Fatalf("failed CSV must not partially commit: %+v", record)
+	}
+}

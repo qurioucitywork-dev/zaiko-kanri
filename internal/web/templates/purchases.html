@@ -1,22 +1,176 @@
 {{define "content"}}
-<section class="toolbar-card">
-  <div class="filter-bar"><div><strong>仕入伝票</strong><span class="toolbar-note">下書きを確定すると明細数量分の商品を自動生成します。</span></div><a class="button primary push-right" href="/purchases/new">＋ 仕入伝票登録</a></div>
-</section>
-<section class="card">
-  <div class="card-header"><div><h2>仕入伝票一覧</h2><p>確定済み伝票は通常編集できません。</p></div><span class="badge">{{len .Purchases}}件</span></div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>伝票番号</th><th>仕入日</th><th>仕入先</th><th>明細数</th><th>合計</th><th>種別</th><th>状態</th></tr></thead>
-      <tbody>
-      {{range .Purchases}}
-        <tr>
-          <td><a class="record-link" href="/purchases/{{.ID}}">{{.SlipNumber}}</a></td><td>{{.PurchaseDate}}</td><td>{{.SupplierName}}</td>
-          <td>{{.LineCount}}明細</td><td class="money">{{formatMoney .TotalMinor .Currency}}</td>
-          <td>{{if .IsSimple}}単品登録{{else}}通常仕入{{end}}</td><td><span class="status-badge purchase-{{.Status}}">{{purchaseStatus .Status}}</span></td>
-        </tr>
-      {{else}}<tr><td colspan="7" class="empty">仕入伝票はありません。</td></tr>{{end}}
-      </tbody>
-    </table>
+<form method="post" action="/purchases" class="purchase-register" data-purchase-form
+      data-usd-jpy-rate="{{.USDJPYRate.RateScaled}}"
+      data-usd-jpy-scale="{{.USDJPYRate.Scale}}"
+      data-rate-available="{{.USDJPYRateAvailable}}">
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input type="hidden" name="notes" value="">
+
+  <section class="card purchase-slip-card">
+    <div class="card-header purchase-card-header">
+      <h2><span>▧</span> 仕入伝票</h2>
+      <div class="purchase-toolbar">
+        <label class="currency-display-toggle">
+          <input type="checkbox" data-jpy-conversion-toggle>
+          <span class="currency-toggle-track" aria-hidden="true"></span>
+          <span>円換算も表示</span>
+        </label>
+        <button class="button secondary small" type="button" data-purchase-print>▣ 印刷</button>
+        <a class="button secondary small" href="/purchases/export.csv">▰ CSV出力</a>
+        <label class="button secondary small purchase-csv-import">▰ CSV取込
+          <input type="file" accept=".csv,text/csv" data-purchase-csv>
+        </label>
+      </div>
+    </div>
+    <div class="purchase-slip-fields">
+      <label>
+        <span>仕入伝票番号 <em>自動採番</em></span>
+        <input class="purchase-number" value="{{.NextPurchaseNumber}}" readonly aria-label="仕入伝票番号">
+      </label>
+      <label>
+        <span>仕入日 <b>＊</b></span>
+        <input type="date" name="purchase_date" value="" required data-purchase-date>
+      </label>
+      <label>
+        <span>仕入先 <b>＊</b></span>
+        <select name="supplier_id" required data-purchase-supplier>
+          <option value="">-- 選択 --</option>
+          {{range .Suppliers}}<option value="{{.ID}}" data-supplier-name="{{.Name}}">{{.Name}}</option>{{end}}
+        </select>
+      </label>
+      <label>
+        <span>仕入担当者 <b>＊</b></span>
+        <select name="buyer_id" required>
+          <option value="">-- 選択 --</option>
+          {{range .Users}}{{if .Active}}<option value="{{.ID}}">{{.DisplayName}}</option>{{end}}{{end}}
+        </select>
+      </label>
+    </div>
+  </section>
+
+  <section class="card purchase-detail-card">
+    <div class="card-header purchase-card-header">
+      <h2><span>☷</span> 明細</h2>
+      <button class="button primary small" type="button" data-add-purchase-line>＋ 明細追加</button>
+    </div>
+    <div class="purchase-lines purchase-lines-empty" data-purchase-lines>
+      <div class="purchase-empty" data-purchase-empty>
+        <span>＋</span>
+        <p>「明細追加」ボタンで明細を追加してください</p>
+      </div>
+      <div class="purchase-line-header" data-purchase-line-header hidden>
+        <span>No.</span><span>商品コード</span><span>SKU <b>＊</b></span>
+        <span>仕入金額（JPY）</span><span>売価（USD）</span><span>商品登録</span><span>削除</span>
+      </div>
+    </div>
+    <div class="purchase-summary">
+      <span>明細 <strong data-purchase-count>0</strong> 件</span>
+      <span>仕入合計: <strong data-purchase-cost-total>￥0</strong></span>
+      <span class="purchase-sale-summary">売価合計:
+        <strong class="sale" data-purchase-sale-total>$0</strong>
+        <small class="currency-conversion" data-purchase-sale-total-jpy></small>
+      </span>
+    </div>
+  </section>
+
+  <template data-purchase-line-template>
+    <div class="purchase-line purchase-line-row" data-purchase-line data-row-id="">
+      <span class="purchase-line-number" data-purchase-line-number>1</span>
+      <span class="purchase-product-code" data-purchase-product-code>—</span>
+      <label class="purchase-cell-field"><span class="sr-only">SKU</span><input name="sku" required placeholder="SKU必須" data-purchase-row-sku></label>
+      <label class="purchase-cell-field"><span class="sr-only">仕入金額（JPY）</span><input name="unit_cost" inputmode="numeric" value="0" required data-purchase-row-cost></label>
+      <label class="purchase-cell-field money-input-stack">
+        <span class="sr-only">売価（USD）</span>
+        <input name="base_sale_price" inputmode="numeric" value="0" required data-purchase-row-sale>
+        <small class="currency-conversion" data-purchase-row-sale-jpy></small>
+      </label>
+      <button class="button secondary small purchase-product-register" type="button" data-register-purchase-product>▣ 登録</button>
+      <button class="line-remove" type="button" data-remove-purchase-line aria-label="明細を削除">×</button>
+
+      <input type="hidden" name="product_code" value="" data-purchase-row-code>
+      <input type="hidden" name="quantity" value="1">
+      <input type="hidden" name="currency" value="JPY">
+      <input type="hidden" name="sale_currency" value="USD">
+      <input type="hidden" name="brand" value="その他" data-purchase-row-detail="brand">
+      <input type="hidden" name="product_type" value="腕時計" data-purchase-row-detail="product_type">
+      <input type="hidden" name="model_number" value="" data-purchase-row-detail="model_number">
+      <input type="hidden" name="serial_number" value="" data-purchase-row-detail="serial_number">
+      <input type="hidden" name="material" value="" data-purchase-row-detail="material">
+      <input type="hidden" name="movement" value="" data-purchase-row-detail="movement">
+      <input type="hidden" name="condition" value="" data-purchase-row-detail="condition">
+      <input type="hidden" name="belt_material" value="" data-purchase-row-detail="belt_material">
+      <input type="hidden" name="dial" value="" data-purchase-row-detail="dial">
+      <input type="hidden" name="box" value="" data-purchase-row-detail="box">
+      <input type="hidden" name="accessories" value="" data-purchase-row-detail="accessories">
+      <input type="hidden" name="features" value="" data-purchase-row-detail="features">
+    </div>
+  </template>
+
+  <dialog class="purchase-product-dialog" data-purchase-product-dialog>
+    <div class="purchase-product-dialog-head">
+      <h2>▣ 商品登録</h2>
+      <button type="button" aria-label="閉じる" data-purchase-product-cancel>×</button>
+    </div>
+    <div class="purchase-product-dialog-body">
+      <div class="purchase-modal-grid">
+        <label><span>商品コード</span><input readonly data-purchase-modal-code></label>
+        <label><span>仕入日</span><input type="date" readonly data-purchase-modal-date></label>
+        <label><span>SKU <b>＊</b></span><input required data-purchase-modal-field="sku"></label>
+        <label><span>仕入先</span><input readonly data-purchase-modal-supplier></label>
+        <label><span>仕入金額（JPY）</span><input inputmode="numeric" data-purchase-modal-field="unit_cost"></label>
+        <label class="money-input-stack"><span>売価（USD）</span><input inputmode="numeric" data-purchase-modal-field="base_sale_price"><small class="currency-conversion" data-purchase-modal-sale-jpy></small></label>
+        <label>
+          <span>ブランド名</span>
+          <select data-purchase-modal-field="brand">
+            <option value="その他">-- 選択 --</option>
+            {{range .ProductBrandOptions}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+          </select>
+        </label>
+        <label><span>モデル名</span><input data-purchase-modal-field="product_type"></label>
+        <label><span>型番（Ref.）</span><input data-purchase-modal-field="model_number"></label>
+        <label><span>シリアルNo.</span><input data-purchase-modal-field="serial_number"></label>
+        <label>
+          <span>素材（本体）</span>
+          <select data-purchase-modal-field="material"><option value="">-- 選択 --</option>{{range .ProductMaterialOptions}}<option value="{{.Name}}">{{.Code}} — {{.Name}}</option>{{end}}</select>
+        </label>
+        <label>
+          <span>駆動方式</span>
+          <select data-purchase-modal-field="movement"><option value="">-- 選択 --</option>{{range .ProductMovementOptions}}<option value="{{.Name}}">{{.Code}} — {{.Name}}</option>{{end}}</select>
+        </label>
+        <label>
+          <span>コンディション</span>
+          <select data-purchase-modal-field="condition"><option value="">-- 選択 --</option>{{range .ProductConditionOptions}}<option value="{{.Name}}">{{.Code}} — {{.Name}}</option>{{end}}</select>
+        </label>
+        <label><span>ベルト素材</span><input data-purchase-modal-field="belt_material"></label>
+        <label><span>文字盤</span><input data-purchase-modal-field="dial"></label>
+        <label>
+          <span>BOX番号</span>
+          <select data-purchase-modal-field="box">
+            <option value="">-- 選択なし --</option>
+            <option value="BOX1">BOX1 — ロレックス特集</option><option value="BOX2">BOX2 — 高額品セレクト</option>
+            <option value="BOX3">BOX3 — 春の新入荷</option><option value="BOX4">BOX4</option><option value="BOX5">BOX5</option>
+            <option value="BOX6">BOX6</option><option value="BOX7">BOX7</option><option value="BOX8">BOX8</option>
+            <option value="BOX9">BOX9</option><option value="BOX10">BOX10</option>
+          </select>
+        </label>
+      </div>
+      <fieldset class="purchase-modal-accessories">
+        <legend>付属品</legend>
+        <div>
+          {{range $value := productAccessories}}<label><input type="checkbox" value="{{$value}}" data-purchase-modal-accessory><span>{{$value}}</span></label>{{end}}
+        </div>
+      </fieldset>
+      <label class="purchase-modal-features"><span>特徴・備考</span><textarea rows="3" data-purchase-modal-field="features"></textarea></label>
+    </div>
+    <div class="purchase-product-dialog-actions">
+      <button class="button secondary" type="button" data-purchase-product-cancel>キャンセル</button>
+      <button class="button primary" type="button" data-purchase-product-confirm>確定</button>
+    </div>
+  </dialog>
+
+  <div class="purchase-form-actions">
+    <button class="button secondary purchase-reset" type="reset" data-purchase-reset>⟳ リセット</button>
+    <button class="button primary purchase-submit" type="submit" data-purchase-submit disabled>▣ 仕入登録する</button>
   </div>
-</section>
+</form>
 {{end}}

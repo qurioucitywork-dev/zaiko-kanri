@@ -11,11 +11,21 @@ type contextKey string
 const (
 	userKey      contextKey = "user"
 	sessionKey   contextKey = "session"
+	guestKey     contextKey = "guest"
 	requestIDKey contextKey = "request-id"
 )
 
 func withUser(ctx context.Context, user database.User) context.Context {
 	return context.WithValue(ctx, userKey, user)
+}
+
+func withGuest(ctx context.Context, guest database.GuestPrincipal) context.Context {
+	return context.WithValue(ctx, guestKey, guest)
+}
+
+func currentGuest(ctx context.Context) (database.GuestPrincipal, bool) {
+	guest, ok := ctx.Value(guestKey).(database.GuestPrincipal)
+	return guest, ok
 }
 
 func currentUser(ctx context.Context) (database.User, bool) {

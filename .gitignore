@@ -1,9 +1,14 @@
 # Local development tools and generated state
 /.tooling/
+/.tools/
 /.data/
 /.tmp/
+/.cache/
+/.gocache/
 /bin/
 /.backups/
+/.pnpm-store/
+**/node_modules/
 
 # Local configuration
 .env

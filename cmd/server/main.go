@@ -49,6 +49,10 @@ func main() {
 			logger.Error("seed inventory preview data", "error", err)
 			os.Exit(1)
 		}
+		if err := store.SeedMasterPreview(ctx); err != nil {
+			logger.Error("seed master preview data", "error", err)
+			os.Exit(1)
+		}
 		if err := store.SeedMarketPreview(ctx); err != nil {
 			logger.Error("seed market preview data", "error", err)
 			os.Exit(1)
@@ -57,12 +61,36 @@ func main() {
 			logger.Error("seed sales preview data", "error", err)
 			os.Exit(1)
 		}
+		if err := store.SeedShipmentWorkflowPreview(ctx); err != nil {
+			logger.Error("seed shipment workflow preview data", "error", err)
+			os.Exit(1)
+		}
+		if err := store.SeedSalesWorkflowPreview(ctx); err != nil {
+			logger.Error("seed sales workflow preview data", "error", err)
+			os.Exit(1)
+		}
+		if err := store.SeedGuestCatalogPreview(ctx); err != nil {
+			logger.Error("seed guest catalog preview data", "error", err)
+			os.Exit(1)
+		}
 		if err := store.SeedRequestPreview(ctx); err != nil {
 			logger.Error("seed request preview data", "error", err)
 			os.Exit(1)
 		}
 		if err := store.SeedApprovalPreview(ctx); err != nil {
 			logger.Error("seed approval preview data", "error", err)
+			os.Exit(1)
+		}
+		if err := store.SeedStocktakePreview(ctx); err != nil {
+			logger.Error("seed stocktake preview data", "error", err)
+			os.Exit(1)
+		}
+		if err := store.SeedReturnTakehomePreview(ctx); err != nil {
+			logger.Error("seed return/take-home preview data", "error", err)
+			os.Exit(1)
+		}
+		if err := store.SeedPurchaseReturnPreview(ctx); err != nil {
+			logger.Error("seed purchase return preview data", "error", err)
 			os.Exit(1)
 		}
 	}

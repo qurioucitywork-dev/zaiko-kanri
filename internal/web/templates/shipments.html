@@ -1,18 +1,85 @@
 {{define "content"}}
-<section class="toolbar-card">
-  <div class="filter-bar"><div><strong>出荷伝票</strong><span class="toolbar-note">売上確定前の出荷も登録できますが、警告として明示されます。</span></div><a class="button primary push-right" href="/shipments/new">＋ 出荷伝票登録</a></div>
-</section>
-<section class="card">
-  <div class="card-header"><div><h2>出荷伝票一覧</h2><p>複数伝票による分納と累計出荷数量を管理します。</p></div><span class="badge">{{len .Shipments}}件</span></div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>伝票番号</th><th>出荷日</th><th>届け先</th><th>状態</th><th>売上関連</th></tr></thead>
-      <tbody>{{range .Shipments}}<tr>
-        <td><a class="record-link" href="/shipments/{{.ID}}">{{.ShipmentNumber}}</a></td><td>{{.ShipmentDate}}</td><td>{{.RecipientName}}</td>
-        <td><span class="status-badge transaction-{{.Status}}">{{shipmentStatus .Status}}</span></td>
-        <td>{{if eq .Status "draft"}}確定時に判定{{else if .Warning}}<span class="warning-text">⚠ {{.Warning}}</span>{{else}}関連済み{{end}}</td>
-      </tr>{{else}}<tr><td colspan="5" class="empty">出荷伝票はありません。</td></tr>{{end}}</tbody>
-    </table>
+<form method="post" action="/shipments" class="shipment-register" data-shipment-form>
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input type="hidden" name="purchase_request_group_id" value="{{.ShipmentPurchaseRequestGroup}}">
+  <div hidden data-shipment-prefills>{{range .ShipmentPrefillCodes}}<span data-code="{{.}}"></span>{{end}}</div>
+
+  <section class="card shipment-slip-card">
+    <div class="card-header shipment-card-header">
+      <h2><span>▰</span> 出荷伝票</h2>
+      <div class="shipment-toolbar">
+        <button class="button secondary small" type="button" data-shipment-customs>▤ 通関書類</button>
+        <button class="button secondary small" type="button" data-shipment-print>▣ 印刷</button>
+        <button class="button secondary small" type="button" data-shipment-csv>▤ CSV</button>
+      </div>
+    </div>
+
+    <div class="shipment-slip-fields">
+      <label>
+        <span>伝票番号 <em>自動</em></span>
+        <input value="{{.NextShipmentNumber}}" readonly aria-label="出荷伝票番号">
+      </label>
+      <label>
+        <span>出荷日 <em>自動</em></span>
+        <input type="date" name="shipment_date" value="{{.TodayISO}}" readonly required>
+      </label>
+      <label>
+        <span>出荷先 <b>＊</b></span>
+        <select name="recipient_name" required>
+          <option value="">-- 選択 --</option>
+          {{range .SalesDestinationOptions}}<option value="{{.Name}}"{{if eq .Name $.ShipmentPrefillRecipient}} selected{{end}}>{{if .Code}}{{.Code}} — {{end}}{{.Name}}</option>{{end}}
+        </select>
+      </label>
+      <label class="shipment-notes-field">
+        <span>備考</span>
+        <input name="notes" placeholder="配送方法・注意事項など">
+      </label>
+    </div>
+
+    <div class="shipment-detail-heading">
+      <strong>明細行</strong>
+      <span>商品コードを入力すると商品情報を表示します</span>
+    </div>
+    <div class="shipment-line-head" aria-hidden="true">
+      <span>商品コード</span><span>ブランド</span><span>モデル名</span><span>卸値（税抜）</span><span></span>
+    </div>
+    <div class="shipment-lines" data-shipment-lines></div>
+    <button class="shipment-add-line" type="button" data-add-shipment-line>＋ 明細行を追加</button>
+
+    <div class="shipment-total">
+      <span>合計卸値（税抜）</span><strong data-shipment-total>¥0</strong>
+    </div>
+  </section>
+
+  <div class="shipment-form-actions">
+    <button class="button secondary" type="reset" data-shipment-reset>⟳ リセット</button>
+    <button class="button primary" type="submit" data-shipment-submit>▰ 出荷を確定する</button>
   </div>
-</section>
+
+  <datalist id="shipment-product-options">
+    {{range .Products}}
+    <option value="{{.ProductCode}}"
+      data-id="{{.ID}}" data-code="{{.ProductCode}}" data-brand="{{.Brand}}"
+      data-model="{{if .ProductType}}{{.ProductType}}{{else}}{{.ModelNumber}}{{end}}"
+      data-price="{{.CostAmountMinor}}">
+      {{.Brand}} {{if .ProductType}}{{.ProductType}}{{else}}{{.ModelNumber}}{{end}}
+    </option>
+    {{end}}
+  </datalist>
+
+  <template data-shipment-line-template>
+    <div class="shipment-line" data-shipment-line>
+      <label class="shipment-product-select">
+        <span class="sr-only">商品コード</span>
+        <input list="shipment-product-options" placeholder="20260412-001" autocomplete="off" required data-shipment-product-code>
+      </label>
+      <input type="hidden" name="product_id" value="" data-shipment-product>
+      <input type="hidden" name="quantity" value="1">
+      <span data-shipment-brand>―</span>
+      <span data-shipment-model>―</span>
+      <label class="shipment-price"><span class="sr-only">卸値（税抜）</span><input name="wholesale_price" value="0" inputmode="numeric" required data-shipment-price></label>
+      <button class="shipment-remove" type="button" data-remove-shipment-line aria-label="明細を削除">×</button>
+    </div>
+  </template>
+</form>
 {{end}}

@@ -1,0 +1,114 @@
+{{define "content"}}
+<div class="return-restore-panel">
+  <header class="return-restore-head">
+    <h2>↶ 返品/持ち帰り確認 — {{.Sale.SlipNumber}}</h2>
+    <button type="button" data-return-restore-close aria-label="閉じる">×</button>
+  </header>
+  <form id="return-restore-form" method="post" action="/returns/{{.Sale.ID}}/restore" class="return-restore-form" data-return-restore-form data-return-restore-admin="{{if eq .User.Role "admin"}}true{{else}}false{{end}}">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <input type="hidden" name="confirmed" value="0" data-return-restore-confirmed>
+    <div class="return-restore-scroll">
+      <section class="return-restore-summary">
+        <dl>
+          <div><dt>売上伝票番号</dt><dd>{{.Sale.SlipNumber}}</dd></div>
+          <div><dt>売上日</dt><dd>{{.Sale.SalesDate}}</dd></div>
+          <div><dt>販売先</dt><dd>{{.Sale.CustomerName}}</dd></div>
+        </dl>
+        <div class="return-restore-totals">
+          <span>伝票合計: <strong>{{formatMoney .ReturnOriginalTotal "JPY"}}</strong></span>
+          <span class="negative">返品/持ち帰り計: − {{formatMoney .ReturnPendingTotal "JPY"}}</span>
+          <span>実売上合計: <strong>{{formatMoney .ReturnNetTotal "JPY"}}</strong></span>
+          {{if .Sale.Notes}}<span class="return-restore-note">備考: {{.Sale.Notes}}</span>{{end}}
+        </div>
+      </section>
+
+      <p class="return-restore-guide">⚠ 在庫に戻す商品のチェックボックスにチェックを入れ、商品状態と個数を確認してから「在庫に戻す」ボタンを押してください。</p>
+
+      <section>
+        <h3 class="return-restore-title">↶ 返品・持ち帰り対象商品</h3>
+        <div class="return-restore-products">
+          {{range .ReturnPendingItems}}
+          <article class="return-restore-product" data-return-restore-product>
+            <div class="return-restore-product-main">
+              <input type="checkbox" name="item_id" value="{{.ID}}" aria-label="{{.ProductCode}}を在庫に戻す">
+              <div class="return-restore-product-copy">
+                <div class="return-restore-product-title">
+                  <code>{{.ProductCode}}</code>
+                  <strong>{{.Brand}} {{.ModelNumber}}</strong>
+                  <span class="return-restore-type {{.ActionType}}">↶ {{if eq .ActionType "return"}}返品{{else}}持ち帰り{{end}}</span>
+                  <span class="return-restore-pending">◷ 処理待ち</span>
+                </div>
+                <div class="return-restore-product-meta">
+                  <span>売価: <strong>{{formatMoney .AmountJPY "JPY"}}</strong></span>
+                  <span>現コンディション: <strong>{{if .Condition}}{{.Condition}}{{else}}—{{end}}</strong></span>
+                  <span>シリアル: {{if .SerialNumber}}{{.SerialNumber}}{{else}}—{{end}}</span>
+                </div>
+              </div>
+            </div>
+            <div class="return-restore-confirm">
+              <label>確認後のコンディション:
+                <select name="condition_{{.ID}}">
+                  <option value="">変更なし</option>
+                  {{$item := .}}{{range $.ProductConditionOptions}}<option value="{{.Name}}" {{if eq $item.RestoreCondition .Name}}selected{{end}}>{{.Code}} — {{.Name}}</option>{{end}}
+                </select>
+              </label>
+              <label>数量確認:
+                <input type="number" name="quantity_{{.ID}}" value="{{.Quantity}}" min="1" max="{{.Quantity}}" inputmode="numeric">
+                <span>点</span>
+              </label>
+            </div>
+          </article>
+          {{else}}
+          <div class="return-restore-empty">✓ 在庫戻しが必要な処理待ち商品はありません。</div>
+          {{end}}
+        </div>
+      </section>
+
+      {{if .ReturnCompletedItems}}
+      <section class="return-completed-section">
+        <h3 class="return-restore-title">✓ 在庫戻し済み商品</h3>
+        <div class="return-completed-list">
+          {{range .ReturnCompletedItems}}
+          <article>
+            <code>{{.ProductCode}}</code>
+            <strong>{{.Brand}} {{.ModelNumber}}</strong>
+            <span>{{formatMoney .AmountJPY "JPY"}}</span>
+            <b>✓ 在庫戻し済</b>
+          </article>
+          {{end}}
+        </div>
+      </section>
+      {{end}}
+
+      <section class="return-reference-section">
+        <h3 class="return-restore-title">✓ 通常販売商品（参照）</h3>
+        <div class="return-reference-list">
+          {{range .ReturnReferenceItems}}
+          <div><span>−</span><code>{{.ProductCode}}</code><strong>{{.Brand}} {{.ModelNumber}}</strong><b>{{formatMoney .AmountJPY "JPY"}}</b></div>
+          {{else}}
+          <div class="return-restore-empty">参照商品はありません。</div>
+          {{end}}
+        </div>
+      </section>
+    </div>
+    <footer>
+      <button class="button secondary" type="button" data-return-restore-close>× 閉じる</button>
+      <button class="button return-restore-submit" type="submit" data-return-restore-submit>▣ {{if eq .User.Role "admin"}}在庫に戻す{{else}}承認申請{{end}}</button>
+    </footer>
+  </form>
+  {{if eq .User.Role "admin"}}
+  <dialog class="return-box-confirm-dialog" data-return-box-confirm-dialog aria-label="BOX確認">
+    <div class="return-box-confirm-panel">
+      <header><h2>BOX確認</h2><button type="button" data-return-box-confirm-close aria-label="閉じる">×</button></header>
+      <p>在庫へ戻す商品のBOXを確認してください。</p>
+      <div data-return-box-confirm-items></div>
+      <label class="return-admin-comment"><span>備考・管理者コメント（任意）</span><textarea name="admin_comment" form="return-restore-form" placeholder="確認事項があれば入力"></textarea></label>
+      <footer>
+        <button class="button secondary" type="button" data-return-box-confirm-close>× キャンセル</button>
+        <button class="button return-restore-submit" type="button" data-return-box-confirm-submit>✓ 在庫に戻す</button>
+      </footer>
+    </div>
+  </dialog>
+  {{end}}
+</div>
+{{end}}

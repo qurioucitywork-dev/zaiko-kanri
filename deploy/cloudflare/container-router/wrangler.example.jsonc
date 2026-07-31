@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "zaiko-test-container-router",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "workers_dev": true,
+  "containers": [
+    {
+      "class_name": "ZaikoContainer",
+      "image": "../../../Dockerfile.cloudflare",
+      "instance_type": "lite",
+      "max_instances": 1
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ZAIKO_CONTAINER",
+        "class_name": "ZaikoContainer"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ZaikoContainer"]
+    }
+  ],
+  "services": [
+    {
+      "binding": "D1_SERVICE",
+      "service": "zaiko-test-d1-service"
+    }
+  ],
+  "vars": {
+    "ZAIKO_CONTAINER_INSTANCE": "preview-singleton"
+  }
+}

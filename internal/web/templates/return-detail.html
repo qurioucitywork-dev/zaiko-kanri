@@ -1,0 +1,37 @@
+{{define "content"}}
+<div class="detail-head return-detail-head">
+  <div><p class="eyebrow dark">RETURN / TAKE HOME</p><h2>{{.Sale.SlipNumber}}</h2><p>{{.Sale.CustomerName}} / {{.Sale.SalesDate}}</p></div>
+  <a class="button secondary" href="/returns">一覧へ戻る</a>
+</div>
+
+<section class="card return-entry-card">
+  <div class="card-header"><div><h3>＋ 対象商品を受付</h3><p>元の売上伝票を保持したまま、返品または持ち帰り案件として管理します。</p></div></div>
+  <form method="post" action="/returns/{{.Sale.ID}}/items" class="return-entry-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label>対象商品<select name="sales_line_id" required>{{range .Sale.Lines}}<option value="{{.ID}}">{{.ProductCode}} / {{.Brand}} {{.ModelNumber}}</option>{{end}}</select></label>
+    <label>区分<select name="action_type"><option value="return">返品</option><option value="take_home">持ち帰り</option></select></label>
+    <label>数量<input type="number" name="quantity" value="1" min="1" required></label>
+    <label>受付理由<input name="reason" placeholder="例：商品状態の再確認" required></label>
+    <button class="button primary" type="submit">受付登録</button>
+  </form>
+</section>
+
+<section class="card">
+  <div class="card-header"><h3>処理履歴</h3><span class="toolbar-note">{{len .ReturnItems}}件</span></div>
+  <div class="table-wrap">
+    <table class="return-history-table">
+      <thead><tr><th>商品</th><th>区分</th><th>数量</th><th>受付理由</th><th>受付日時</th><th>状態 / 操作</th></tr></thead>
+      <tbody>{{range .ReturnItems}}<tr>
+        <td><a class="record-link" href="/products/{{.ProductID}}">{{.ProductCode}}</a><span class="table-sub">{{.Brand}} {{.ModelNumber}}</span></td>
+        <td><span class="return-type {{.ActionType}}">{{if eq .ActionType "return"}}返品{{else}}持ち帰り{{end}}</span></td>
+        <td>{{.Quantity}}件</td><td>{{.Reason}}</td><td>{{formatTime .RequestedAt}}</td>
+        <td>{{if eq .Status "pending"}}
+          <form method="post" action="/returns/{{$.Sale.ID}}/items/{{.ID}}/complete" class="return-complete-form" data-confirm="この案件を処理済みにしますか？">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="notes" placeholder="処理メモ"><button class="button success" type="submit">処理完了</button>
+          </form>
+        {{else}}<span class="return-complete">✓ 処理済み</span>{{if .Notes}}<span class="table-sub">{{.Notes}}</span>{{end}}{{end}}</td>
+      </tr>{{else}}<tr><td colspan="6"><div class="returns-empty"><span>↶</span><strong>受付履歴はありません</strong></div></td></tr>{{end}}</tbody>
+    </table>
+  </div>
+</section>
+{{end}}

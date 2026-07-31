@@ -1,24 +1,115 @@
 {{define "content"}}
-<section class="toolbar-card">
-  <div class="filter-bar"><div><strong>売上伝票</strong><span class="toolbar-note">売上と出荷は独立管理。確定時点の通貨・為替・換算額を固定します。</span></div><a class="button primary push-right" href="/sales/new">＋ 売上伝票登録</a></div>
-</section>
-<section class="card">
-  <div class="card-header"><div><h2>売上伝票一覧</h2><p>売上確定後も出荷状況を明細数量から追跡します。</p></div><span class="badge">{{len .Sales}}件</span></div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>伝票番号</th><th>売上日</th><th>販売先</th><th>売上金額（JPY）</th><th>売上状態</th><th>出荷状態</th><th>警告</th></tr></thead>
-      <tbody>
-      {{range .Sales}}
-        <tr>
-          <td><a class="record-link" href="/sales/{{.ID}}">{{.SlipNumber}}</a></td><td>{{.SalesDate}}</td><td>{{.CustomerName}}</td>
-          <td class="money">{{formatMoney .TotalJPY "JPY"}}</td>
-          <td><span class="status-badge transaction-{{.Status}}">{{saleStatus .Status}}</span></td>
-          <td><span class="status-badge delivery-{{.ShipmentStatus}}">{{deliveryStatus .ShipmentStatus}}</span></td>
-          <td>{{if .Warning}}<span class="warning-text">⚠ {{.Warning}}</span>{{else}}—{{end}}</td>
-        </tr>
-      {{else}}<tr><td colspan="7" class="empty">売上伝票はありません。</td></tr>{{end}}
-      </tbody>
-    </table>
+<form method="post" action="/sales" class="sales-register" data-sales-form>
+  <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+  <input type="hidden" name="tax_mode" value="normal" data-sales-tax-mode>
+  <input type="hidden" name="shipment_id" value="{{.Shipment.ID}}" data-sales-shipment-id>
+  <input type="hidden" name="auto_number" value="0" data-sales-auto-number-state>
+  <div hidden data-sales-prefill data-recipient="{{.Shipment.RecipientName}}">
+    {{range .Shipment.Lines}}
+    <i data-product-id="{{.ProductID}}" data-price="{{.WholesalePriceMinor}}" data-quantity="{{.Quantity}}"></i>
+    {{end}}
   </div>
-</section>
+
+  <section class="card sales-slip-card">
+    <div class="card-header sales-card-header">
+      <h2><span>▥</span> 売上伝票</h2>
+      <div class="sales-toolbar">
+        <label class="sales-normal">
+          <input type="checkbox" role="switch" data-sales-tax-switch aria-label="通常・免税を切り替え">
+          <span data-sales-tax-label>通常</span>
+        </label>
+        <button class="button secondary small" type="button" data-sales-print>▣ 印刷</button>
+        <button class="button secondary small" type="button" data-sales-csv>▰ CSV</button>
+      </div>
+    </div>
+
+    <div class="sales-slip-fields">
+      <label>
+        <span>伝票番号 <button type="button" data-sales-auto-number>＋ 出荷なし（新規発番）</button></span>
+        <input name="slip_number" value="{{if .Shipment.ID}}{{.NextSalesNumber}}{{end}}" {{if .Shipment.ID}}readonly{{end}}
+          placeholder="{{.NextSalesNumber}} または出荷伝票番号" aria-label="売上伝票番号"
+          autocomplete="off" data-sales-slip-number data-next-sales-number="{{.NextSalesNumber}}">
+        <small class="sales-shipment-lookup-status" data-sales-shipment-lookup-status aria-live="polite"></small>
+      </label>
+      <label>
+        <span>売上日 <b>＊</b></span>
+        <input type="date" name="sales_date" value="{{.TodayISO}}" required>
+      </label>
+      <label>
+        <span>販売先 <b>＊</b></span>
+        <select name="customer_name" required>
+          <option value="">-- 選択 --</option>
+          {{range .SalesDestinationOptions}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+        </select>
+      </label>
+    </div>
+
+    <div class="sales-detail-heading">
+      <strong>明細行</strong>
+      <span>ⓘ チェックを外した行は「持ち帰り」として扱われます</span>
+    </div>
+    <div class="sales-lines-frame">
+      <div class="sales-line-header" aria-hidden="true">
+        <span>計上</span>
+        <span>商品コード</span>
+        <span>ブランド</span>
+        <span>モデル名</span>
+        <span>型番</span>
+        <span>シリアル</span>
+        <span>付属品</span>
+        <span>販売金額（税抜）</span>
+        <span></span>
+      </div>
+      <div class="sales-lines" data-sales-lines></div>
+    </div>
+
+    <button class="sales-add-line" type="button" data-add-sales-line>＋ 明細行を追加</button>
+
+    <div class="sales-totals">
+      <div><span>合計金額（税抜）</span><strong data-sales-subtotal>￥0</strong></div>
+      <div><span>消費税（10%）</span><strong data-sales-tax>￥0</strong></div>
+      <div><span>税込合計</span><strong data-sales-total>￥0</strong></div>
+    </div>
+  </section>
+
+  <section class="card sales-notes-card">
+    <div class="card-header"><h2><span>▣</span> 備考</h2></div>
+    <div><textarea name="notes" rows="4" placeholder="備考を入力..."></textarea></div>
+  </section>
+
+  <div class="sales-form-actions">
+    <button class="button secondary" type="reset" data-sales-reset>⟳ リセット</button>
+    <button class="button primary" type="submit" data-sales-submit>▣ 売上を確定する</button>
+  </div>
+
+  <datalist id="sales-product-options">
+    {{range .Products}}
+    <option value="{{.ProductCode}}"
+      data-id="{{.ID}}" data-code="{{.ProductCode}}" data-brand="{{.Brand}}" data-model="{{.ProductType}}"
+      data-reference="{{.ModelNumber}}" data-serial="{{.SerialNumber}}"
+      data-accessories="{{.Accessories}}" data-price="{{.BaseSalePriceMinor}}">
+      {{.Brand}} {{.ProductType}}
+    </option>
+    {{end}}
+  </datalist>
+
+  <template data-sales-line-template>
+    <div class="sales-line" data-sales-line>
+      <label class="sales-posted" title="計上する"><input type="checkbox" checked data-sales-posted><span class="sr-only">計上</span></label>
+      <label class="sales-product-select">
+        <span class="sr-only">商品コード</span>
+        <input list="sales-product-options" placeholder="管理番号" autocomplete="off" required data-sales-product-code>
+      </label>
+      <input type="hidden" name="product_id" value="" data-sales-product>
+      <input type="hidden" name="quantity" value="1">
+      <span data-sales-brand>—</span>
+      <span data-sales-model>—</span>
+      <span data-sales-reference>—</span>
+      <span data-sales-serial>—</span>
+      <span data-sales-accessories>—</span>
+      <label class="sales-price"><span class="sr-only">販売金額（税抜）</span><input name="unit_price" value="0" inputmode="numeric" required data-sales-price></label>
+      <button class="sales-remove" type="button" data-remove-sales-line aria-label="明細を削除">×</button>
+    </div>
+  </template>
+</form>
 {{end}}

@@ -1,74 +1,97 @@
 {{define "content"}}
-<section class="toolbar-card">
-  <form method="get" action="/products" class="filter-bar" data-live-filter aria-label="在庫の検索条件"
-        hx-get="/products" hx-trigger="input changed delay:350ms, change" hx-target="#product-results"
-        hx-select="#product-results" hx-swap="outerHTML" hx-push-url="true">
-    <label class="search-field"><span aria-hidden="true">⌕</span><span class="sr-only">商品検索</span><input name="q" value="{{.Query}}" placeholder="商品コード、SKU、ブランド、型番、シリアル" autocomplete="off"></label>
-    <label class="sr-only" for="product-status">在庫状態</label>
-    <select id="product-status" name="status">
-      <option value="">すべての状態</option>
-      <option value="purchasing" {{if eq .Status "purchasing"}}selected{{end}}>仕入中</option>
+<section class="card inventory-search-card">
+  <div class="inventory-search-head">
+    <h2>⌕ 在庫検索</h2>
+    <div>{{if .InventorySearchRequested}}<a class="inventory-clear" href="/products">↶ 条件クリア</a>{{end}}<button class="button inventory-submit" type="submit" form="inventory-search-form">⌕ 検索</button><a class="button primary" href="/products/new">＋ 商品登録</a></div>
+  </div>
+  <form id="inventory-search-form" method="get" action="/products" class="inventory-search-form" aria-label="在庫の検索条件">
+    <label><strong>▥ 管理番号</strong><input name="q" value="{{.Query}}" placeholder="例：20260401001"></label>
+    <label><strong>◆ ブランド</strong><select name="brand"><option value="">すべて</option>{{range .ProductBrands}}<option value="{{.}}" {{if eq $.Brand .}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <label><strong># 型番</strong><input name="model_number" value="{{.ModelNumber}}" placeholder="例：116610LN"></label>
+    <label><strong>◉ シリアル</strong><input name="serial_number" value="{{.SerialNumber}}" placeholder="例：ZX123456"></label>
+    <label><strong>⌘ SKU</strong><input name="sku" value="{{.SKU}}" placeholder="SKU番号"></label>
+    <label><strong>◧ 仕入先</strong><select name="supplier_id"><option value="">すべて</option>{{range .Suppliers}}<option value="{{.ID}}" {{if eq $.SupplierID .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+    <label><strong>♟ 仕入担当者</strong><select name="buyer_id"><option value="">すべて</option>{{range .Users}}<option value="{{.ID}}" {{if eq $.BuyerID .ID}}selected{{end}}>{{.DisplayName}}</option>{{end}}</select></label>
+    <label><strong>● ステータス</strong><select name="status">
+      <option value="">すべて</option>
       <option value="in_stock" {{if eq .Status "in_stock"}}selected{{end}}>在庫中</option>
-      <option value="reserved" {{if eq .Status "reserved"}}selected{{end}}>取置中</option>
-      <option value="sold" {{if eq .Status "sold"}}selected{{end}}>販売済み</option>
-      <option value="shipped" {{if eq .Status "shipped"}}selected{{end}}>出荷済み</option>
-      {{if eq .User.Role "admin"}}<option value="cancelled" {{if eq .Status "cancelled"}}selected{{end}}>取消</option>{{end}}
-    </select>
-    <label class="sr-only" for="product-sort">並び順</label>
-    <select id="product-sort" name="sort">
-      <option value="purchase_desc" {{if eq .Sort "purchase_desc"}}selected{{end}}>仕入日の新しい順</option>
-      <option value="purchase_asc" {{if eq .Sort "purchase_asc"}}selected{{end}}>仕入日の古い順</option>
-      <option value="code_asc" {{if eq .Sort "code_asc"}}selected{{end}}>商品コード昇順</option>
-      <option value="code_desc" {{if eq .Sort "code_desc"}}selected{{end}}>商品コード降順</option>
-      <option value="brand_asc" {{if eq .Sort "brand_asc"}}selected{{end}}>ブランド順</option>
-      <option value="sale_price_desc" {{if eq .Sort "sale_price_desc"}}selected{{end}}>基準売価の高い順</option>
-    </select>
-    {{if eq .User.Role "admin"}}
-    <label class="check-field"><input type="checkbox" name="include_cancelled" value="1" {{if .IncludeCancelled}}checked{{end}}>取消を含む</label>
-    {{end}}
-    <button class="button secondary" type="submit">検索</button>
-    <a class="button ghost" href="/products">条件をクリア</a>
-    <a class="button primary push-right" href="/products/new">＋ 商品登録</a>
+      <option value="sold" {{if eq .Status "sold"}}selected{{end}}>売上済</option>
+      <option value="shipped" {{if eq .Status "shipped"}}selected{{end}}>出荷済</option>
+      <option value="purchase_return" {{if eq .Status "purchase_return"}}selected{{end}}>仕入返品</option>
+      <option value="hold" {{if eq .Status "hold"}}selected{{end}}>保留</option>
+    </select></label>
+    <label><strong>▣ BOX</strong><select name="box">
+      <option value="">すべて</option>
+      <option value="BOX1" {{if eq .Box "BOX1"}}selected{{end}}>BOX1 — ロレックス特集</option>
+      <option value="BOX2" {{if eq .Box "BOX2"}}selected{{end}}>BOX2 — 高額品セレクト</option>
+      <option value="BOX3" {{if eq .Box "BOX3"}}selected{{end}}>BOX3 — 春の新入荷</option>
+      <option value="BOX4" {{if eq .Box "BOX4"}}selected{{end}}>BOX4</option>
+      <option value="BOX5" {{if eq .Box "BOX5"}}selected{{end}}>BOX5</option>
+      <option value="BOX6" {{if eq .Box "BOX6"}}selected{{end}}>BOX6</option>
+      <option value="BOX7" {{if eq .Box "BOX7"}}selected{{end}}>BOX7</option>
+      <option value="BOX8" {{if eq .Box "BOX8"}}selected{{end}}>BOX8</option>
+      <option value="BOX9" {{if eq .Box "BOX9"}}selected{{end}}>BOX9</option>
+      <option value="BOX10" {{if eq .Box "BOX10"}}selected{{end}}>BOX10</option>
+    </select></label>
+    <fieldset class="inventory-accessory-filter">
+      <legend>♧ 付属品</legend>
+      <details>
+        <summary class="inventory-accessory-summary"><span data-accessory-summary>{{if .Accessory}}{{.Accessory}}{{else}}すべて{{end}}</span><span aria-hidden="true">⌄</span></summary>
+        <div class="inventory-accessory-options">
+          <div><button type="button" data-accessory-all>全選択</button><button type="button" data-accessory-clear>全解除</button></div>
+          {{range $value := productAccessories}}<label><input type="checkbox" name="accessory" value="{{$value}}" {{if contains $.Accessory $value}}checked{{end}}><span>{{$value}}</span></label>{{end}}
+        </div>
+      </details>
+    </fieldset>
+    <div class="inventory-date-filter"><strong>▦ 仕入日</strong><span><input type="date" name="purchase_date_from" value="{{.PurchaseDateFrom}}"><i>〜</i><input type="date" name="purchase_date_to" value="{{.PurchaseDateTo}}"></span></div>
+    <input type="hidden" name="sort" value="{{.Sort}}">
   </form>
 </section>
-{{template "product-results" .}}
+{{if .InventorySearchRequested}}
+  {{template "product-results" .}}
+{{else}}
+  {{template "product-prompt" .}}
+{{end}}
+<dialog class="product-modal" data-product-modal aria-label="在庫詳細"><div class="product-modal-loading">商品情報を読み込んでいます…</div></dialog>
+{{end}}
+
+{{define "product-prompt"}}
+<section class="card inventory-search-prompt" id="product-results" aria-live="polite">
+  <div class="inventory-prompt-icon" aria-hidden="true"><span></span></div>
+  <h2>検索条件を入力して「検索」を押してください</h2>
+  <p>管理番号・ブランド・型番・シリアル・担当者など複数条件を組み合わせて絞り込めます</p>
+  <a class="button inventory-show-all" href="/products?show_all=1">⌕ 全件表示</a>
+</section>
 {{end}}
 
 {{define "product-results"}}
-<section class="card" id="product-results" aria-live="polite" aria-busy="false">
-  <div class="card-header">
-    <div><h2>在庫商品</h2><p>商品コードは仕入日単位で自動採番され、登録後は変更できません。</p></div>
-    <div class="result-actions">
-      <span class="badge">{{.TotalProducts}}件</span>
-      <a class="button secondary small" href="/products/export.csv?q={{urlquery .Query}}&status={{urlquery .Status}}&sort={{urlquery .Sort}}{{if .IncludeCancelled}}&include_cancelled=1{{end}}">CSV出力</a>
-    </div>
-  </div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th scope="col">商品コード</th><th scope="col">商品</th><th scope="col">SKU / シリアル</th><th scope="col">仕入先・仕入日</th><th scope="col">原価</th><th scope="col">基準売価・参考換算</th><th scope="col">粗利・利益率</th><th scope="col">状態</th><th scope="col">画像</th></tr></thead>
-      <tbody>
-      {{range .Products}}
-        <tr class="clickable-row">
-          <td><a class="record-link" href="/products/{{.ID}}">{{.ProductCode}}</a></td>
-          <td><strong>{{.Brand}}</strong><small class="table-sub">{{.ModelNumber}} / {{.ProductType}}</small></td>
-          <td>{{if .SKU}}{{.SKU}}{{else}}—{{end}}<small class="table-sub">{{if .SerialNumber}}{{.SerialNumber}}{{else}}シリアル未入力{{end}}</small></td>
-          <td>{{.SupplierName}}<small class="table-sub">{{.PurchaseDate}}</small></td>
-          <td class="money">{{formatMoney .CostAmountMinor .CostCurrency}}</td>
-          <td class="money">{{formatMoney .BaseSalePriceMinor .BaseSaleCurrency}}{{if .RateAvailable}}<small class="table-sub">参考 {{formatMoney .ReferencePriceMinor .ReferenceCurrency}}</small>{{else}}<small class="table-sub">為替未登録</small>{{end}}</td>
-          <td class="money">{{if .RateAvailable}}{{formatMoney .GrossProfitMinor .GrossProfitCurrency}}<small class="table-sub">{{formatPercent .MarginBasisPoints}}</small>{{else}}—{{end}}</td>
-          <td><span class="status-badge {{.InventoryStatus}}">{{productStatus .InventoryStatus}}</span></td>
-          <td>{{.ImageCount}}枚</td>
-        </tr>
-      {{else}}
-        <tr><td colspan="9" class="empty">条件に一致する商品はありません。検索条件を変更してください。</td></tr>
-      {{end}}
-      </tbody>
+<section class="card inventory-list-card" id="product-results" aria-live="polite" aria-busy="false">
+  <div class="card-header inventory-list-head"><h2>▰ 在庫一覧</h2><div>
+    <label class="currency-display-toggle">
+      <input type="checkbox" data-jpy-conversion-toggle>
+      <span class="currency-toggle-track" aria-hidden="true"></span>
+      <span>円換算も表示</span>
+    </label>
+    <span>{{.TotalProducts}}件</span><a class="button secondary small" href="/products/export.csv?q={{urlquery .Query}}&brand={{urlquery .Brand}}&model_number={{urlquery .ModelNumber}}&serial_number={{urlquery .SerialNumber}}&sku={{urlquery .SKU}}&supplier_id={{urlquery .SupplierID}}&buyer_id={{urlquery .BuyerID}}&box={{urlquery .Box}}&accessory={{urlquery .Accessory}}&status={{urlquery .Status}}&purchase_date_from={{urlquery .PurchaseDateFrom}}&purchase_date_to={{urlquery .PurchaseDateTo}}">↪ CSV出力</a></div></div>
+  <div class="table-wrap inventory-table-wrap">
+    <table class="inventory-table">
+      <thead><tr><th>管理番号</th><th>ブランド</th><th>モデル名</th><th>型番</th><th>シリアル</th><th>仕入先</th><th>担当者</th><th>仕入金額</th><th>売価</th><th>仕入日</th><th>SKU</th><th>付属品</th><th>ステータス</th><th>BOX</th><th>編集</th></tr></thead>
+      <tbody>{{range .Products}}<tr class="inventory-row" data-product-row="{{.ID}}" tabindex="0" aria-label="{{.ProductCode}} {{.Brand}} {{.ProductType}}の詳細を表示">
+        <td><a class="inventory-code" href="/products/{{.ID}}" data-product-detail="{{.ID}}">{{.ProductCode}}</a></td>
+        <td>{{.Brand}}</td><td>{{.ProductType}}</td><td>{{if .ModelNumber}}{{.ModelNumber}}{{else}}—{{end}}</td>
+        <td>{{if .SerialNumber}}{{.SerialNumber}}{{else}}—{{end}}</td><td>{{.SupplierName}}</td><td>{{.BuyerName}}</td>
+        <td class="money">{{formatMoney .CostAmountMinor .CostCurrency}}</td><td class="money sale-price">{{if .BaseSalePriceMinor}}<span class="money-display"><strong class="money-primary">{{formatMoney .BaseSalePriceMinor .BaseSaleCurrency}}</strong>{{if and .RateAvailable (eq .BaseSaleCurrency "USD")}}<small class="currency-conversion">約 {{formatMoney .ReferencePriceMinor "JPY"}}</small>{{end}}</span>{{else}}—{{end}}</td>
+        <td>{{.PurchaseDate}}</td><td>{{if .SKU}}{{.SKU}}{{else}}—{{end}}</td><td>{{if .Accessories}}{{formatAccessories .Accessories}}{{else}}—{{end}}</td>
+        <td><span class="status-badge {{.InventoryStatus}}">{{productStatus .InventoryStatus}}</span></td>
+        <td>{{if .Box}}<span title="{{if eq .Box "BOX1"}}ロレックス特集{{else if eq .Box "BOX2"}}高額品セレクト{{else if eq .Box "BOX3"}}春の新入荷{{end}}">{{.Box}}</span>{{else}}—{{end}}</td>
+        <td><button class="button secondary small inventory-row-edit" type="button" data-product-edit="{{.ID}}" data-product-row-action aria-label="{{.ProductCode}}を編集" title="編集">✎</button></td>
+      </tr>{{else}}<tr><td colspan="15"><div class="returns-empty"><span>⌕</span><strong>条件に一致する在庫はありません</strong></div></td></tr>{{end}}</tbody>
     </table>
   </div>
   <nav class="pagination" aria-label="在庫一覧のページ">
-    {{if .HasPrevious}}<a class="button ghost small" data-partial-link href="/products?q={{urlquery .Query}}&status={{urlquery .Status}}&sort={{urlquery .Sort}}{{if .IncludeCancelled}}&include_cancelled=1{{end}}&page={{.PreviousPage}}">← 前へ</a>{{else}}<span class="button ghost small disabled" aria-disabled="true">← 前へ</span>{{end}}
+    {{if .HasPrevious}}<a class="button ghost small" href="{{$.CurrentURL}}&page={{.PreviousPage}}">← 前へ</a>{{else}}<span class="button ghost small disabled" aria-disabled="true">← 前へ</span>{{end}}
     <span><strong>{{.Page}}</strong> / {{.TotalPages}} ページ</span>
-    {{if .HasNext}}<a class="button ghost small" data-partial-link href="/products?q={{urlquery .Query}}&status={{urlquery .Status}}&sort={{urlquery .Sort}}{{if .IncludeCancelled}}&include_cancelled=1{{end}}&page={{.NextPage}}">次へ →</a>{{else}}<span class="button ghost small disabled" aria-disabled="true">次へ →</span>{{end}}
+    {{if .HasNext}}<a class="button ghost small" href="{{$.CurrentURL}}&page={{.NextPage}}">次へ →</a>{{else}}<span class="button ghost small disabled" aria-disabled="true">次へ →</span>{{end}}
   </nav>
 </section>
 {{end}}

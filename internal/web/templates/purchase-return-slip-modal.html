@@ -1,0 +1,51 @@
+{{define "content"}}
+<div class="purchase-workflow-panel purchase-return-detail-panel" data-purchase-return-id="{{.PurchaseReturn.ID}}">
+  <header class="purchase-return-detail-head">
+    <h2>▣ 仕入返品伝票 {{.PurchaseReturn.ReturnNumber}}</h2>
+    <button type="button" data-purchase-return-workflow-close aria-label="閉じる">×</button>
+  </header>
+  <div class="purchase-workflow-scroll purchase-return-detail-body">
+    <dl class="sales-return-overview">
+      <div><dt>伝票番号</dt><dd>{{.PurchaseReturn.ReturnNumber}}</dd></div>
+      <div><dt>返品日</dt><dd>{{.PurchaseReturn.ReturnDate}}</dd></div>
+      <div><dt>仕入先</dt><dd><strong>{{.PurchaseReturn.SupplierName}}</strong></dd></div>
+      <div><dt>ステータス</dt><dd>{{if .PurchaseReturnCompleted}}<span class="slips-status completed">処理済</span>{{else if eq .PurchaseReturn.Status "returned"}}<span class="slips-status returned">差戻し ⓘ</span>{{else}}<span class="slips-status pending">承認待ち ⓘ</span>{{end}}</dd></div>
+      <div><dt>返品理由</dt><dd>{{.PurchaseReturn.Reason}}</dd></div>
+      <div><dt>起票者</dt><dd>{{.PurchaseReturn.CreatedByName}}</dd></div>
+      <div><dt>起票日時</dt><dd>{{formatTime .PurchaseReturn.CreatedAt}}</dd></div>
+    </dl>
+    {{if .PurchaseReturn.Notes}}<section class="sales-return-note"><h3>備考</h3><p>{{.PurchaseReturn.Notes}}</p></section>{{end}}
+    <section class="shipment-detail-section">
+      <h3 class="purchase-section-title">☷ 返品商品（{{len .PurchaseReturnLines}}点）</h3>
+      <div class="table-wrap purchase-workflow-table purchase-return-detail-table">
+        <table>
+          <thead><tr><th>商品コード</th><th>ブランド</th><th>モデル</th><th>SKU</th><th>仕入金額</th><th>明細ステータス</th><th>配送番号</th></tr></thead>
+          <tbody>
+          {{range .PurchaseReturnLines}}
+            <tr><td>{{.ProductCode}}</td><td>{{.Brand}}</td><td>{{.ModelNumber}}</td><td>{{if .SKU}}{{.SKU}}{{else}}—{{end}}</td><td><strong>{{formatMoney .AmountJPY "JPY"}}</strong></td><td><span class="slips-status {{if $.PurchaseReturnCompleted}}completed{{else}}pending{{end}}">{{if $.PurchaseReturnCompleted}}✓ 処理済{{else}}承認待ち{{end}}</span></td><td>{{if $.PurchaseReturn.DeliveryNumber}}{{$.PurchaseReturn.DeliveryNumber}}{{else}}—{{end}}</td></tr>
+          {{else}}
+            <tr><td colspan="7">返品商品の明細はありません。</td></tr>
+          {{end}}
+          </tbody>
+          <tfoot><tr><td colspan="4">合計</td><td>{{formatMoney .PurchaseReturnTotal "JPY"}}</td><td colspan="2"></td></tr></tfoot>
+        </table>
+      </div>
+    </section>
+    <div class="purchase-return-invoice-state {{if .PurchaseReturn.InvoicePrintedAt}}ready{{end}}">
+      {{if .PurchaseReturn.InvoicePrintedAt}}✓ 請求書は発行・印刷済みです。{{else}}ⓘ 請求書の発行・印刷は任意です。未発行でも完了できます。{{end}}
+    </div>
+  </div>
+  <footer>
+    <span></span>
+    <button class="button secondary" type="button" data-purchase-return-workflow-close>× 閉じる</button>
+    <form method="post" action="/slips/purchase-returns/{{.PurchaseReturn.ID}}/invoice" data-purchase-return-invoice-form>
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="button purchase-return-invoice-button" type="submit">▤ 請求書を発行・印刷</button>
+    </form>
+    <form method="post" action="/slips/purchase-returns/{{.PurchaseReturn.ID}}/complete">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="button purchase-return-complete-button" type="submit" {{if .PurchaseReturnCompleted}}disabled{{end}}>✓ {{if .PurchaseReturnCompleted}}完了済み{{else}}完了{{end}}</button>
+    </form>
+  </footer>
+</div>
+{{end}}

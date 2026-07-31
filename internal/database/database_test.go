@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
 	"time"
@@ -177,8 +178,8 @@ func TestMigrateExistingPhase5DatabasePreservesData(t *testing.T) {
 	if err := store.SeedInventoryPreview(ctx); err != nil {
 		t.Fatal(err)
 	}
-	before, err := store.Products(ctx, "org_preview", ProductFilter{})
-	if err != nil {
+	var beforeCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM products WHERE organization_id='org_preview'`).Scan(&beforeCount); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Migrate(ctx); err != nil {
@@ -188,12 +189,115 @@ func TestMigrateExistingPhase5DatabasePreservesData(t *testing.T) {
 		t.Fatalf("migration must be idempotent: %v", err)
 	}
 	after, err := store.Products(ctx, "org_preview", ProductFilter{})
-	if err != nil || len(after) != len(before) {
-		t.Fatalf("products before=%d after=%d err=%v", len(before), len(after), err)
+	if err != nil || len(after) != beforeCount {
+		t.Fatalf("products before=%d after=%d err=%v", beforeCount, len(after), err)
 	}
 	versions, err := store.MigrationVersions(ctx)
-	if err != nil || len(versions) != 6 || versions[5] != "000006_approvals" {
+	if err != nil || len(versions) != 31 || versions[30] != "000031_purchase_request_shipment_link" {
 		t.Fatalf("versions=%v err=%v", versions, err)
+	}
+}
+
+func TestPhase8RateMigrationUpgradesReferencedLegacySnapshots(t *testing.T) {
+	store, err := Open("file:" + filepath.Join(t.TempDir(), "phase7-rates.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ctx := context.Background()
+	if _, err := store.db.ExecContext(ctx, `
+		CREATE TABLE schema_migrations(version TEXT PRIMARY KEY,applied_at TEXT NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	migrations := []struct{ version, path string }{
+		{"000001_phase1", "migrations/000001_phase1.up.sql"},
+		{"000002_inventory", "migrations/000002_inventory.up.sql"},
+		{"000003_market", "migrations/000003_market.up.sql"},
+		{"000004_sales_shipments", "migrations/000004_sales_shipments.up.sql"},
+		{"000005_requests_reservations", "migrations/000005_requests_reservations.up.sql"},
+		{"000006_approvals", "migrations/000006_approvals.up.sql"},
+		{"000007_masters", "migrations/000007_masters.up.sql"},
+		{"000008_stocktakes", "migrations/000008_stocktakes.up.sql"},
+		{"000009_returns", "migrations/000009_returns.up.sql"},
+		{"000010_purchase_sale_price", "migrations/000010_purchase_sale_price.up.sql"},
+		{"000011_product_registration_details", "migrations/000011_product_registration_details.up.sql"},
+		{"000012_purchase_returns", "migrations/000012_purchase_returns.up.sql"},
+		{"000013_purchase_slip_workflow", "migrations/000013_purchase_slip_workflow.up.sql"},
+		{"000014_shipment_slip_workflow", "migrations/000014_shipment_slip_workflow.up.sql"},
+		{"000015_sales_slip_workflow", "migrations/000015_sales_slip_workflow.up.sql"},
+		{"000016_sales_return_invoice", "migrations/000016_sales_return_invoice.up.sql"},
+		{"000017_purchase_return_invoice", "migrations/000017_purchase_return_invoice.up.sql"},
+		{"000018_purchase_line_product_details", "migrations/000018_purchase_line_product_details.up.sql"},
+		{"000019_return_inventory_restore", "migrations/000019_return_inventory_restore.up.sql"},
+	}
+	for _, migration := range migrations {
+		schema, readErr := schemaFS.ReadFile(migration.path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if _, err := store.db.ExecContext(ctx, string(schema)); err != nil {
+			t.Fatalf("apply %s: %v", migration.version, err)
+		}
+		if _, err := store.db.ExecContext(ctx,
+			`INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)`,
+			migration.version, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.SeedPreview(ctx, "preview-admin-2026", "preview-worker-2026"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SeedInventoryPreview(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var productID string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT id FROM products WHERE organization_id='org_preview' ORDER BY id LIMIT 1`).Scan(&productID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `
+		INSERT INTO exchange_rate_snapshots(
+			id,organization_id,base_currency,quote_currency,rate_scaled,scale,
+			provider,observed_at,created_by,created_at
+		) VALUES
+			('rate_keep','org_preview','USD','JPY',15000000000,100000000,'test','2026-07-01T00:00:00Z','usr_admin','2026-07-01T00:00:00Z'),
+			('rate_legacy','org_preview','JPY','USD',666667,100000000,'test','2026-07-01T00:00:00Z','usr_admin','2026-07-01T00:00:00Z');
+		INSERT INTO sales_slips(
+			id,organization_id,slip_number,sales_date,customer_name,status,created_by,created_at,updated_at
+		) VALUES(
+			'sale_upgrade','org_preview','SL-UPGRADE','2026-07-01','移行テスト','draft',
+			'usr_admin','2026-07-01T00:00:00Z','2026-07-01T00:00:00Z'
+		);
+		INSERT INTO sales_lines(
+			id,organization_id,sales_slip_id,line_number,product_id,quantity,
+			unit_price_minor,sale_currency,exchange_rate_snapshot_id,
+			exchange_rate_scaled,exchange_rate_scale,exchange_rate_observed_at,
+			converted_unit_price_jpy,converted_total_jpy,created_at
+		) VALUES(
+			'line_upgrade','org_preview','sale_upgrade',1,?,1,1000,'USD','rate_legacy',
+			666667,100000000,'2026-07-01T00:00:00Z',150000,150000,'2026-07-01T00:00:00Z'
+		)`, productID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("upgrade referenced exchange-rate snapshot: %v", err)
+	}
+	var snapshotID sql.NullString
+	var capturedRate int64
+	if err := store.db.QueryRowContext(ctx, `
+		SELECT exchange_rate_snapshot_id,exchange_rate_scaled
+		FROM sales_lines WHERE id='line_upgrade'`).Scan(&snapshotID, &capturedRate); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotID.Valid || capturedRate != 666667 {
+		t.Fatalf("snapshot=%v captured_rate=%d", snapshotID, capturedRate)
+	}
+	var violations int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pragma_foreign_key_check`).Scan(&violations); err != nil {
+		t.Fatal(err)
+	}
+	if violations != 0 {
+		t.Fatalf("foreign-key violations=%d", violations)
 	}
 }
 

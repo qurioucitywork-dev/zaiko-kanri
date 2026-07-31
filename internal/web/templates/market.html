@@ -1,51 +1,81 @@
 {{define "content"}}
-<div class="market-actions">
-  <div><p class="eyebrow dark">MARKET & CURRENCY</p><h2>相場・為替管理</h2><p>初期版は手入力とCSV取込で管理し、外部APIへは接続しません。</p></div>
-  <a class="button primary" href="/market-prices/import">CSV取込</a>
-</div>
-
-<div class="market-grid">
-  <section class="card">
-    <div class="card-header"><div><h3>為替レート登録</h3><p>USD → JPY。登録済みレートは上書きせず履歴保存します。</p></div><span class="badge phase">スナップショット</span></div>
-    <form method="post" action="/exchange-rates" class="compact-form">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <label>通貨ペア<input value="USD / JPY" disabled></label>
-      <label>1 USDあたりのJPY <b>必須</b><input name="rate" inputmode="decimal" placeholder="154.25" required></label>
-      <label>取得元<input name="provider" value="手動登録" required></label>
-      <label>取得日時 <b>必須</b><input type="datetime-local" name="observed_at" value="2026-07-26T12:00" required></label>
-      <button class="button secondary" type="submit">レートを保存</button>
-    </form>
-    <div class="mini-table">
-      <div class="mini-head"><span>取得日時</span><span>レート</span><span>取得元</span></div>
-      {{range .ExchangeRates}}<div><span>{{formatTime .ObservedAt}}</span><strong>1 USD = {{formatRate .RateScaled .Scale}} JPY</strong><span>{{.Provider}}</span></div>{{else}}<p class="empty">為替レートは未登録です。</p>{{end}}
+<section class="card market-search-card">
+  <div class="inventory-search-head">
+    <h2>⌕ 相場検索</h2>
+    <div class="market-toolbar">
+      {{if .MarketSearchRequested}}<a class="inventory-clear" href="/market-prices">↶ 条件クリア</a>{{end}}
+      <button class="button inventory-submit" type="submit" form="market-search-form">⌕ 検索</button>
+      <form method="post" action="/market-prices/import.csv" enctype="multipart/form-data" class="market-import-inline">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <label class="button secondary" for="market-csv-file">↪ CSV取込</label>
+        <input id="market-csv-file" type="file" name="csv_file" accept=".csv,text/csv" required data-market-csv-file>
+      </form>
+      <a class="button secondary" href="/market-prices/export.csv?q={{urlquery .Query}}&brand={{urlquery .Brand}}&model_number={{urlquery .ModelNumber}}">↪ CSV出力</a>
     </div>
-  </section>
+  </div>
+  <form id="market-search-form" method="get" action="/market-prices" class="market-search-form" aria-label="相場表の検索条件">
+    <label><strong>▥ 管理番号・商品コード</strong><input name="q" value="{{.Query}}" placeholder="商品コード・SKU・モデル名"></label>
+    <label><strong>◆ ブランド</strong><select name="brand"><option value="">すべて</option>{{range .ProductBrands}}<option value="{{.}}" {{if eq $.Brand .}}selected{{end}}>{{.}}</option>{{end}}</select></label>
+    <label><strong># 型番</strong><input name="model_number" value="{{.ModelNumber}}" placeholder="例：116610LN"></label>
+  </form>
+</section>
 
-  <section class="card">
-    <div class="card-header"><div><h3>相場手入力</h3><p>ブランド・型番単位の参考相場を登録します。</p></div></div>
-    <form method="post" action="/market-prices" class="record-form market-form">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <div class="form-grid two">
-        <label>相場日 <b>必須</b><input type="date" name="market_date" value="2026-07-26" required></label>
-        <label>ブランド <b>必須</b><input name="brand" required></label>
-        <label>型番<input name="model_number"></label>
-        <label>商品種別 <b>必須</b><input name="product_type" value="腕時計" required></label>
-        <label>相場価格 <b>必須</b><div class="input-pair"><select name="currency"><option>JPY</option><option>USD</option></select><input name="price" inputmode="numeric" required></div></label>
-        <label>取得元<input name="source" value="手動登録"></label>
-        <label class="span-two">備考<input name="notes"></label>
-      </div>
-      <div class="form-actions"><button class="button primary" type="submit">相場を登録</button></div>
-    </form>
-  </section>
-</div>
-
-<section class="card">
-  <div class="card-header"><div><h3>相場表</h3><p>最新の登録順で表示しています。</p></div><span class="badge">{{len .MarketPrices}}件</span></div>
-  <div class="table-wrap">
-    <table>
-      <thead><tr><th>相場日</th><th>ブランド</th><th>型番</th><th>商品種別</th><th>相場価格</th><th>取得元</th><th>備考</th></tr></thead>
-      <tbody>{{range .MarketPrices}}<tr><td>{{.MarketDate}}</td><td><strong>{{.Brand}}</strong></td><td>{{.ModelNumber}}</td><td>{{.ProductType}}</td><td class="money">{{formatMoney .PriceMinor .Currency}}</td><td>{{.Source}}</td><td>{{.Notes}}</td></tr>{{else}}<tr><td colspan="7" class="empty">相場情報はありません。</td></tr>{{end}}</tbody>
+{{if .MarketSearchRequested}}
+<section class="card market-list-card" id="market-results" aria-live="polite">
+  <div class="card-header inventory-list-head"><h2>▤ 相場表</h2><span>{{len .MarketProductPrices}}件</span></div>
+  <div class="table-wrap market-table-wrap">
+    <table class="market-product-table">
+      <thead><tr><th>管理番号・商品コード</th><th>SKU</th><th>ブランド</th><th>モデル名</th><th>型番</th><th>仕入相場価格</th><th>売値相場価格</th></tr></thead>
+      <tbody>{{range .MarketProductPrices}}
+      <tr class="market-product-row" tabindex="0" data-market-row="{{.ProductID}}" aria-label="{{.ProductCode}} {{.Brand}} {{.Model}}の相場詳細を表示">
+        <td><strong>{{.ProductCode}}</strong></td>
+        <td>{{if .SKU}}{{.SKU}}{{else}}—{{end}}</td>
+        <td>{{.Brand}}</td>
+        <td>{{.Model}}</td>
+        <td>{{if .ModelNumber}}{{.ModelNumber}}{{else}}—{{end}}</td>
+        <td class="money">{{if .HasMarketPrice}}{{formatMoney .PurchaseMarketPriceMinor "JPY"}}{{else}}—{{end}}</td>
+        <td class="money sale-price">{{if .HasMarketPrice}}{{formatMoney .SaleMarketPriceMinor "JPY"}}{{else}}—{{end}}</td>
+      </tr>
+      {{else}}<tr><td colspan="7"><div class="returns-empty"><span>⌕</span><strong>条件に一致する商品はありません</strong></div></td></tr>{{end}}</tbody>
     </table>
   </div>
 </section>
+{{else}}
+<section class="card inventory-search-prompt market-search-prompt" id="market-results" aria-live="polite">
+  <div class="inventory-prompt-icon" aria-hidden="true"><span></span></div>
+  <h2>検索条件を入力して「検索」を押してください</h2>
+  <p>管理番号・商品コード・ブランド・モデル・型番で相場商品を絞り込めます</p>
+  <a class="button inventory-show-all" href="/market-prices?show_all=1">⌕ 全件表示</a>
+</section>
+{{end}}
+
+<dialog class="market-detail-dialog" data-market-dialog aria-label="相場詳細">
+  <div class="product-modal-loading">相場情報を読み込んでいます…</div>
+</dialog>
+{{end}}
+
+{{define "market-detail"}}
+<div class="market-detail-modal">
+  <header>
+    <div><small>相場詳細</small><h2>{{.MarketProductPrice.ProductCode}} — {{.MarketProductPrice.Brand}} {{.MarketProductPrice.Model}}</h2></div>
+    <button type="button" data-market-close aria-label="閉じる">×</button>
+  </header>
+  <div class="market-detail-identifiers">
+    <dl><dt>管理番号・商品コード</dt><dd>{{.MarketProductPrice.ProductCode}}</dd></dl>
+    <dl><dt>SKU</dt><dd>{{if .MarketProductPrice.SKU}}{{.MarketProductPrice.SKU}}{{else}}—{{end}}</dd></dl>
+    <dl><dt>ブランド</dt><dd>{{.MarketProductPrice.Brand}}</dd></dl>
+    <dl><dt>モデル名</dt><dd>{{.MarketProductPrice.Model}}</dd></dl>
+    <dl><dt>型番</dt><dd>{{if .MarketProductPrice.ModelNumber}}{{.MarketProductPrice.ModelNumber}}{{else}}—{{end}}</dd></dl>
+    <dl><dt>シリアル</dt><dd>{{if .MarketProductPrice.SerialNumber}}{{.MarketProductPrice.SerialNumber}}{{else}}—{{end}}</dd></dl>
+  </div>
+  <form method="post" action="/market-prices/products/{{.MarketProductPrice.ProductID}}/edit" class="market-price-edit-form">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label>仕入相場価格<input name="purchase_market_price" inputmode="numeric" value="{{.MarketProductPrice.PurchaseMarketPriceMinor}}" required></label>
+    <label>売値相場価格<input name="sale_market_price" inputmode="numeric" value="{{.MarketProductPrice.SaleMarketPriceMinor}}" required></label>
+    <footer>
+      <button class="button secondary" type="button" data-market-close>閉じる</button>
+      <button class="button primary" type="submit">保存</button>
+    </footer>
+  </form>
+</div>
 {{end}}

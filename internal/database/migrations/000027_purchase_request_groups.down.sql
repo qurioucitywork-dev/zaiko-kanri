@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_purchase_requests_org_group_status;

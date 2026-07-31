@@ -1,0 +1,51 @@
+{{define "content"}}
+<div class="purchase-workflow-panel" data-purchase-id="{{.Purchase.ID}}">
+  <header class="purchase-workflow-head">
+    <h2>↪ 仕入伝票</h2>
+    <button type="button" data-purchase-workflow-close aria-label="閉じる">×</button>
+  </header>
+  <div class="purchase-workflow-meta">
+    <strong>▥ {{.Purchase.SlipNumber}}</strong><span>｜</span><span>▣ {{.Purchase.PurchaseDate}}</span><span>｜</span><b>▦ {{.Purchase.SupplierName}}</b>
+    {{if .Purchase.RevisionCount}}<em>✎ 修正済 {{.Purchase.RevisionCount}}件</em>{{end}}
+  </div>
+  <div class="purchase-workflow-scroll">
+    <dl class="purchase-overview">
+      <div><dt>▥ 伝票番号</dt><dd>{{.Purchase.SlipNumber}}</dd></div>
+      <div><dt>▣ 仕入日</dt><dd>{{.Purchase.PurchaseDate}}</dd></div>
+      <div><dt>▰ 仕入先</dt><dd>{{.Purchase.SupplierName}}</dd></div>
+      <div><dt>● 仕入担当者</dt><dd>{{.Purchase.CreatedByName}}</dd></div>
+      <div><dt>￥ 合計仕入金額</dt><dd><strong>{{formatMoney .Purchase.TotalMinor "JPY"}}</strong></dd></div>
+      <div><dt>◆ 合計売価</dt><dd><strong class="green">{{formatMoney .Purchase.SaleTotalMinor .Purchase.SaleCurrency}}</strong></dd></div>
+    </dl>
+    <h3 class="purchase-section-title">☷ 明細一覧 <small>{{len .PurchaseProducts}}件</small></h3>
+    <div class="table-wrap purchase-workflow-table">
+      <table>
+        <thead><tr><th>No.</th><th>商品コード</th><th>SKU</th><th>ブランド</th><th>モデル</th><th>仕入金額</th><th>売価</th></tr></thead>
+        <tbody>
+        {{range $index, $product := .PurchaseProducts}}
+          <tr><td>{{add $index 1}}</td><td>{{$product.ProductCode}}</td><td>{{if $product.SKU}}{{$product.SKU}}{{else}}—{{end}}</td><td>{{$product.Brand}}</td><td>{{$product.ModelNumber}}</td><td><strong>{{formatMoney $product.CostAmountMinor $product.CostCurrency}}</strong></td><td class="green"><strong>{{formatMoney $product.BaseSalePriceMinor $product.BaseSaleCurrency}}</strong></td></tr>
+        {{else}}<tr><td colspan="7">確定済みの商品明細はありません。</td></tr>{{end}}
+        </tbody>
+        <tfoot><tr><td colspan="5">合計</td><td>{{formatMoney .Purchase.TotalMinor .Purchase.Currency}}</td><td class="green">{{formatMoney .Purchase.SaleTotalMinor .Purchase.SaleCurrency}}</td></tr></tfoot>
+      </table>
+    </div>
+    <section class="purchase-revisions">
+      <h3>↶ 修正履歴（{{len .PurchaseRevisions}}件）</h3>
+      {{range $index, $revision := .PurchaseRevisions}}
+      <article><b>{{add $index 1}}</b><div>
+        <span>▣ 修正日時</span><strong>{{formatTime $revision.CreatedAt}}</strong>
+        <span>● 担当バイヤー</span><strong>{{$revision.ActorName}}</strong>
+        <span>◆ 承認管理者</span><strong>{{if $revision.ApproverName}}{{$revision.ApproverName}}{{else}}—{{end}}</strong>
+        <span>☵ 修正内容</span><strong>{{if $revision.Memo}}{{$revision.Memo}}{{else}}—{{end}}</strong>
+      </div></article>
+      {{else}}<p class="purchase-no-revisions">修正履歴はありません。</p>{{end}}
+    </section>
+  </div>
+  <footer>
+    <span>{{if .Purchase.RevisionCount}}↶ 修正履歴：{{.Purchase.RevisionCount}}件{{end}}</span>
+    <button class="button secondary" type="button" data-purchase-workflow-close>× 閉じる</button>
+    <button class="button purchase-edit-button" type="button" data-purchase-workflow-view="edit">✎ 伝票修正</button>
+    <button class="button purchase-return-button" type="button" data-purchase-workflow-view="return">▣ 仕入返品を起票</button>
+  </footer>
+</div>
+{{end}}

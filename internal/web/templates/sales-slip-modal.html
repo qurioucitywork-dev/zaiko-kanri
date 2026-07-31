@@ -1,0 +1,42 @@
+{{define "content"}}
+<div class="purchase-workflow-panel sales-workflow-panel" data-sales-id="{{.Sale.ID}}">
+  <header class="purchase-workflow-head">
+    <h2>￥ 売上伝票</h2>
+    <button type="button" data-sales-workflow-close aria-label="閉じる">×</button>
+  </header>
+  <div class="purchase-workflow-meta sales-workflow-meta">
+    <strong>▥ {{.Sale.SlipNumber}}</strong><span>｜</span><span>▣ {{.Sale.SalesDate}}</span><span>｜</span><b>▦ {{.Sale.CustomerName}}</b>
+    {{if .Sale.RevisionCount}}<em>✎ 修正済 {{.Sale.RevisionCount}}件</em>{{end}}
+  </div>
+  <div class="purchase-workflow-scroll">
+    <dl class="purchase-overview sales-overview">
+      <div><dt>▤ 伝票番号</dt><dd>{{.Sale.SlipNumber}}</dd></div>
+      <div><dt>▣ 売上日</dt><dd>{{.Sale.SalesDate}}</dd></div>
+      <div><dt>▦ 販売先</dt><dd><strong>{{.Sale.CustomerName}}</strong></dd></div>
+      <div><dt>◆ 住所</dt><dd>{{if .Sale.CustomerAddress}}{{.Sale.CustomerAddress}}{{else}}未登録{{end}}</dd></div>
+      <div><dt>● 連絡先</dt><dd>{{if .Sale.CustomerPhone}}{{.Sale.CustomerPhone}}{{else}}未登録{{end}}</dd></div>
+      <div><dt>▤ 適格番号</dt><dd>{{if .Sale.QualifiedInvoiceNumber}}{{.Sale.QualifiedInvoiceNumber}}{{else}}未登録{{end}}</dd></div>
+      <div><dt>￥ 合計金額</dt><dd><strong>{{formatMoney .Sale.TotalJPY "JPY"}}</strong></dd></div>
+    </dl>
+    <section class="shipment-detail-section">
+      <h3 class="purchase-section-title">☷ 商品明細（{{len .Sale.Lines}}点）</h3>
+      <div class="table-wrap purchase-workflow-table sales-workflow-table">
+        <table>
+          <thead><tr><th>商品コード</th><th>ブランド</th><th>モデル</th><th>金額</th></tr></thead>
+          <tbody>{{range .Sale.Lines}}<tr><td>{{.ProductCode}}</td><td>{{.Brand}}</td><td>{{.ModelNumber}}</td><td><strong>{{if gt .ConvertedUnitPriceJPY 0}}{{formatMoney .ConvertedUnitPriceJPY "JPY"}}{{else}}{{formatMoney .UnitPriceMinor .SaleCurrency}}{{end}}</strong></td></tr>{{else}}<tr><td colspan="4">商品明細はありません。</td></tr>{{end}}</tbody>
+          <tfoot><tr><td colspan="3">合計</td><td>{{formatMoney .Sale.TotalJPY "JPY"}}</td></tr></tfoot>
+        </table>
+      </div>
+    </section>
+    {{if .SalesRevisions}}
+    <section class="purchase-revisions"><h3>↶ 修正履歴（{{len .SalesRevisions}}件）</h3>{{range $index, $revision := .SalesRevisions}}<article><b>{{add $index 1}}</b><div><span>▣ 修正日時</span><strong>{{formatTime $revision.CreatedAt}}</strong><span>● 担当者</span><strong>{{$revision.ActorName}}</strong><p>{{$revision.Memo}}</p></div></article>{{end}}</section>
+    {{end}}
+  </div>
+  <footer>
+    <span>{{if .Sale.RevisionCount}}修正履歴：{{.Sale.RevisionCount}}件{{else}}修正履歴なし{{end}}</span>
+    <button class="button secondary" type="button" data-sales-workflow-close>× 閉じる</button>
+    <button class="button purchase-edit-button" type="button" data-sales-workflow-view="edit">✎ 伝票修正</button>
+    <button class="button sales-return-button" type="button" data-sales-workflow-view="return">↶ 売上返品を起票</button>
+  </footer>
+</div>
+{{end}}

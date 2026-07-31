@@ -1,0 +1,79 @@
+{{define "content"}}
+<section class="card guest-management-card" data-guest-management>
+  <form method="post" action="/guest-management/publish" data-guest-publish-form>
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div class="card-header guest-management-head">
+      <div>
+        <h2>♣ ゲスト公開設定</h2>
+        <p>販売先ごとに公開する固定BOX1〜10を選択し、一括更新します。</p>
+      </div>
+      <button class="button primary guest-batch-publish" type="submit">↻ ゲスト公開情報を一括更新</button>
+    </div>
+    <div class="guest-publication-summary">
+      <div><small>最終更新</small><strong>{{if .GuestPublicationSummary.LastPublishedAt}}{{formatTime .GuestPublicationSummary.LastPublishedAt}}{{else}}未公開{{end}}</strong></div>
+      <div><small>公開BOX数</small><strong>{{.GuestPublicationSummary.PublishedBoxCount}}</strong></div>
+      <div><small>公開商品数</small><strong>{{.GuestPublicationSummary.PublishedProductCount}}</strong></div>
+    </div>
+    <p class="guest-draft-note">画面内のチェック変更は、このボタンを押すまでゲスト公開画面へ反映されません。</p>
+    <div class="table-wrap guest-matrix-wrap">
+      <table class="guest-matrix">
+        <thead>
+          <tr>
+            <th>販売先</th>
+            {{range .GuestBoxes}}
+            <th>
+              <button type="button" class="guest-box-number" data-guest-box-open="{{.ID}}">BOX{{.Number}}</button>
+              <small>{{if .Name}}{{.Name}}{{else}}名称未設定{{end}}</small>
+              <span>{{.ProductCount}}点</span>
+            </th>
+            {{end}}
+          </tr>
+        </thead>
+        <tbody>
+          {{range .GuestCompanies}}{{$company := .}}
+          <tr>
+            <th><strong>{{.Name}}</strong><small>{{.Code}}</small></th>
+            {{range $.GuestBoxes}}{{$cell := guestMatrixCell $.GuestBoxMatrix $company.ID .ID}}
+            <td class="{{if not $cell.CanPublish}}empty{{end}}">
+              <label>
+                <input type="checkbox" name="selection" value="{{$company.ID}}|{{.ID}}" {{if $cell.Draft}}checked{{end}} {{if not $cell.CanPublish}}disabled{{end}}>
+                <span>{{if not $cell.CanPublish}}商品なし{{else if $cell.Draft}}公開対象{{else}}非公開{{end}}</span>
+              </label>
+            </td>
+            {{end}}
+          </tr>
+          {{end}}
+        </tbody>
+      </table>
+    </div>
+  </form>
+</section>
+
+<section class="card guest-box-list">
+  <div class="card-header">
+    <div><h2>固定BOX1〜10</h2><p>BOX番号をクリックすると現在のラインナップを確認できます。</p></div>
+  </div>
+  <div class="guest-box-cards">
+    {{range .GuestBoxes}}
+    <article>
+      <button type="button" class="guest-box-card-open" data-guest-box-open="{{.ID}}">
+        <strong>BOX{{.Number}}</strong><span>{{if .Name}}{{.Name}}{{else}}名称未設定{{end}}</span>
+        <small>{{.ProductCount}}点 / 公開先 {{.PublishedCompanyCount}}社</small>
+      </button>
+      <button class="button secondary small" type="button" data-guest-box-edit="{{.ID}}" data-box-name="{{.Name}}">BOX名を編集</button>
+    </article>
+    {{end}}
+  </div>
+</section>
+
+<dialog class="guest-box-dialog" data-guest-box-dialog><div data-guest-box-dialog-content></div></dialog>
+<dialog class="guest-box-dialog" data-guest-box-editor-dialog><div data-guest-box-editor-content></div></dialog>
+<dialog class="guest-box-rename-dialog" data-guest-box-edit-dialog>
+  <form method="post" data-guest-box-edit-form>
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div class="master-dialog-head"><h2>BOX名を編集</h2><button type="button" data-guest-box-edit-close aria-label="閉じる">×</button></div>
+    <label>BOX名<input name="box_name" maxlength="100" data-guest-box-name></label>
+    <div class="dialog-actions"><button class="button secondary" type="button" data-guest-box-edit-close>キャンセル</button><button class="button primary" type="submit">保存</button></div>
+  </form>
+</dialog>
+{{end}}

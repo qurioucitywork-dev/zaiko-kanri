@@ -1,0 +1,46 @@
+{{define "content"}}
+<div class="purchase-workflow-panel sales-return-detail-panel" data-sales-return-id="{{.Sale.ID}}">
+  <header class="sales-return-head">
+    <h2>↶ 売上返品伝票 {{.SalesReturnNumber}}</h2>
+    <button type="button" data-sales-return-workflow-close aria-label="閉じる">×</button>
+  </header>
+  <div class="purchase-workflow-scroll sales-return-detail-body">
+    <dl class="sales-return-overview">
+      <div><dt>伝票番号</dt><dd>{{.SalesReturnNumber}}</dd></div>
+      <div><dt>返品日</dt><dd>{{(index .SalesReturnItems 0).ReturnDate}}</dd></div>
+      <div><dt>元売上伝票</dt><dd>{{.Sale.SlipNumber}}</dd></div>
+      <div><dt>販売先</dt><dd><strong>{{.Sale.CustomerName}}</strong></dd></div>
+      <div><dt>ステータス</dt><dd>{{if .SalesReturnCompleted}}<span class="slips-status completed">処理済</span>{{else}}<span class="slips-status returned">差戻し ⓘ</span>{{end}}</dd></div>
+      <div><dt>返品理由</dt><dd>{{.SalesReturnReason}}</dd></div>
+      <div><dt>起票者</dt><dd>{{.SalesReturnActor}}</dd></div>
+      <div><dt>起票日時</dt><dd>{{formatTime .SalesReturnRequestedAt}}</dd></div>
+    </dl>
+    {{if .SalesReturnNotes}}<section class="sales-return-note"><h3>備考</h3><p>{{.SalesReturnNotes}}</p></section>{{end}}
+    <section class="shipment-detail-section">
+      <h3 class="purchase-section-title">☷ 返品商品（{{len .SalesReturnItems}}点）</h3>
+      <div class="table-wrap purchase-workflow-table sales-return-detail-table">
+        <table>
+          <thead><tr><th>商品コード</th><th>ブランド</th><th>モデル</th><th>数量</th><th>売上金額</th></tr></thead>
+          <tbody>{{range .SalesReturnItems}}<tr><td>{{.ProductCode}}</td><td>{{.Brand}}</td><td>{{.ModelNumber}}</td><td>{{.Quantity}}</td><td><strong>{{formatMoney .AmountJPY "JPY"}}</strong></td></tr>{{end}}</tbody>
+          <tfoot><tr><td colspan="4">返品合計</td><td>{{formatMoney .SalesReturnTotal "JPY"}}</td></tr></tfoot>
+        </table>
+      </div>
+    </section>
+    <div class="sales-return-invoice-state {{if .SalesReturnInvoiceReady}}ready{{end}}">
+      {{if .SalesReturnInvoiceReady}}✓ 請求書はプレビュー済みです。完了処理を実行できます。{{else}}ⓘ 完了するには、先に請求書を発行・印刷してプレビューを確認してください。{{end}}
+    </div>
+  </div>
+  <footer>
+    <span></span>
+    <button class="button secondary" type="button" data-sales-return-workflow-close>× 閉じる</button>
+    <form method="post" action="/slips/sales-returns/{{.Sale.ID}}/invoice" data-sales-return-invoice-form>
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="button sales-return-invoice-button" type="submit">▤ 請求書を発行・印刷</button>
+    </form>
+    <form method="post" action="/slips/sales-returns/{{.Sale.ID}}/complete">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="button sales-return-complete-button" type="submit" {{if or (not .SalesReturnInvoiceReady) .SalesReturnCompleted}}disabled{{end}}>✓ {{if .SalesReturnCompleted}}完了済み{{else}}完了{{end}}</button>
+    </form>
+  </footer>
+</div>
+{{end}}

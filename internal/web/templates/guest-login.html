@@ -1,0 +1,46 @@
+{{define "content"}}
+<div class="login-page">
+  <div class="login-shell">
+    <section class="login-intro">
+      <div class="intro-inner">
+        <div class="login-brand"><span>♜</span><strong>在庫管理ツール</strong></div>
+        <p class="intro-subtitle">取引先専用 商品カタログ</p>
+        <ul class="feature-list">
+          <li><span>✓</span>貴社向けに公開された商品だけを表示</li>
+          <li><span>✓</span>商品詳細・販売価格を安全に確認</li>
+          <li><span>✓</span>購入依頼・取り置きをオンライン受付</li>
+        </ul>
+      </div>
+    </section>
+    <section class="login-panel">
+      <div class="login-card">
+        {{if .PreviewMode}}<div class="demo-label">⚡ デモ版 — ゲスト企業ごとに表示内容を分離します</div>{{end}}
+        <h1>ゲストログイン</h1>
+        <p class="muted">発行されたゲストIDまたはメールアドレスでログインしてください</p>
+        {{if .Error}}<div class="alert error">{{.Error}}</div>{{end}}
+        <div class="login-role-tabs" role="tablist" aria-label="ログイン種別">
+          <a role="tab" aria-selected="false" href="/login">♟ 管理者</a>
+          <a role="tab" aria-selected="false" href="/login">▣ 作業員</a>
+          <button type="button" class="active" role="tab" aria-selected="true">▦ ゲスト</button>
+        </div>
+        <form method="post" action="/guest/login" class="login-form">
+          <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+          <label>ゲストID / メールアドレス
+            <span class="login-input"><i>♟</i><input name="guest_id" value="{{if .PreviewMode}}B004{{end}}" autocomplete="username" required></span>
+          </label>
+          <label>パスワード
+            <span class="login-input"><i>▣</i><input type="password" name="password" value="{{if .PreviewMode}}{{.LoginGuestPassword}}{{end}}" autocomplete="current-password" required></span>
+          </label>
+          <button class="button login-submit" type="submit">↪ ゲストとしてログイン</button>
+        </form>
+        {{if .PreviewMode}}
+        <div class="demo-credentials">
+          <strong>▣ デモ用認証情報</strong>
+          <span>ID: B004 ／ PW: {{.LoginGuestPassword}}</span>
+        </div>
+        {{end}}
+      </div>
+    </section>
+  </div>
+</div>
+{{end}}

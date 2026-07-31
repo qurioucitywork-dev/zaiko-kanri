@@ -1,0 +1,88 @@
+{{define "sales-bulk-sheet"}}
+{{range .SalesInvoiceGroups}}
+<article class="invoice-sheet bulk-sales-invoice-sheet" data-invoice-sheet>
+  <header class="invoice-letterhead">
+    <div><h1>請求書</h1><p class="invoice-subtitle">INVOICE</p></div>
+    <div class="invoice-company">
+      <strong>{{$.InvoiceCompany.Name}}</strong>
+      <span>{{$.InvoiceCompany.PostalCode}} {{$.InvoiceCompany.Address}}</span>
+      <span>TEL {{$.InvoiceCompany.Phone}} / FAX {{$.InvoiceCompany.Fax}}</span>
+      <span>{{$.InvoiceCompany.Email}}</span>
+      <span>適格請求書発行事業者登録番号 {{$.InvoiceCompany.QualifiedInvoiceNumber}}</span>
+    </div>
+  </header>
+  <section class="invoice-bill-to">
+    <p>請求先（販売先）</p><h2>{{.CustomerName}} 御中</h2>
+    <span>{{if .CustomerAddress}}{{.CustomerAddress}}{{else}}住所：登録情報なし{{end}}</span>
+    <span>TEL {{if .CustomerPhone}}{{.CustomerPhone}}{{else}}登録情報なし{{end}}</span>
+  </section>
+  <section class="invoice-identifiers compact">
+    <div><span>請求書番号</span><strong>{{.InvoiceNumber}}</strong></div>
+    <div><span>発行日</span><strong>{{.IssueDate}}</strong></div>
+  </section>
+  <table class="invoice-lines bulk-sales-lines">
+    <thead><tr><th>伝票番号</th><th>売上日</th><th>商品コード</th><th>商品名</th><th>型番</th><th>シリアル</th><th>販売金額</th><th>備考</th></tr></thead>
+    <tbody>{{range .Lines}}<tr><td>{{.SlipNumber}}</td><td>{{.SalesDate}}</td><td>{{.ProductCode}}</td><td>{{.ProductName}}</td><td>{{.ModelNumber}}</td><td>{{.SerialNumber}}</td><td>{{formatMoney .Amount "JPY"}}</td><td>{{if .Notes}}{{.Notes}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
+    <tfoot><tr><td colspan="6">合計金額</td><td>{{formatMoney .Total "JPY"}}</td><td></td></tr></tfoot>
+  </table>
+  <footer class="invoice-contact"><strong>お問い合わせ</strong><span>{{$.InvoiceCompany.Name}}　TEL {{$.InvoiceCompany.Phone}}　{{$.InvoiceCompany.Email}}</span></footer>
+</article>
+{{end}}
+{{end}}
+
+{{define "sales-bulk-preview"}}
+<div class="invoice-preview-panel invoice-bulk-preview-panel" data-invoice-preview-panel>
+  <header><div><strong>▤ 売上請求書プレビュー</strong><span>選択中：{{.InvoiceSelectedCount}}件 / {{.InvoicePartnerCount}}販売先</span></div><button type="button" data-invoice-preview-close aria-label="閉じる">×</button></header>
+  <div class="invoice-preview-scroll">{{template "sales-bulk-sheet" .}}</div>
+  <footer><button class="button secondary" type="button" data-invoice-preview-close>× 閉じる</button><button class="button primary" type="button" data-invoice-print>▤ 印刷</button></footer>
+</div>
+{{end}}
+
+{{define "purchase-return-bulk-sheet"}}
+{{range .PurchaseInvoiceGroups}}
+<article class="invoice-sheet bulk-purchase-return-sheet" data-invoice-sheet>
+  <header class="invoice-letterhead">
+    <div><h1>仕入返品 請求書</h1><p class="invoice-subtitle">PURCHASE RETURN INVOICE</p></div>
+    <div class="invoice-company">
+      <strong>{{$.InvoiceCompany.Name}}</strong>
+      <span>{{$.InvoiceCompany.PostalCode}} {{$.InvoiceCompany.Address}}</span>
+      <span>TEL {{$.InvoiceCompany.Phone}} / FAX {{$.InvoiceCompany.Fax}}</span>
+      <span>{{$.InvoiceCompany.Email}}</span>
+    </div>
+  </header>
+  <section class="invoice-bill-to"><p>請求先（仕入先）</p><h2>{{.SupplierName}} 御中</h2></section>
+  <section class="invoice-identifiers compact">
+    <div><span>請求書番号</span><strong>{{.InvoiceNumber}}</strong></div>
+    <div><span>発行日</span><strong>{{.IssueDate}}</strong></div>
+    <div><span>返品伝票</span><strong>{{.ReturnCount}}件 / {{.ItemCount}}点</strong></div>
+  </section>
+  <table class="invoice-lines">
+    <thead><tr><th>返品伝票番号</th><th>返品日</th><th>点数</th><th>返品理由</th><th>金額</th></tr></thead>
+    <tbody>{{range .Rows}}<tr><td>{{.ReturnNumber}}</td><td>{{.ReturnDate}}</td><td>{{.Quantity}}</td><td>{{.Reason}}</td><td>{{formatMoney .Amount "JPY"}}</td></tr>{{end}}</tbody>
+    <tfoot><tr><td colspan="4">ご請求金額（税込）</td><td>{{formatMoney .Total "JPY"}}</td></tr></tfoot>
+  </table>
+  <section class="invoice-payment">
+    <div><strong>お振込先 / お支払い先</strong><span>{{$.InvoiceCompany.BankName}} {{$.InvoiceCompany.BankBranch}}　{{$.InvoiceCompany.BankAccountType}} {{$.InvoiceCompany.BankAccountNumber}}</span><span>口座名義 {{$.InvoiceCompany.BankAccountHolder}}</span></div>
+  </section>
+</article>
+{{end}}
+{{end}}
+
+{{define "purchase-return-bulk-preview"}}
+<div class="invoice-preview-panel invoice-bulk-preview-panel purchase-return-confirm-panel" data-invoice-preview-panel>
+  <header><div><strong>請求書を発行しますか？</strong><span>選択中：{{.InvoiceSelectedCount}}件 / {{.InvoicePartnerCount}}仕入先</span></div><button type="button" data-invoice-preview-close aria-label="閉じる">×</button></header>
+  <div class="purchase-return-group-summary">
+    {{range .PurchaseInvoiceGroups}}<div><strong>{{.SupplierName}}</strong><span>{{.ReturnCount}}件 / {{.ItemCount}}点</span><b>{{formatMoney .Total "JPY"}}</b></div>{{end}}
+  </div>
+  <div class="invoice-preview-scroll">{{template "purchase-return-bulk-sheet" .}}</div>
+  <footer>
+    <button class="button secondary" type="button" data-invoice-preview-close>キャンセル</button>
+    <form method="post" action="/slips/purchase-returns/invoices.csv">
+      {{range .PurchaseInvoiceGroups}}{{range .ReturnIDs}}<input type="hidden" name="id" value="{{.}}">{{end}}{{end}}
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <button class="button secondary" type="submit">CSVダウンロード</button>
+    </form>
+    <button class="button primary" type="button" data-invoice-print>▤ 印刷</button>
+  </footer>
+</div>
+{{end}}

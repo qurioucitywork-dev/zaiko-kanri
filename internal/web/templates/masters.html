@@ -1,0 +1,215 @@
+{{define "content"}}
+<section class="master-shell">
+  <aside class="master-categories" aria-label="マスタ分類">
+    {{range .MasterCategories}}
+    <a href="/masters?category={{.Key}}" class="{{if eq $.MasterCategory.Key .Key}}active{{end}}">
+      <span class="master-category-icon" aria-hidden="true">{{.Icon}}</span>
+      <strong>{{.Name}}</strong>
+      <em>{{.Count}}</em>
+    </a>
+    {{end}}
+  </aside>
+
+  <section class="master-main" data-master-category-name="{{.MasterCategory.Name}}">
+    <div class="master-heading">
+      <h2><span aria-hidden="true">{{.MasterCategory.Icon}}</span> {{if eq .MasterCategory.Key "currencies"}}外貨レート設定{{else}}{{.MasterCategory.Name}}{{end}}</h2>
+      {{if and (ne .MasterCategory.Key "currencies") (ne .MasterCategory.Key "guests") (ne .MasterCategory.Key "passwords") (ne .MasterCategory.Key "company") (ne .MasterCategory.Key "dashboard")}}
+      <button class="button accent master-add-button" type="button" data-master-open>＋ 新規追加</button>
+      {{end}}
+    </div>
+
+    {{if eq .MasterCategory.Key "guests"}}
+      <div class="master-guest-notice">
+        <span aria-hidden="true">●</span>
+        <div>
+          <strong>BOX・公開設定はサイドメニューの「ゲスト管理」ページで行えます</strong>
+          <small>企業ごとの公開設定・商品ラインナップの確認ができます</small>
+        </div>
+        <a class="button primary" href="/guest-management">♣ ゲスト管理へ</a>
+      </div>
+      <h3 class="master-box-preview-title">▦ BOX一覧プレビュー</h3>
+      <div class="table-wrap master-box-preview">
+        <table>
+          <thead><tr><th>BOX番号</th><th>BOX名</th><th>公開先企業数</th><th>商品数</th><th>操作</th></tr></thead>
+          <tbody>
+          {{range .GuestBoxes}}
+            <tr>
+              <td><strong>BOX {{.Number}}</strong></td>
+              <td>{{if .Name}}{{.Name}}{{else}}<span class="muted">（未設定）</span>{{end}}</td>
+              <td>{{if .PublishedCompanyCount}}<strong>{{.PublishedCompanyCount}}社に公開</strong>{{else}}<strong>非公開</strong>{{end}}</td>
+              <td><span class="master-box-count">{{.ProductCount}} 点</span></td>
+              <td>
+                <div class="master-box-actions">
+                  <button class="button primary small" type="button" data-guest-box-open="{{.ID}}">◉ 詳細</button>
+                  <button class="button secondary small" type="button" data-guest-box-edit="{{.ID}}" data-box-name="{{.Name}}">✎ 編集</button>
+                </div>
+              </td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+      <dialog class="guest-box-dialog" data-guest-box-dialog><div data-guest-box-dialog-content></div></dialog>
+      <dialog class="guest-box-dialog" data-guest-box-editor-dialog><div data-guest-box-editor-content></div></dialog>
+    {{else if eq .MasterCategory.Key "currencies"}}
+      <span class="sr-only">USD / JPY EUR / JPY HKD / JPY CHF / JPY プレビュー 更新日</span>
+      <p class="fx-master-description">各通貨の円換算レートを手入力で設定します。設定したレートは仕入・売上登録画面の外貨換算に使用されます。</p>
+      <div class="fx-master-grid">
+        {{range .MasterExchangeRates}}
+        <article class="fx-rate-card" data-fx-card>
+          <header class="fx-rate-card-title">
+            <b>{{if eq .Currency "USD"}}US{{else if eq .Currency "EUR"}}EU{{else if eq .Currency "HKD"}}HK{{else}}CH{{end}}</b>
+            <span><strong>{{.Label}}</strong><small>{{.Currency}} / {{if eq .Currency "USD"}}${{else if eq .Currency "EUR"}}€{{else if eq .Currency "HKD"}}HK${{else}}Fr{{end}}</small></span>
+          </header>
+          <div class="fx-current-rate">
+            <small>1 {{if eq .Currency "USD"}}${{else if eq .Currency "EUR"}}€{{else if eq .Currency "HKD"}}HK${{else}}Fr{{end}} =</small>
+            <strong>{{.Rate}}</strong><b>円</b>
+          </div>
+          <form method="post" action="/masters/exchange-rates">
+            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+            <input type="hidden" name="currency" value="{{.Currency}}">
+            <label>✎ レートを手入力（円）</label>
+            <div class="fx-rate-editor">
+              <span>1 {{if eq .Currency "USD"}}${{else if eq .Currency "EUR"}}€{{else if eq .Currency "HKD"}}HK${{else}}Fr{{end}} =</span>
+              <input name="rate" type="number" min="0.000001" step="0.000001" required value="{{.Rate}}" data-fx-rate>
+              <span>円</span>
+              <button class="button primary" type="submit">✓ 更新</button>
+            </div>
+            <div class="fx-rate-example">⇄ <span>換算例：</span><strong>{{if eq .Currency "USD"}}$1,000{{else if eq .Currency "EUR"}}€1,000{{else if eq .Currency "HKD"}}HK$1,000{{else}}Fr1,000{{end}} = ¥<span data-fx-example>{{.Rate}}</span></strong></div>
+            <footer><span>↶ 最終更新：<strong>{{if .Date}}{{.Date}}{{else}}—{{end}} 09:00</strong></span><span>更新者：<strong>{{if .Updater}}{{.Updater}}{{else}}—{{end}}</strong></span></footer>
+          </form>
+        </article>
+        {{end}}
+      </div>
+      <p class="fx-master-note">● レートは自動取得ではなく手動入力です。最新レートは各金融機関・為替情報サービスを参照してください。</p>
+    {{else if eq .MasterCategory.Key "passwords"}}
+      <div class="password-toolbar">
+        <button class="button accent" type="button" data-password-new>＋ 新規追加</button>
+        <button class="button secondary" type="button" data-password-generate>PW自動生成</button>
+        <form method="post" action="/masters/passwords/guest-bulk"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="button secondary" type="submit" data-confirm="ゲストパスワードを一括変更しますか？">ゲストPW一括変更</button></form>
+        <form method="post" action="/masters/passwords/notify"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button class="button primary" type="submit" data-confirm="パスワード変更通知メールを送信しますか？">通知メール送信</button></form>
+      </div>
+      <div class="password-tabs" role="tablist">
+        <button class="active" type="button" data-password-tab="admin">管理者</button>
+        <button type="button" data-password-tab="worker">作業員</button>
+        <button type="button" data-password-tab="guest">ゲスト</button>
+      </div>
+      <div class="table-wrap password-user-table" data-password-panel="admin">
+        <table><thead><tr><th>名前</th><th>メールアドレス（ログインID）</th><th>ステータス</th><th>承認コード</th><th>操作</th></tr></thead>
+          <tbody>{{range .MasterUsers}}{{if eq .Role "admin"}}<tr><td>{{.DisplayName}}</td><td>{{.Username}}</td><td>{{if .Active}}有効{{else}}無効{{end}}</td><td>設定済</td><td><button class="button secondary small" type="button" data-password-change data-id="{{.ID}}" data-name="{{.DisplayName}}">PW変更</button></td></tr>{{end}}{{end}}</tbody></table>
+      </div>
+      <div class="table-wrap password-user-table" data-password-panel="worker" hidden>
+        <table><thead><tr><th>名前</th><th>メール</th><th>ステータス</th><th>操作</th></tr></thead>
+          <tbody>{{range .MasterUsers}}{{if ne .Role "admin"}}<tr><td>{{.DisplayName}}</td><td>{{.Username}}</td><td>{{if .Active}}有効{{else}}無効{{end}}</td><td><button class="button secondary small" type="button" data-password-change data-id="{{.ID}}" data-name="{{.DisplayName}}">PW変更</button> <form class="inline-form" method="post" action="/masters/passwords/users/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><button class="button danger small" type="submit" data-confirm="「{{.DisplayName}}」を削除しますか？">削除</button></form></td></tr>{{end}}{{end}}</tbody></table>
+      </div>
+      <div class="table-wrap password-user-table" data-password-panel="guest" hidden>
+        <table><thead><tr><th>会社名</th><th>ゲストID</th><th>メール</th><th>パスワード</th><th>操作</th></tr></thead>
+          <tbody>{{range .MasterGuestCredentials}}<tr><td>{{.CompanyName}}</td><td>{{.GuestID}}</td><td>{{.Email}}</td><td>••••••••</td><td><button class="button secondary small" type="button" data-password-change data-id="{{.CompanyID}}" data-name="{{.CompanyName}}" data-password-url="/masters/passwords/guests/{{.CompanyID}}/password">PW変更</button> <form class="inline-form" method="post" action="/masters/passwords/guests/{{.CompanyID}}/delete"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><button class="button danger small" type="submit" data-confirm="「{{.CompanyName}}」の認証情報を削除しますか？">削除</button></form></td></tr>{{end}}</tbody></table>
+      </div>
+    {{else if eq .MasterCategory.Key "company"}}
+      {{$record := index .MasterRecords 0}}
+      <form class="master-settings-form" method="post" action="/masters/{{$record.ID}}/update" data-master-settings-form>
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="category" value="company"><input type="hidden" name="code" value="{{$record.Code}}">
+        <section><header><h3>基本情報</h3><button class="button secondary small" type="button" data-settings-edit>編集</button></header>
+          <div class="form-grid two">
+            <label>会社名<input name="name" value="{{$record.Name}}" required disabled></label>
+            <label>住所<input name="address" value="{{$record.Address}}" disabled></label>
+            <label>電話番号<input name="contact" value="{{$record.Contact}}" disabled></label>
+            <label>メール<input name="email" value="{{masterDetail $record "email"}}" type="email" disabled></label>
+          </div>
+        </section>
+        <section><h3>振込先</h3><div class="form-grid two">
+          <label>銀行<input name="bank_name" value="{{masterDetail $record "bank_name"}}" disabled></label>
+          <label>支店<input name="branch_name" value="{{masterDetail $record "branch_name"}}" disabled></label>
+          <label>口座番号<input name="account_number" value="{{masterDetail $record "account_number"}}" disabled></label>
+          <label>口座名義<input name="account_holder" value="{{masterDetail $record "account_holder"}}" disabled></label>
+        </div></section>
+        <div class="form-actions" data-settings-actions hidden><button class="button secondary" type="button" data-settings-cancel>キャンセル</button><button class="button primary" type="submit">保存</button></div>
+      </form>
+    {{else if eq .MasterCategory.Key "dashboard"}}
+      {{$record := index .MasterRecords 0}}
+      <form class="dashboard-settings" method="post" action="/masters/{{$record.ID}}/update">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="category" value="dashboard"><input type="hidden" name="code" value="{{$record.Code}}"><input type="hidden" name="name" value="{{$record.Name}}">
+        <div class="form-grid two">
+          <label>今月売上目標金額<input name="monthly_sales_target" inputmode="numeric" value="{{masterDetail $record "monthly_sales_target"}}" placeholder="10,000,000"></label>
+          <label>今月仕入予算額<input name="monthly_purchase_budget" inputmode="numeric" value="{{masterDetail $record "monthly_purchase_budget"}}" placeholder="8,000,000"></label>
+        </div>
+        <div class="form-actions"><button class="button secondary" type="reset">リセット</button><button class="button primary" type="submit">設定を保存</button></div>
+        <section class="dashboard-setting-preview"><h3>ダッシュボード表示プレビュー</h3>
+          <div><article><span>今月売上目標</span><strong data-dashboard-sales-preview>¥0</strong></article><article><span>今月仕入予算</span><strong data-dashboard-purchase-preview>¥0</strong></article></div>
+        </section>
+      </form>
+    {{else}}
+      {{if .MasterRecords}}
+      <div class="table-wrap master-table-wrap" tabindex="0" aria-label="{{.MasterCategory.Name}}一覧">
+        <table class="master-table {{if or (eq .MasterCategory.Key "suppliers") (eq .MasterCategory.Key "sales-destinations")}}master-table-wide{{end}}">
+          <thead><tr><th>コード</th><th>名称</th>
+            {{if or (eq .MasterCategory.Key "suppliers") (eq .MasterCategory.Key "sales-destinations")}}<th>住所</th><th>連絡先</th><th>インボイス番号</th>{{end}}
+            {{if eq .MasterCategory.Key "partners"}}<th>代表者名</th><th>担当者名</th><th>メールアドレス</th><th>電話番号</th><th>住所</th><th>備考</th>{{end}}
+            <th>操作</th></tr></thead>
+          <tbody>{{range .MasterRecords}}<tr>
+            <td><code>{{.Code}}</code></td><td>{{.Name}}</td>
+            {{if or (eq $.MasterCategory.Key "suppliers") (eq $.MasterCategory.Key "sales-destinations")}}<td>{{if .Address}}{{.Address}}{{else}}—{{end}}</td><td>{{if .Contact}}{{.Contact}}{{else}}—{{end}}</td><td>{{if .InvoiceRegistrationNumber}}{{.InvoiceRegistrationNumber}}{{else}}—{{end}}</td>{{end}}
+            {{if eq $.MasterCategory.Key "partners"}}<td>{{masterDetail . "representative_name"}}</td><td>{{masterDetail . "contact_person"}}</td><td>{{masterDetail . "email"}}</td><td>{{masterDetail . "phone"}}</td><td>{{.Address}}</td><td>{{masterDetail . "notes"}}</td>{{end}}
+            <td><div class="master-actions">
+              <button class="button secondary master-edit" type="button" data-master-edit data-id="{{.ID}}" data-code="{{.Code}}" data-name="{{.Name}}" data-address="{{.Address}}" data-contact="{{.Contact}}" data-invoice-registration-number="{{.InvoiceRegistrationNumber}}" data-representative-name="{{masterDetail . "representative_name"}}" data-contact-person="{{masterDetail . "contact_person"}}" data-email="{{masterDetail . "email"}}" data-phone="{{masterDetail . "phone"}}" data-notes="{{masterDetail . "notes"}}">✎ 編集</button>
+              <button class="master-delete" type="button" data-master-delete-open data-id="{{.ID}}" data-name="{{.Name}}">▰ 削除</button>
+            </div></td>
+          </tr>{{end}}</tbody>
+        </table>
+      </div>
+      {{else}}<div class="master-empty"><h3>{{.MasterCategory.Name}}はまだ登録されていません</h3><p>「新規追加」から最初のデータを登録してください。</p></div>{{end}}
+    {{end}}
+  </section>
+</section>
+
+{{if and (ne .MasterCategory.Key "currencies") (ne .MasterCategory.Key "guests") (ne .MasterCategory.Key "passwords") (ne .MasterCategory.Key "company") (ne .MasterCategory.Key "dashboard")}}
+<dialog class="master-dialog" data-master-dialog>
+  <form method="post" action="/masters" data-master-form>
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="category" value="{{.MasterCategory.Key}}">
+    <div class="master-dialog-head"><h2 data-master-dialog-title>{{.MasterCategory.Name}} — 新規追加</h2><button type="button" class="dialog-close" data-master-close aria-label="閉じる">×</button></div>
+    <div class="master-dialog-fields">
+      {{if or (eq .MasterCategory.Key "brands") (eq .MasterCategory.Key "buyers") (eq .MasterCategory.Key "accessories")}}
+      <input type="hidden" name="code" data-master-code>
+      {{else}}
+      <label>コード <small>未入力の場合は自動採番</small><input name="code" maxlength="30" placeholder="自動採番" data-master-code></label>
+      {{end}}
+      <label>名称<input name="name" maxlength="120" required data-master-name {{if eq .MasterCategory.Key "accessories"}}style="text-transform:uppercase"{{end}}></label>
+      {{if eq .MasterCategory.Key "accessories"}}<p class="field-note">付属品名は英大文字で登録されます。</p>{{end}}
+      {{if or (eq .MasterCategory.Key "suppliers") (eq .MasterCategory.Key "sales-destinations")}}
+      <label>住所<input name="address" data-master-extra="address"></label><label>連絡先<input name="contact" data-master-extra="contact"></label><label>適格請求書番号<input name="invoice_registration_number" data-master-extra="invoice_registration_number"></label>
+      {{end}}
+      {{if eq .MasterCategory.Key "partners"}}
+      <label>代表者名<input name="representative_name" data-master-extra="representative_name"></label><label>担当者名<input name="contact_person" data-master-extra="contact_person"></label><label>メールアドレス<input name="email" type="email" data-master-extra="email"></label><label>電話番号<input name="phone" data-master-extra="phone"></label><label>住所<input name="address" data-master-extra="address"></label><label>備考<textarea name="notes" data-master-extra="notes"></textarea></label>
+      {{end}}
+    </div>
+    <div class="dialog-actions"><button class="button secondary" type="button" data-master-close>キャンセル</button><button class="button primary" type="submit">保存</button></div>
+  </form>
+</dialog>
+<dialog class="master-delete-dialog" data-master-delete-dialog>
+  <form method="post" data-master-delete-form>
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}"><input type="hidden" name="category" value="{{.MasterCategory.Key}}">
+    <h2>削除の確認</h2><p>「<strong data-master-delete-name></strong>」を削除してもよろしいですか？</p><p class="danger-note">この操作は元に戻せません。</p>
+    <div class="dialog-actions"><button class="button secondary" type="button" data-master-delete-close>キャンセル</button><button class="button danger" type="submit">削除する</button></div>
+  </form>
+</dialog>
+{{end}}
+
+{{if eq .MasterCategory.Key "passwords"}}
+<dialog class="master-dialog" data-password-dialog>
+  <form method="post" action="/masters/passwords/users" data-password-form>
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <div class="master-dialog-head"><h2 data-password-title>利用者 — 新規追加</h2><button type="button" class="dialog-close" data-password-close aria-label="閉じる">×</button></div>
+    <div class="master-dialog-fields" data-password-new-fields>
+      <label>名前<input name="display_name" maxlength="120" required></label>
+      <label>メールアドレス（ログインID）<input name="username" maxlength="120" type="email" required></label>
+      <label>種別<select name="role"><option value="admin">管理者</option><option value="worker">作業員</option></select></label>
+    </div>
+    <input type="hidden" name="user_id" data-password-user-id>
+    <label>新しいパスワード<input name="password" minlength="12" autocomplete="new-password" required data-password-value></label>
+    <p class="field-note">12文字以上で入力してください。</p>
+    <div class="dialog-actions"><button class="button secondary" type="button" data-password-close>キャンセル</button><button class="button primary" type="submit">保存</button></div>
+  </form>
+</dialog>
+{{end}}
+{{end}}

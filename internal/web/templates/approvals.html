@@ -1,35 +1,107 @@
 {{define "content"}}
-<section class="toolbar-card">
-  <div class="filter-bar"><div><strong>承認管理</strong><span class="toolbar-note">申請者本人の承認は禁止。承認時に申請スナップショットと現在値を再照合します。</span></div><span class="badge push-right">{{len .Approvals}}件</span></div>
-</section>
-<section class="card">
-  <div class="card-header"><div><h2>承認案件一覧</h2><p>承認・差戻し・却下と実行履歴を保持します。</p></div></div>
-  <div class="approval-list">
-  {{range .Approvals}}
-    <article class="approval-card">
-      <div class="approval-summary">
-        <div><span class="status-badge approval-{{.Status}}">{{approvalStatus .Status}}</span><strong>{{approvalAction .ActionKey}}</strong><time>{{formatTime .RequestedAt}}</time></div>
-        <h3>{{.TargetType}} / {{.TargetID}}</h3>
-        <p>申請者：<strong>{{.ApplicantName}}</strong></p>
-        <blockquote>{{if .RequestReason}}{{.RequestReason}}{{else}}理由記載なし{{end}}</blockquote>
-        <details><summary>申請時スナップショット</summary><pre>{{.RequestedSnapshot}}</pre></details>
-        <div class="approval-history">
-        {{range .Actions}}<p><time>{{formatTime .ActedAt}}</time><strong>{{.ActorName}}</strong>：{{approvalStatus .Action}} {{.Comment}}</p>{{end}}
-        </div>
-      </div>
-      <div class="approval-controls">
-      {{if eq .Status "pending"}}
-        {{if eq $.User.Role "admin"}}
-        {{if ne .ApplicantUserID $.User.ID}}
-        <form method="post" action="/approvals/{{.ID}}/approve"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="comment" placeholder="承認コメント（任意）"><button class="button primary full" type="submit">承認して実行</button></form>
-        <form method="post" action="/approvals/{{.ID}}/return" class="approval-decision"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="comment" placeholder="差戻しコメント（必須）" required><button class="button secondary" type="submit">差戻し</button></form>
-        <form method="post" action="/approvals/{{.ID}}/reject" class="approval-decision"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="comment" placeholder="却下コメント"><button class="button danger" type="submit">却下</button></form>
-        {{else}}<div class="self-approval-note">自分の申請は承認できません。</div>{{end}}
-        {{else}}<div class="approval-note">管理者の判断を待っています。</div>{{end}}
-      {{else}}<span class="closed-request">処理済み</span>{{end}}
-      </div>
-    </article>
-  {{else}}<div class="empty">承認案件はありません。</div>{{end}}
+<section class="card approval-review-card">
+  <header class="approval-review-header">
+    <div>
+      <h2>✓ 承認リクエスト</h2>
+      <p>保留中と差戻しの申請を表示しています。</p>
+    </div>
+    <span class="approval-pending-count">保留中 <b>{{.ApprovalPendingCount}}</b>件</span>
+  </header>
+
+  {{if .ApprovalReviewViews}}
+  <div class="table-wrap">
+    <table class="approval-review-table">
+      <thead>
+        <tr>
+          <th><a href="/approvals?sort=id">申請ID</a></th>
+          <th><a href="/approvals?sort=requested_at">申請日時 ▼</a></th>
+          <th><a href="/approvals?sort=applicant">申請者</a></th>
+          <th><a href="/approvals?sort=type">種別</a></th>
+          <th>内容</th>
+          <th><a href="/approvals?sort=status">ステータス</a></th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .ApprovalReviewViews}}
+        <tr class="approval-review-row" tabindex="0" role="button" data-approval-open="approval-{{.Request.ID}}">
+          <td><strong>{{.Request.ID}}</strong></td>
+          <td>{{formatTime .Request.RequestedAt}}</td>
+          <td>{{.Request.ApplicantName}}</td>
+          <td>{{.Type}}</td>
+          <td class="approval-review-content">{{.Content}}</td>
+          <td><span class="approval-review-status {{.Request.Status}}">{{if eq .Request.Status "pending"}}保留中{{else}}差戻し{{end}}</span></td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
   </div>
+  {{else}}
+  <div class="approval-review-empty">
+    <span>✓</span>
+    <h3>対応が必要な承認リクエストはありません</h3>
+    <p>保留中または差戻しの申請が作成されると、ここに表示されます。</p>
+  </div>
+  {{end}}
 </section>
+
+{{range .ApprovalReviewViews}}
+<dialog class="approval-detail-dialog" id="approval-{{.Request.ID}}" data-approval-dialog>
+  <div class="approval-detail-head">
+    <div><small>承認リクエスト</small><h2>{{.Type}} — {{.Request.ID}}</h2></div>
+    <button type="button" data-approval-close aria-label="閉じる">×</button>
+  </div>
+  <div class="approval-detail-body">
+    <dl class="approval-detail-summary">
+      <div><dt>申請ID</dt><dd>{{.Request.ID}}</dd></div>
+      <div><dt>申請日時</dt><dd>{{formatTime .Request.RequestedAt}}</dd></div>
+      <div><dt>申請者</dt><dd>{{.Request.ApplicantName}}</dd></div>
+      <div><dt>種別</dt><dd>{{.Type}}</dd></div>
+      <div><dt>ステータス</dt><dd><span class="approval-review-status {{.Request.Status}}">{{if eq .Request.Status "pending"}}保留中{{else}}差戻し{{end}}</span></dd></div>
+    </dl>
+    <section class="approval-detail-section">
+      <h3>申請内容</h3>
+      <dl class="approval-detail-rows">
+      {{range .Details}}<div><dt>{{.Label}}</dt><dd>{{.Value}}</dd></div>{{end}}
+      </dl>
+    </section>
+    {{if .Request.Actions}}
+    <section class="approval-detail-section">
+      <h3>申請履歴</h3>
+      <ol class="approval-review-history">
+      {{range .Request.Actions}}<li><time>{{formatTime .ActedAt}}</time><strong>{{.ActorName}}</strong><span>{{approvalStatus .Action}}{{if .Comment}} — {{.Comment}}{{end}}</span></li>{{end}}
+      </ol>
+    </section>
+    {{end}}
+  </div>
+  <footer class="approval-detail-footer">
+    <button class="button secondary" type="button" data-approval-close>閉じる</button>
+    {{if eq .Request.Status "pending"}}
+      {{if ne .Request.ApplicantUserID $.User.ID}}
+      <button class="button approval-return-button" type="button" data-approval-return-open="return-{{.Request.ID}}">差戻し</button>
+      <form method="post" action="/approvals/{{.Request.ID}}/approve">
+        <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+        <button class="button primary" type="submit">承認する</button>
+      </form>
+      {{else}}<p class="self-approval-note">自分の申請は承認できません。</p>{{end}}
+    {{end}}
+  </footer>
+</dialog>
+
+{{if eq .Request.Status "pending"}}
+<dialog class="approval-return-dialog" id="return-{{.Request.ID}}" data-approval-return-dialog>
+  <form method="post" action="/approvals/{{.Request.ID}}/return">
+    <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+    <div class="approval-detail-head return"><div><small>差戻し</small><h2>{{.Request.ID}}</h2></div><button type="button" data-approval-close>×</button></div>
+    <div class="approval-return-body">
+      <p>申請者が修正して同じ申請IDで再申請できるよう、差戻し理由を入力してください。</p>
+      <label>差戻しコメント <b>必須</b><textarea name="comment" maxlength="500" required placeholder="修正が必要な内容を具体的に入力"></textarea></label>
+    </div>
+    <footer class="approval-detail-footer">
+      <button class="button secondary" type="button" data-approval-close>キャンセル</button>
+      <button class="button approval-return-button" type="submit">差戻す</button>
+    </footer>
+  </form>
+</dialog>
+{{end}}
+{{end}}
 {{end}}

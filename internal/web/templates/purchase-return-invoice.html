@@ -1,0 +1,91 @@
+{{define "purchase-return-sheet"}}
+<article class="invoice-sheet purchase-return-invoice-sheet" data-invoice-sheet>
+  <header class="invoice-letterhead">
+    <div>
+      <h1>仕入返品 請求書</h1>
+      <p class="invoice-subtitle">PURCHASE RETURN INVOICE</p>
+    </div>
+    <div class="invoice-company">
+      <strong>{{.InvoiceCompany.Name}}</strong>
+      <span>{{.InvoiceCompany.PostalCode}} {{.InvoiceCompany.Address}}</span>
+      <span>TEL {{.InvoiceCompany.Phone}} / FAX {{.InvoiceCompany.Fax}}</span>
+      <span>{{.InvoiceCompany.Email}}</span>
+      <span>適格請求書発行事業者登録番号 {{.InvoiceCompany.QualifiedInvoiceNumber}}</span>
+    </div>
+  </header>
+
+  <section class="invoice-identifiers">
+    <div><span>請求書番号</span><strong>INV-{{.PurchaseReturn.ReturnNumber}}</strong></div>
+    <div><span>仕入返品番号</span><strong>{{.PurchaseReturn.ReturnNumber}}</strong></div>
+    <div><span>発行日</span><strong>{{today}}</strong></div>
+    <div><span>返品日</span><strong>{{.PurchaseReturn.ReturnDate}}</strong></div>
+    <div><span>ステータス</span><strong>{{if .PurchaseReturnCompleted}}処理済{{else if eq .PurchaseReturn.Status "returned"}}差戻し{{else}}承認待ち{{end}}</strong></div>
+  </section>
+
+  <section class="invoice-bill-to">
+    <p>請求先（仕入先）</p>
+    <h2>{{.PurchaseReturn.SupplierName}} 御中</h2>
+    <span>住所：登録情報なし</span>
+    <span>TEL 登録情報なし</span>
+    <span>適格請求書発行事業者登録番号 登録情報なし</span>
+  </section>
+
+  <section class="invoice-reason">
+    <strong>返品理由</strong>
+    <span>{{.PurchaseReturn.Reason}}{{if .PurchaseReturn.Notes}} / {{.PurchaseReturn.Notes}}{{end}}</span>
+  </section>
+
+  <table class="invoice-lines">
+    <thead><tr><th>No.</th><th>商品名 / 詳細</th><th>数量</th><th>単価</th><th>金額</th></tr></thead>
+    <tbody>
+      {{range $index, $line := .PurchaseReturnLines}}
+      <tr>
+        <td>{{add $index 1}}</td>
+        <td><strong>{{$line.Brand}} {{$line.ModelNumber}}</strong><small>商品コード：{{$line.ProductCode}} / SKU：{{if $line.SKU}}{{$line.SKU}}{{else}}—{{end}}</small></td>
+        <td>1</td>
+        <td>{{formatMoney $line.AmountJPY "JPY"}}</td>
+        <td>{{formatMoney $line.AmountJPY "JPY"}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  <section class="invoice-totals">
+    <div><span>小計</span><strong>{{formatMoney .PurchaseReturnTotal "JPY"}}</strong></div>
+    <div class="grand-total"><span>ご請求金額（税込）</span><strong>{{formatMoney .PurchaseReturnTotal "JPY"}}</strong></div>
+  </section>
+
+  <section class="invoice-payment">
+    <div><strong>お振込先 / お支払い先</strong><span>{{.InvoiceCompany.BankName}} {{.InvoiceCompany.BankBranch}}　{{.InvoiceCompany.BankAccountType}} {{.InvoiceCompany.BankAccountNumber}}</span><span>口座名義 {{.InvoiceCompany.BankAccountHolder}}</span></div>
+    <div><span>起票者</span><strong>{{.PurchaseReturn.CreatedByName}}</strong><span>起票日時</span><strong>{{formatTime .PurchaseReturn.CreatedAt}}</strong></div>
+  </section>
+  <footer class="invoice-contact">
+    <strong>お問い合わせ</strong>
+    <span>{{.InvoiceCompany.Name}}　TEL {{.InvoiceCompany.Phone}}　{{.InvoiceCompany.Email}}</span>
+  </footer>
+</article>
+{{end}}
+
+{{define "preview"}}
+<div class="invoice-preview-panel" data-invoice-preview-panel>
+  <header><div><strong>▤ 請求書プレビュー</strong><span>{{.PurchaseReturn.ReturnNumber}}</span></div><button type="button" data-invoice-preview-close aria-label="閉じる">×</button></header>
+  <div class="invoice-preview-scroll">{{template "purchase-return-sheet" .}}</div>
+  <footer><button class="button secondary" type="button" data-invoice-preview-close>× 閉じる</button><button class="button purchase-return-invoice-button" type="button" data-invoice-print>▤ 印刷</button></footer>
+</div>
+{{end}}
+
+{{define "document"}}
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>INV-{{.PurchaseReturn.ReturnNumber}} 仕入返品請求書</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="invoice-print-document">
+  <div class="invoice-toolbar"><button class="button purchase-return-invoice-button" type="button" data-invoice-print>▤ 印刷</button></div>
+  {{template "purchase-return-sheet" .}}
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
+{{end}}

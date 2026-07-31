@@ -13,7 +13,7 @@
 | POST | `/public/products/{id}/purchase-requests` | ゲスト購入依頼送信 | 公開・ワンタイムCSRF |
 | GET | `/products` | 在庫一覧・検索・状態フィルタ | `inventory.read` |
 | GET | `/products/export.csv` | 検索条件に一致する在庫・原価CSV出力 | `inventory.read` |
-| GET/POST | `/products/new`, `/products` | 商品単品登録 | `inventory.write` |
+| GET/POST | `/products/new`, `/products` | 商品登録 | `inventory.write` |
 | GET | `/products/{id}` | 商品詳細・履歴 | `inventory.read` |
 | POST | `/products/{id}/status` | 検品完了・在庫状態変更 | `inventory.write` |
 | POST | `/products/{id}/images` | 商品画像登録 | `inventory.write` |
@@ -23,12 +23,11 @@
 | GET/POST | `/purchases/new`, `/purchases` | 仕入伝票下書き登録 | `purchase.write` |
 | GET | `/purchases/{id}` | 仕入伝票詳細 | `purchase.read` |
 | POST | `/purchases/{id}/confirm` | 仕入確定・商品生成 | `purchase.confirm` |
-| GET | `/market-prices` | 相場・為替の一覧 | `market.read` |
-| POST | `/market-prices` | 相場情報の手入力 | `market.write` |
-| POST | `/exchange-rates` | 為替レートのスナップショット登録 | `market.write` |
-| GET | `/market-prices/import` | 相場CSV取込画面 | `market.import` |
-| POST | `/market-prices/import/preview` | CSV全行検証・プレビュー保存 | `market.import` |
-| POST | `/market-prices/import/{id}/commit` | CSV取込確定または承認申請 | `market.import` |
+| GET | `/market-prices` | 商品単位の相場表・検索 | `market.read` |
+| GET | `/market-prices/export.csv` | 検索条件を引き継いだ相場CSV出力 | `market.read` |
+| POST | `/market-prices/import.csv` | 商品単位の相場CSV取込 | `market.import` |
+| GET | `/market-prices/products/{id}/modal` | 商品相場の詳細・編集モーダル | `market.read` |
+| POST | `/market-prices/products/{id}/edit` | 仕入相場価格・売値相場価格の保存 | `market.write` |
 | GET | `/sales` | 売上伝票一覧 | `sales.read` |
 | GET/POST | `/sales/new`, `/sales` | 売上伝票の下書き登録 | `sales.write` |
 | GET | `/sales/{id}` | 売上伝票詳細・出荷進捗 | `sales.read` |

@@ -1,0 +1,36 @@
+{{define "content"}}{{template "guest-box-modal" .}}{{end}}
+{{define "guest-box-modal"}}
+<div class="guest-box-modal-content guest-box-readonly" data-guest-box-modal-content data-box-id="{{.GuestSelectedBox.ID}}">
+  <header>
+    <div><small>BOX{{.GuestSelectedBox.Number}}</small><h2>{{if .GuestSelectedBox.Name}}{{.GuestSelectedBox.Name}}{{else}}名称未設定{{end}} — 商品ラインナップ</h2></div>
+    <button type="button" data-guest-box-close aria-label="閉じる">×</button>
+  </header>
+  <div class="guest-published-companies">
+    <span>公開企業</span>
+    {{range .GuestPublishedCompanies}}<b>{{.Code}} {{.Name}}</b>{{else}}<em>現在は非公開</em>{{end}}
+  </div>
+  <section>
+    <div class="guest-lineup-title"><h3>登録済み商品</h3><strong>{{len .GuestBoxProducts}}点</strong></div>
+    <div class="table-wrap">
+      <table class="guest-lineup-table">
+        <thead><tr><th>商品コード</th><th>ブランド</th><th>モデル</th><th>Ref.</th><th>販売価格</th><th>状態</th></tr></thead>
+        <tbody>
+          {{range .GuestBoxProducts}}
+          <tr>
+            <td><strong>{{.ProductCode}}</strong></td><td>{{.Brand}}</td><td>{{.Model}}</td>
+            <td>{{if .ReferenceNumber}}{{.ReferenceNumber}}{{else}}—{{end}}</td>
+            <td class="money">{{formatMoney .SalePriceMinor .SaleCurrency}}</td>
+            <td><span class="status-badge">{{productStatus .InventoryStatus}}</span></td>
+          </tr>
+          {{else}}<tr><td colspan="6" class="empty">このBOXに商品はありません。</td></tr>{{end}}
+        </tbody>
+        {{if .GuestBoxProducts}}<tfoot><tr><td colspan="4">合計</td><td colspan="2">{{len .GuestBoxProducts}}点</td></tr></tfoot>{{end}}
+      </table>
+    </div>
+  </section>
+  <footer>
+    <button class="button secondary" type="button" data-guest-box-close>閉じる</button>
+    <button class="button primary" type="button" data-guest-box-editor-open="{{.GuestSelectedBox.ID}}">商品を編集</button>
+  </footer>
+</div>
+{{end}}

@@ -96,6 +96,22 @@ func TestReturnRequiresCommentAndPreservesHistory(t *testing.T) {
 	}
 }
 
+func TestReturnedApprovalCanBeResubmittedWithSameIDAndHistory(t *testing.T) {
+	store := testStore(t)
+	sale := createConfirmedApprovalSale(t, store)
+	approval := createSaleCancelApproval(t, store, sale.ID, "usr_worker")
+	if err := store.ReturnApproval(context.Background(), "org_preview", approval.ID, "usr_admin", "理由を追記してください"); err != nil {
+		t.Fatal(err)
+	}
+	resubmitted := createSaleCancelApproval(t, store, sale.ID, "usr_worker")
+	if resubmitted.ID != approval.ID || resubmitted.Status != "pending" {
+		t.Fatalf("resubmitted=%+v original=%s", resubmitted, approval.ID)
+	}
+	if len(resubmitted.Actions) != 3 || resubmitted.Actions[2].Action != "requested" {
+		t.Fatalf("history was not retained: %+v", resubmitted.Actions)
+	}
+}
+
 func TestChangedTargetExpiresOldApproval(t *testing.T) {
 	store := testStore(t)
 	ctx := context.Background()

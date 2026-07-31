@@ -22,16 +22,37 @@ type PublicProduct struct {
 	ProductCode    string
 	Brand          string
 	ModelNumber    string
+	SerialNumber   string
 	ProductType    string
 	SalePriceMinor int64
 	SaleCurrency   string
 	Condition      string
 	Accessories    string
+	Images         []ProductImage
+}
+
+type PublicProductFilter struct {
+	Query     string
+	Brand     string
+	Condition string
 }
 
 type PurchaseRequestInput struct {
 	OrganizationCode string
+	GuestCompanyID   string
+	RequestGroupID   string
 	ProductID        string
+	GuestName        string
+	GuestEmail       string
+	GuestPhone       string
+	Message          string
+}
+
+type PurchaseRequestGroupInput struct {
+	OrganizationCode string
+	GuestCompanyID   string
+	RequestGroupID   string
+	ProductIDs       []string
 	GuestName        string
 	GuestEmail       string
 	GuestPhone       string
@@ -40,11 +61,14 @@ type PurchaseRequestInput struct {
 
 type PurchaseRequest struct {
 	ID                 string
+	RequestGroupID     string
 	OrganizationID     string
 	ProductID          string
 	ProductCode        string
 	Brand              string
 	ModelNumber        string
+	SalePriceMinor     int64
+	SaleCurrency       string
 	RequestNumber      string
 	GuestName          string
 	GuestEmail         string
@@ -57,6 +81,11 @@ type PurchaseRequest struct {
 	ReservationStatus  string
 	ReservationStarts  *time.Time
 	ReservationExpires *time.Time
+}
+
+type PurchaseRequestGroup struct {
+	ID    string
+	Items []PurchaseRequest
 }
 
 type Reservation struct {
@@ -80,14 +109,40 @@ func (s *Store) OrganizationIDByCode(ctx context.Context, organizationCode strin
 }
 
 func (s *Store) PublicProducts(ctx context.Context, organizationCode string) ([]PublicProduct, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT p.id,p.product_code,p.brand,p.model_number,p.product_type,p.base_sale_price_minor,p.base_sale_currency,
-		       p.condition_text,p.accessories
-		FROM products p JOIN organizations o ON o.id=p.organization_id
-		WHERE o.code=? AND o.is_active=1 AND p.publication_status='public'
-		  AND p.inventory_status='in_stock' AND p.deleted_at IS NULL
-		ORDER BY p.purchase_date DESC,p.product_code DESC LIMIT 200`,
-		strings.ToUpper(strings.TrimSpace(organizationCode)))
+	return s.PublicProductsFiltered(ctx, organizationCode, PublicProductFilter{})
+}
+
+func (s *Store) PublicProductsForGuest(ctx context.Context, organizationCode, guestCompanyCode string, filter PublicProductFilter) ([]PublicProduct, error) {
+	query := `
+		SELECT DISTINCT bp.product_id,bp.product_code,bp.brand,bp.reference_number,bp.serial_number,bp.model_name,
+		       bp.sale_price_minor,bp.sale_currency,bp.condition_text,bp.accessories
+		FROM guest_box_published_products bp
+		JOIN organizations o ON o.id=bp.organization_id
+		JOIN guest_box_publications pub
+		  ON pub.organization_id=bp.organization_id AND pub.company_id=bp.company_id
+		  AND pub.box_id=bp.box_id AND pub.is_published=1
+		JOIN guest_companies c
+		  ON c.organization_id=pub.organization_id AND c.id=pub.company_id AND c.is_active=1
+		WHERE o.code=? AND o.is_active=1 AND c.company_code=?`
+	args := []any{
+		strings.ToUpper(strings.TrimSpace(organizationCode)),
+		strings.ToUpper(strings.TrimSpace(guestCompanyCode)),
+	}
+	if strings.TrimSpace(filter.Query) != "" {
+		like := "%" + strings.TrimSpace(filter.Query) + "%"
+		query += ` AND (bp.brand LIKE ? OR bp.reference_number LIKE ? OR bp.model_name LIKE ?)`
+		args = append(args, like, like, like)
+	}
+	if strings.TrimSpace(filter.Brand) != "" {
+		query += ` AND bp.brand=?`
+		args = append(args, strings.TrimSpace(filter.Brand))
+	}
+	if strings.TrimSpace(filter.Condition) != "" {
+		query += ` AND bp.condition_text=?`
+		args = append(args, strings.TrimSpace(filter.Condition))
+	}
+	query += ` ORDER BY bp.product_code DESC LIMIT 200`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -96,13 +151,163 @@ func (s *Store) PublicProducts(ctx context.Context, organizationCode string) ([]
 	for rows.Next() {
 		var product PublicProduct
 		if err := rows.Scan(&product.ID, &product.ProductCode, &product.Brand, &product.ModelNumber,
+			&product.SerialNumber, &product.ProductType, &product.SalePriceMinor,
+			&product.SaleCurrency, &product.Condition, &product.Accessories); err != nil {
+			return nil, err
+		}
+		products = append(products, product)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for index := range products {
+		images, imageErr := s.GuestSnapshotProductImages(ctx, organizationCode, guestCompanyCode, products[index].ID)
+		if imageErr != nil {
+			return nil, imageErr
+		}
+		products[index].Images = images
+	}
+	return products, nil
+}
+
+func (s *Store) GuestSnapshotProductImages(ctx context.Context, organizationCode, guestCompanyCode, productID string) ([]ProductImage, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT i.image_id,i.product_id,i.storage_path,i.original_name,
+		       i.content_type,i.size_bytes,i.sort_order
+		FROM guest_box_published_images i
+		JOIN organizations o ON o.id=i.organization_id AND o.is_active=1
+		JOIN guest_companies c
+		  ON c.organization_id=i.organization_id AND c.id=i.company_id AND c.is_active=1
+		JOIN guest_box_publications pub
+		  ON pub.organization_id=i.organization_id AND pub.company_id=i.company_id
+		  AND pub.box_id=i.box_id AND pub.is_published=1
+		WHERE o.code=? AND c.company_code=? AND i.product_id=?
+		ORDER BY i.sort_order`,
+		strings.ToUpper(strings.TrimSpace(organizationCode)),
+		strings.ToUpper(strings.TrimSpace(guestCompanyCode)), productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var images []ProductImage
+	for rows.Next() {
+		var image ProductImage
+		if err := rows.Scan(&image.ID, &image.ProductID, &image.StoragePath, &image.OriginalName,
+			&image.ContentType, &image.SizeBytes, &image.SortOrder); err != nil {
+			return nil, err
+		}
+		images = append(images, image)
+	}
+	return images, rows.Err()
+}
+
+func (s *Store) PublicProductsFiltered(ctx context.Context, organizationCode string, filter PublicProductFilter) ([]PublicProduct, error) {
+	query := `
+		SELECT p.id,p.product_code,p.brand,p.model_number,p.serial_number,p.product_type,
+		       p.base_sale_price_minor,p.base_sale_currency,p.condition_text,p.accessories
+		FROM products p JOIN organizations o ON o.id=p.organization_id
+		WHERE o.code=? AND o.is_active=1 AND p.publication_status='public'
+		  AND p.inventory_status='in_stock' AND p.deleted_at IS NULL`
+	args := []any{strings.ToUpper(strings.TrimSpace(organizationCode))}
+	if strings.TrimSpace(filter.Query) != "" {
+		like := "%" + strings.TrimSpace(filter.Query) + "%"
+		query += ` AND (p.brand LIKE ? OR p.model_number LIKE ? OR p.product_type LIKE ?)`
+		args = append(args, like, like, like)
+	}
+	if strings.TrimSpace(filter.Brand) != "" {
+		query += ` AND p.brand=?`
+		args = append(args, strings.TrimSpace(filter.Brand))
+	}
+	if strings.TrimSpace(filter.Condition) != "" {
+		query += ` AND p.condition_text=?`
+		args = append(args, strings.TrimSpace(filter.Condition))
+	}
+	query += ` ORDER BY p.purchase_date DESC,p.product_code DESC LIMIT 200`
+	rows, err := s.db.QueryContext(ctx, `
+		`+query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var products []PublicProduct
+	for rows.Next() {
+		var product PublicProduct
+		if err := rows.Scan(&product.ID, &product.ProductCode, &product.Brand, &product.ModelNumber, &product.SerialNumber,
 			&product.ProductType, &product.SalePriceMinor, &product.SaleCurrency,
 			&product.Condition, &product.Accessories); err != nil {
 			return nil, err
 		}
 		products = append(products, product)
 	}
-	return products, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	for index := range products {
+		images, imageErr := s.PublicProductImages(ctx, organizationCode, products[index].ID)
+		if imageErr != nil {
+			return nil, imageErr
+		}
+		products[index].Images = images
+	}
+	return products, nil
+}
+
+func (s *Store) PublicProductImages(ctx context.Context, organizationCode, productID string) ([]ProductImage, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT i.id,i.product_id,i.storage_path,i.original_name,i.content_type,i.size_bytes,i.sort_order
+		FROM product_images i
+		JOIN products p ON p.id=i.product_id AND p.organization_id=i.organization_id
+		JOIN organizations o ON o.id=p.organization_id
+		WHERE o.code=? AND o.is_active=1 AND p.id=? AND p.publication_status='public'
+		  AND p.inventory_status='in_stock' AND p.deleted_at IS NULL
+		ORDER BY i.sort_order`, strings.ToUpper(strings.TrimSpace(organizationCode)), productID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var images []ProductImage
+	for rows.Next() {
+		var image ProductImage
+		if err := rows.Scan(&image.ID, &image.ProductID, &image.StoragePath, &image.OriginalName,
+			&image.ContentType, &image.SizeBytes, &image.SortOrder); err != nil {
+			return nil, err
+		}
+		images = append(images, image)
+	}
+	return images, rows.Err()
+}
+
+func (s *Store) PublicProductImage(ctx context.Context, organizationCode, imageID string) (ProductImage, error) {
+	var image ProductImage
+	err := s.db.QueryRowContext(ctx, `
+		SELECT i.id,i.product_id,i.storage_path,i.original_name,i.content_type,i.size_bytes,i.sort_order
+		FROM product_images i
+		JOIN products p ON p.id=i.product_id AND p.organization_id=i.organization_id
+		JOIN organizations o ON o.id=p.organization_id
+		WHERE o.code=? AND o.is_active=1 AND i.id=? AND p.publication_status='public'
+		  AND p.inventory_status='in_stock' AND p.deleted_at IS NULL`,
+		strings.ToUpper(strings.TrimSpace(organizationCode)), imageID).
+		Scan(&image.ID, &image.ProductID, &image.StoragePath, &image.OriginalName,
+			&image.ContentType, &image.SizeBytes, &image.SortOrder)
+	if err == nil {
+		return image, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return image, err
+	}
+	err = s.db.QueryRowContext(ctx, `
+		SELECT i.image_id,i.product_id,i.storage_path,i.original_name,i.content_type,i.size_bytes,i.sort_order
+		FROM guest_box_published_images i
+		JOIN organizations o ON o.id=i.organization_id AND o.is_active=1
+		WHERE o.code=? AND i.image_id=?
+		ORDER BY i.published_at DESC LIMIT 1`,
+		strings.ToUpper(strings.TrimSpace(organizationCode)), imageID).
+		Scan(&image.ID, &image.ProductID, &image.StoragePath, &image.OriginalName,
+			&image.ContentType, &image.SizeBytes, &image.SortOrder)
+	return image, err
 }
 
 func (s *Store) SetProductPublication(ctx context.Context, organizationID, productID, actorID, status string) error {
@@ -156,11 +361,27 @@ func (s *Store) CreatePurchaseRequest(ctx context.Context, input PurchaseRequest
 	}
 	defer tx.Rollback()
 	var organizationID string
-	if err := tx.QueryRowContext(ctx, `
+	availabilityQuery := `
 		SELECT p.organization_id FROM products p JOIN organizations o ON o.id=p.organization_id
 		WHERE p.id=? AND o.code=? AND o.is_active=1 AND p.publication_status='public'
-		  AND p.inventory_status='in_stock' AND p.deleted_at IS NULL`,
-		input.ProductID, strings.ToUpper(strings.TrimSpace(input.OrganizationCode))).Scan(&organizationID); err != nil {
+		  AND p.inventory_status='in_stock' AND p.deleted_at IS NULL`
+	availabilityArgs := []any{input.ProductID, strings.ToUpper(strings.TrimSpace(input.OrganizationCode))}
+	if strings.TrimSpace(input.GuestCompanyID) != "" {
+		availabilityQuery = `
+			SELECT bp.organization_id
+			FROM guest_box_published_products bp
+			JOIN guest_box_publications pub
+			  ON pub.organization_id=bp.organization_id AND pub.company_id=bp.company_id
+			  AND pub.box_id=bp.box_id AND pub.is_published=1
+			JOIN guest_companies c
+			  ON c.organization_id=bp.organization_id AND c.id=bp.company_id AND c.is_active=1
+			JOIN organizations o ON o.id=bp.organization_id AND o.is_active=1
+			WHERE bp.product_id=? AND bp.company_id=? AND o.code=?
+			LIMIT 1`
+		availabilityArgs = []any{input.ProductID, strings.TrimSpace(input.GuestCompanyID),
+			strings.ToUpper(strings.TrimSpace(input.OrganizationCode))}
+	}
+	if err := tx.QueryRowContext(ctx, availabilityQuery, availabilityArgs...).Scan(&organizationID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return PurchaseRequest{}, ErrProductNotAvailable
 		}
@@ -176,13 +397,20 @@ func (s *Store) CreatePurchaseRequest(ctx context.Context, input PurchaseRequest
 		return PurchaseRequest{}, err
 	}
 	id, _ := NewID("reqbuy")
+	requestGroupID := strings.TrimSpace(input.RequestGroupID)
+	if requestGroupID == "" {
+		requestGroupID, _ = NewID("reqgrp")
+	}
+	if len(requestGroupID) > 100 {
+		return PurchaseRequest{}, errors.New("購入依頼グループIDが正しくありません")
+	}
 	number := fmt.Sprintf("RQ-%s-%04d", nowTime.Format("2006"), count+1)
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO purchase_requests(
-			id,organization_id,product_id,request_number,guest_name,guest_email,guest_phone,message,
+			id,organization_id,request_group_id,product_id,request_number,guest_name,guest_email,guest_phone,message,
 			status,requested_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,'pending',?,?)`,
-		id, organizationID, input.ProductID, number, input.GuestName, input.GuestEmail,
+		) VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)`,
+		id, organizationID, requestGroupID, input.ProductID, number, input.GuestName, input.GuestEmail,
 		strings.TrimSpace(input.GuestPhone), strings.TrimSpace(input.Message), now, now); err != nil {
 		return PurchaseRequest{}, err
 	}
@@ -190,6 +418,172 @@ func (s *Store) CreatePurchaseRequest(ctx context.Context, input PurchaseRequest
 		return PurchaseRequest{}, err
 	}
 	return s.PurchaseRequest(ctx, organizationID, id)
+}
+
+func (s *Store) CreatePurchaseRequestGroup(ctx context.Context, input PurchaseRequestGroupInput) (PurchaseRequestGroup, error) {
+	input.GuestName = strings.TrimSpace(input.GuestName)
+	input.GuestEmail = strings.TrimSpace(strings.ToLower(input.GuestEmail))
+	if input.GuestName == "" || !strings.Contains(input.GuestEmail, "@") || len(input.GuestEmail) > 254 {
+		return PurchaseRequestGroup{}, errors.New("お名前と正しいメールアドレスを入力してください")
+	}
+	if len([]rune(input.GuestName)) > 100 || len([]rune(input.GuestPhone)) > 40 || len([]rune(input.Message)) > 2000 {
+		return PurchaseRequestGroup{}, errors.New("入力文字数を確認してください")
+	}
+	productIDs := make([]string, 0, len(input.ProductIDs))
+	seen := make(map[string]struct{}, len(input.ProductIDs))
+	for _, rawID := range input.ProductIDs {
+		productID := strings.TrimSpace(rawID)
+		if productID == "" {
+			continue
+		}
+		if _, exists := seen[productID]; exists {
+			continue
+		}
+		seen[productID] = struct{}{}
+		productIDs = append(productIDs, productID)
+	}
+	if len(productIDs) == 0 {
+		return PurchaseRequestGroup{}, errors.New("購入依頼する商品を選択してください")
+	}
+	if len(productIDs) > 100 {
+		return PurchaseRequestGroup{}, errors.New("一度に購入依頼できる商品は100点までです")
+	}
+	requestGroupID := strings.TrimSpace(input.RequestGroupID)
+	if requestGroupID == "" {
+		requestGroupID, _ = NewID("reqgrp")
+	}
+	if len(requestGroupID) > 100 {
+		return PurchaseRequestGroup{}, errors.New("購入依頼グループIDが正しくありません")
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PurchaseRequestGroup{}, err
+	}
+	defer tx.Rollback()
+	var organizationID string
+	for index, productID := range productIDs {
+		availabilityQuery := `
+			SELECT p.organization_id FROM products p JOIN organizations o ON o.id=p.organization_id
+			WHERE p.id=? AND o.code=? AND o.is_active=1 AND p.publication_status='public'
+			  AND p.inventory_status='in_stock' AND p.deleted_at IS NULL`
+		availabilityArgs := []any{productID, strings.ToUpper(strings.TrimSpace(input.OrganizationCode))}
+		if strings.TrimSpace(input.GuestCompanyID) != "" {
+			availabilityQuery = `
+				SELECT bp.organization_id
+				FROM guest_box_published_products bp
+				JOIN guest_box_publications pub
+				  ON pub.organization_id=bp.organization_id AND pub.company_id=bp.company_id
+				  AND pub.box_id=bp.box_id AND pub.is_published=1
+				JOIN guest_companies c
+				  ON c.organization_id=bp.organization_id AND c.id=bp.company_id AND c.is_active=1
+				JOIN organizations o ON o.id=bp.organization_id AND o.is_active=1
+				WHERE bp.product_id=? AND bp.company_id=? AND o.code=?
+				LIMIT 1`
+			availabilityArgs = []any{productID, strings.TrimSpace(input.GuestCompanyID),
+				strings.ToUpper(strings.TrimSpace(input.OrganizationCode))}
+		}
+		var candidateOrganizationID string
+		if err := tx.QueryRowContext(ctx, availabilityQuery, availabilityArgs...).Scan(&candidateOrganizationID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return PurchaseRequestGroup{}, ErrProductNotAvailable
+			}
+			return PurchaseRequestGroup{}, err
+		}
+		if index == 0 {
+			organizationID = candidateOrganizationID
+		} else if candidateOrganizationID != organizationID {
+			return PurchaseRequestGroup{}, ErrProductNotAvailable
+		}
+	}
+
+	nowTime := s.now()
+	now := nowTime.Format(time.RFC3339Nano)
+	var count int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM purchase_requests
+		WHERE organization_id=? AND substr(requested_at,1,4)=?`,
+		organizationID, nowTime.Format("2006")).Scan(&count); err != nil {
+		return PurchaseRequestGroup{}, err
+	}
+	requestIDs := make([]string, 0, len(productIDs))
+	for index, productID := range productIDs {
+		id, _ := NewID("reqbuy")
+		number := fmt.Sprintf("RQ-%s-%04d", nowTime.Format("2006"), count+index+1)
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO purchase_requests(
+				id,organization_id,request_group_id,product_id,request_number,guest_name,guest_email,guest_phone,message,
+				status,requested_at,updated_at
+			) VALUES(?,?,?,?,?,?,?,?,?,'pending',?,?)`,
+			id, organizationID, requestGroupID, productID, number, input.GuestName, input.GuestEmail,
+			strings.TrimSpace(input.GuestPhone), strings.TrimSpace(input.Message), now, now); err != nil {
+			return PurchaseRequestGroup{}, err
+		}
+		requestIDs = append(requestIDs, id)
+	}
+	if err := tx.Commit(); err != nil {
+		return PurchaseRequestGroup{}, err
+	}
+	group := PurchaseRequestGroup{ID: requestGroupID, Items: make([]PurchaseRequest, 0, len(requestIDs))}
+	for _, requestID := range requestIDs {
+		request, err := s.PurchaseRequest(ctx, organizationID, requestID)
+		if err != nil {
+			return PurchaseRequestGroup{}, err
+		}
+		group.Items = append(group.Items, request)
+	}
+	return group, nil
+}
+
+func (s *Store) PurchaseRequestGroups(ctx context.Context, organizationID, status string) ([]PurchaseRequestGroup, error) {
+	requests, err := s.PurchaseRequests(ctx, organizationID)
+	if err != nil {
+		return nil, err
+	}
+	groups := make([]PurchaseRequestGroup, 0, len(requests))
+	indexByID := make(map[string]int, len(requests))
+	for _, request := range requests {
+		if status != "" && request.Status != status {
+			continue
+		}
+		groupID := request.RequestGroupID
+		if groupID == "" {
+			groupID = request.ID
+		}
+		index, exists := indexByID[groupID]
+		if !exists {
+			index = len(groups)
+			indexByID[groupID] = index
+			groups = append(groups, PurchaseRequestGroup{ID: groupID})
+		}
+		groups[index].Items = append(groups[index].Items, request)
+	}
+	return groups, nil
+}
+
+func (s *Store) PurchaseRequestGroup(ctx context.Context, organizationID, groupID string) (PurchaseRequestGroup, error) {
+	rows, err := s.db.QueryContext(ctx, purchaseRequestSelect+`
+		WHERE r.organization_id=? AND r.request_group_id=?
+		ORDER BY r.requested_at,r.request_number`, organizationID, groupID)
+	if err != nil {
+		return PurchaseRequestGroup{}, err
+	}
+	defer rows.Close()
+	group := PurchaseRequestGroup{ID: groupID}
+	for rows.Next() {
+		request, scanErr := scanPurchaseRequest(rows)
+		if scanErr != nil {
+			return PurchaseRequestGroup{}, scanErr
+		}
+		group.Items = append(group.Items, request)
+	}
+	if err := rows.Err(); err != nil {
+		return PurchaseRequestGroup{}, err
+	}
+	if len(group.Items) == 0 {
+		return PurchaseRequestGroup{}, sql.ErrNoRows
+	}
+	return group, nil
 }
 
 func (s *Store) PurchaseRequests(ctx context.Context, organizationID string) ([]PurchaseRequest, error) {
@@ -219,7 +613,8 @@ func (s *Store) PurchaseRequest(ctx context.Context, organizationID, requestID s
 }
 
 const purchaseRequestSelect = `
-	SELECT r.id,r.organization_id,r.product_id,p.product_code,p.brand,p.model_number,r.request_number,
+	SELECT r.id,r.request_group_id,r.organization_id,r.product_id,p.product_code,p.brand,p.model_number,
+	       p.base_sale_price_minor,p.base_sale_currency,r.request_number,
 	       r.guest_name,r.guest_email,r.guest_phone,r.message,r.status,r.requested_at,r.reviewed_at,
 	       COALESCE(v.id,''),COALESCE(v.status,''),v.starts_at,v.expires_at
 	FROM purchase_requests r
@@ -231,8 +626,9 @@ func scanPurchaseRequest(row rowScanner) (PurchaseRequest, error) {
 	var request PurchaseRequest
 	var requested string
 	var reviewed, starts, expires sql.NullString
-	err := row.Scan(&request.ID, &request.OrganizationID, &request.ProductID, &request.ProductCode,
-		&request.Brand, &request.ModelNumber, &request.RequestNumber, &request.GuestName,
+	err := row.Scan(&request.ID, &request.RequestGroupID, &request.OrganizationID, &request.ProductID, &request.ProductCode,
+		&request.Brand, &request.ModelNumber, &request.SalePriceMinor, &request.SaleCurrency,
+		&request.RequestNumber, &request.GuestName,
 		&request.GuestEmail, &request.GuestPhone, &request.Message, &request.Status, &requested,
 		&reviewed, &request.ReservationID, &request.ReservationStatus, &starts, &expires)
 	if err != nil {
@@ -473,9 +869,50 @@ func (s *Store) SeedRequestPreview(ctx context.Context) error {
 		return nil
 	}
 	for _, product := range products {
-		if product.PublicationStatus == "public" {
-			return nil
+		if product.PublicationStatus != "public" {
+			if err := s.SetProductPublication(ctx, "org_preview", product.ID, "usr_admin", "public"); err != nil {
+				return err
+			}
 		}
 	}
-	return s.SetProductPublication(ctx, "org_preview", products[0].ID, "usr_admin", "public")
+	return nil
+}
+
+func (s *Store) SeedGuestCatalogPreview(ctx context.Context) error {
+	seeds := []SingleProductInput{
+		{SupplierID: "sup_001", SKU: "GUEST-ROLEX-DAYTONA", Brand: "ロレックス", ModelNumber: "116519LN", SerialNumber: "GUEST-RLX-002", ProductType: "デイトナ（ホワイトゴールド）", CostAmountMinor: 1680000, BaseSalePriceMinor: 2200000, Condition: "未使用展示品 (N-)", Accessories: "BOX, GUARANTEE"},
+		{SupplierID: "sup_002", SKU: "GUEST-OMEGA-SPEED", Brand: "オメガ", ModelNumber: "311.30.42.30.01.005", SerialNumber: "GUEST-OMG-001", ProductType: "スピードマスター", CostAmountMinor: 320000, BaseSalePriceMinor: 498000, Condition: "美品 (A)", Accessories: "BOX"},
+		{SupplierID: "sup_003", SKU: "GUEST-CARTIER-SANTOS", Brand: "カルティエ", ModelNumber: "WSSA0009", SerialNumber: "GUEST-CAR-001", ProductType: "サントス", CostAmountMinor: 480000, BaseSalePriceMinor: 720000, Condition: "美品 (A)", Accessories: "BOX, GUARANTEE"},
+		{SupplierID: "sup_001", SKU: "GUEST-IWC-PORT", Brand: "IWC", ModelNumber: "IW500705", SerialNumber: "GUEST-IWC-001", ProductType: "ポルトギーゼ", CostAmountMinor: 560000, BaseSalePriceMinor: 840000, Condition: "美品 (A)", Accessories: "BOX"},
+		{SupplierID: "sup_002", SKU: "GUEST-GS-ELEGANCE", Brand: "グランドセイコー", ModelNumber: "SBGW047", SerialNumber: "GUEST-GS-001", ProductType: "エレガンスコレクション", CostAmountMinor: 280000, BaseSalePriceMinor: 430000, Condition: "極美品 (S)", Accessories: "BOX, GUARANTEE"},
+		{SupplierID: "sup_003", SKU: "GUEST-BREITLING-NAVI", Brand: "ブライトリング", ModelNumber: "AB0121211B1A1", SerialNumber: "GUEST-BRI-001", ProductType: "ナビタイマー", CostAmountMinor: 420000, BaseSalePriceMinor: 610000, Condition: "良品 (AB)", Accessories: "GUARANTEE"},
+		{SupplierID: "sup_001", SKU: "GUEST-BREITLING-BLACK", Brand: "ブライトリング", ModelNumber: "AB0127211B1A1", SerialNumber: "GUEST-BRI-002", ProductType: "ナビタイマー（ブラック）", CostAmountMinor: 480000, BaseSalePriceMinor: 720000, Condition: "極美品 (S)", Accessories: "BOX, GUARANTEE"},
+	}
+	for _, seed := range seeds {
+		var productID, status, publication string
+		err := s.db.QueryRowContext(ctx, `
+			SELECT id,inventory_status,publication_status FROM products
+			WHERE organization_id='org_preview' AND sku=? AND deleted_at IS NULL`, seed.SKU).
+			Scan(&productID, &status, &publication)
+		if errors.Is(err, sql.ErrNoRows) {
+			seed.OrganizationID = "org_preview"
+			seed.PurchaseDate = "2026-07-27"
+			seed.CostCurrency = "JPY"
+			seed.BaseSaleCurrency = "JPY"
+			seed.CreatedBy = "usr_admin"
+			product, createErr := s.CreateSingleProduct(ctx, seed)
+			if createErr != nil {
+				return createErr
+			}
+			productID, status, publication = product.ID, product.InventoryStatus, product.PublicationStatus
+		} else if err != nil {
+			return err
+		}
+		if status == "in_stock" && publication != "public" {
+			if err := s.SetProductPublication(ctx, "org_preview", productID, "usr_admin", "public"); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

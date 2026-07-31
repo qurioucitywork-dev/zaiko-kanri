@@ -1,0 +1,159 @@
+{{define "content"}}
+<span class="sr-only">棚卸管理 {{.Stocktake.Number}} 棚卸を確定</span>
+
+{{if .Stocktake.ID}}
+<section class="card stocktake-scan-card">
+  <div class="stocktake-reference-head">
+    <h2><span>▥</span> バーコード / 商品コード入力</h2>
+    <span class="stocktake-running">{{if eq .Stocktake.Status "completed"}}確定済{{else}}進行中{{end}}</span>
+  </div>
+  <div class="stocktake-scan-body">
+    <form class="stocktake-scan-form" data-stocktake-scan-form>
+      <span aria-hidden="true">▥</span>
+      <input type="text" inputmode="numeric" autocomplete="off" placeholder="商品コードを入力してEnter（バーコードリーダー対応）" aria-label="商品コード" data-stocktake-code {{if eq .Stocktake.Status "completed"}}disabled{{end}}>
+      <button class="button stocktake-confirm-button" type="submit" {{if eq .Stocktake.Status "completed"}}disabled{{end}}>✓ 確認</button>
+    </form>
+    <div class="stocktake-scan-counters" aria-label="対象件数">
+      <span>▣ 在庫中 <strong>{{.StocktakeInStockCountedCount}} / {{.StocktakeInStockCount}}</strong></span>
+      <span>▰ 出荷済 <strong>{{.StocktakeShippedCountedCount}} / {{.StocktakeShippedCount}}</strong></span>
+    </div>
+  </div>
+  <p class="stocktake-scan-message" data-stocktake-scan-message aria-live="polite"></p>
+</section>
+
+<section class="card stocktake-list-card">
+  <div class="stocktake-reference-head stocktake-list-head">
+    <h2><span>☷</span> 棚卸リスト</h2>
+    <div class="stocktake-list-tabs" role="tablist" aria-label="在庫状態">
+      <button class="active" type="button" data-stocktake-tab="stock" aria-selected="true">▣ 在庫中 <b>{{.StocktakeInStockCount}}</b></button>
+      <button type="button" data-stocktake-tab="shipped" aria-selected="false">▰ 出荷済 <b>{{.StocktakeShippedCount}}</b></button>
+    </div>
+  </div>
+  <div class="table-wrap stocktake-reference-table-wrap" tabindex="0" aria-label="棚卸リスト">
+    <table class="stocktake-reference-table">
+      <thead>
+        <tr>
+          <th>棚卸状態</th><th>商品コード</th><th>ブランド</th><th>モデル名</th><th>型番</th>
+          <th>シリアル</th><th>コンディション</th><th>担当者</th><th>仕入金額</th><th>仕入日</th><th>棚卸実施日</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Stocktake.Lines}}
+        <tr data-stocktake-row data-product-code="{{.ProductCode}}" data-stocktake-counted="{{if .CountedPresent}}true{{else}}false{{end}}" data-stocktake-kind="{{if or (eq .InventoryStatus "sold") (eq .InventoryStatus "shipped")}}shipped{{else}}stock{{end}}" class="{{if stocktakeAbsent .CountedPresent}}stocktake-reference-difference{{end}}" {{if or (eq .InventoryStatus "sold") (eq .InventoryStatus "shipped")}}hidden{{end}}>
+          <td>
+            <form id="stocktake-line-{{.ID}}" method="post" action="/stocktakes/{{$.Stocktake.ID}}/lines/{{.ID}}">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="result" value="{{if stocktakeAbsent .CountedPresent}}absent{{else}}present{{end}}" data-stocktake-result>
+              <input type="hidden" name="notes" value="{{.Notes}}" data-stocktake-notes>
+              <input type="hidden" name="difference_reason" value="{{.DifferenceReason}}" data-stocktake-reason>
+            </form>
+            {{if eq .ReviewStatus "pending"}}
+              {{if eq .ApprovalStatus "returned"}}
+                <span class="stocktake-state difference">● 差戻し</span>
+                <button class="stocktake-mark-difference" type="submit" form="stocktake-line-{{.ID}}">再申請</button>
+              {{else}}
+                <span class="stocktake-state pending">● 承認待ち</span>
+              {{end}}
+            {{else if stocktakePresent .CountedPresent}}
+              <span class="stocktake-state checked">棚卸済</span>
+            {{else if stocktakeAbsent .CountedPresent}}
+              <span class="stocktake-state difference">● 不一致</span>
+            {{else}}
+              <span class="stocktake-state">○ 未処理</span>
+              <button class="stocktake-mark-difference" type="button" data-stocktake-row-difference>不一致</button>
+            {{end}}
+          </td>
+          <td><button class="stocktake-code-button" type="button" data-stocktake-row-confirm {{if eq $.Stocktake.Status "completed"}}disabled{{end}}>{{.ProductCode}}</button></td>
+          <td title="{{.Brand}}">{{.Brand}}</td>
+          <td title="{{.Model}}">{{.Model}}</td>
+          <td title="{{.ReferenceNumber}}">{{.ReferenceNumber}}</td>
+          <td title="{{.SerialNumber}}">{{if .SerialNumber}}{{.SerialNumber}}{{else}}—{{end}}</td>
+          <td title="{{.Condition}}">{{if .Condition}}{{.Condition}}{{else}}—{{end}}</td>
+          <td title="{{.BuyerName}}">{{.BuyerName}}</td>
+          <td><strong>{{formatMoney .CostAmountMinor "JPY"}}</strong></td>
+          <td>{{.PurchaseDate}}</td>
+          <td>{{if .FinalizedAt}}{{.FinalizedAt.Format "2006-01-02"}}{{else if .CountedAt}}{{.CountedAt.Format "2006-01-02"}}{{else}}—{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card stocktake-summary-card">
+  <div class="stocktake-reference-head">
+    <h2><span>▦</span> 棚卸集計</h2>
+  </div>
+  <div class="stocktake-summary-grid">
+    <article>
+      <h3>▣ 在庫中</h3>
+      <dl><div><dt>リスト合計金額</dt><dd>{{formatMoney .StocktakeInStockTotal "JPY"}}</dd></div><div><dt>棚卸済合計金額</dt><dd class="positive">{{formatMoney .StocktakeInStockCountedTotal "JPY"}}</dd></div></dl>
+    </article>
+    <article>
+      <h3>▰ 出荷済</h3>
+      <dl><div><dt>リスト合計金額</dt><dd>{{formatMoney .StocktakeShippedTotal "JPY"}}</dd></div><div><dt>棚卸済合計金額</dt><dd class="positive">{{formatMoney .StocktakeShippedCountedTotal "JPY"}}</dd></div></dl>
+    </article>
+    <article class="stocktake-grand-total">
+      <h3>総合計</h3>
+      <dl><div><dt>システム合計（在庫中＋出荷済）</dt><dd>{{formatMoney (add64 .StocktakeInStockTotal .StocktakeShippedTotal) "JPY"}}</dd></div><div><dt>不一致合計金額</dt><dd class="negative">{{formatMoney .StocktakeDifferenceTotal "JPY"}}</dd></div><div><dt>棚卸入力済み総合計</dt><dd class="positive">{{formatMoney .StocktakeCountedTotal "JPY"}}</dd></div></dl>
+    </article>
+  </div>
+</section>
+
+<div class="stocktake-sticky-actions">
+  <form method="post" action="/stocktakes/{{.Stocktake.ID}}/save">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="button stocktake-save-button" type="submit" data-stocktake-save>▣ 一時保存</button>
+  </form>
+  <button class="button stocktake-difference-button" type="button" data-stocktake-differences>⚠ 不一致リスト <b>{{.Stocktake.DifferenceCount}}</b></button>
+  {{if eq .Stocktake.Status "draft"}}
+  <form method="post" action="/stocktakes/{{.Stocktake.ID}}/complete" data-stocktake-complete-form>
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button class="button stocktake-final-button" type="button" data-stocktake-complete-open {{if not .StocktakeCanComplete}}disabled title="全件確認・承認後に確定できます"{{end}}>♟ 棚卸確定</button>
+  </form>
+  {{end}}
+</div>
+
+<dialog class="stocktake-action-dialog" data-stocktake-difference-dialog>
+  <div class="stocktake-action-head"><h2>⚠ 不一致内容を登録</h2><button type="button" data-stocktake-dialog-close>×</button></div>
+  <p>不一致理由を選択し、必要に応じて備考を入力してください。</p>
+  <fieldset class="stocktake-reason-grid">
+    <label><input type="radio" name="stocktake_reason_ui" value="商品が見つからない"> 商品が見つからない</label>
+    <label><input type="radio" name="stocktake_reason_ui" value="保管場所違い"> 保管場所違い</label>
+    <label><input type="radio" name="stocktake_reason_ui" value="商品状態相違"> 商品状態相違</label>
+    <label><input type="radio" name="stocktake_reason_ui" value="その他"> その他</label>
+  </fieldset>
+  <label>備考<textarea data-stocktake-difference-note maxlength="500" placeholder="不一致の詳細を入力"></textarea></label>
+  <div class="stocktake-action-buttons"><button class="button secondary" type="button" data-stocktake-dialog-close>キャンセル</button><button class="button primary" type="button" data-stocktake-difference-submit>不一致として登録</button></div>
+</dialog>
+
+<dialog class="stocktake-action-dialog stocktake-difference-list-dialog" data-stocktake-difference-list-dialog>
+  <div class="stocktake-action-head"><h2>⚠ 不一致リスト</h2><button type="button" data-stocktake-dialog-close>×</button></div>
+  <div class="table-wrap"><table><thead><tr><th>商品コード</th><th>ブランド</th><th>モデル</th><th>理由</th><th>状態</th></tr></thead><tbody>
+  {{range .Stocktake.Lines}}{{if stocktakeAbsent .CountedPresent}}<tr><td>{{.ProductCode}}</td><td>{{.Brand}}</td><td>{{.Model}}</td><td>{{.DifferenceReason}}</td><td>{{if eq .ReviewStatus "pending"}}承認待ち{{else}}不一致{{end}}</td></tr>{{end}}{{end}}
+  {{if eq .Stocktake.DifferenceCount 0}}<tr><td class="stocktake-empty-row" colspan="5">不一致の商品はありません</td></tr>{{end}}
+  </tbody></table></div>
+  <div class="stocktake-action-buttons"><button class="button secondary" type="button" data-stocktake-dialog-close>閉じる</button></div>
+</dialog>
+
+<dialog class="stocktake-action-dialog" data-stocktake-complete-dialog>
+  <div class="stocktake-action-head"><h2>棚卸確定前の集計確認</h2><button type="button" data-stocktake-dialog-close>×</button></div>
+  <dl class="stocktake-confirm-summary">
+    <div><dt>対象件数</dt><dd>{{.Stocktake.ExpectedCount}}件</dd></div>
+    <div><dt>確認済み</dt><dd>{{.Stocktake.CountedCount}}件</dd></div>
+    <div><dt>不一致</dt><dd>{{.Stocktake.DifferenceCount}}件</dd></div>
+    <div><dt>承認待ち</dt><dd>{{.StocktakePendingCount}}件</dd></div>
+    <div><dt>システム合計</dt><dd>{{formatMoney (add64 .StocktakeInStockTotal .StocktakeShippedTotal) "JPY"}}</dd></div>
+    <div><dt>棚卸入力済み総合計</dt><dd>{{formatMoney .StocktakeCountedTotal "JPY"}}</dd></div>
+  </dl>
+  <div class="stocktake-action-buttons">
+    <button class="button secondary" type="button" data-stocktake-dialog-close>キャンセル</button>
+    <button class="button secondary" type="button" data-stocktake-export>CSV出力</button>
+    <button class="button secondary" type="button" data-stocktake-print>印刷</button>
+    <button class="button primary" type="button" data-stocktake-complete-submit>棚卸を確定</button>
+  </div>
+</dialog>
+<div class="stocktake-toast" role="status" aria-live="polite" data-stocktake-toast hidden></div>
+
+{{end}}
+{{end}}

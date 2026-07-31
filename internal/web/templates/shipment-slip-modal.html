@@ -1,0 +1,41 @@
+{{define "content"}}
+<div class="purchase-workflow-panel shipment-workflow-panel" data-shipment-id="{{.Shipment.ID}}">
+  <header class="purchase-workflow-head">
+    <h2>▰ 出荷伝票</h2>
+    <button type="button" data-shipment-workflow-close aria-label="閉じる">×</button>
+  </header>
+  <div class="purchase-workflow-meta shipment-workflow-meta">
+    <strong>▥ {{.Shipment.ShipmentNumber}}</strong><span>｜</span><span>▣ {{.Shipment.ShipmentDate}}</span><span>｜</span><b>▦ {{.Shipment.RecipientName}}</b>
+    {{if .Shipment.RevisionCount}}<em>✎ 修正済 {{.Shipment.RevisionCount}}件</em>{{end}}
+  </div>
+  <div class="purchase-workflow-scroll">
+    <dl class="purchase-overview shipment-overview">
+      <div><dt>▣ 出荷日</dt><dd>{{.Shipment.ShipmentDate}}</dd></div>
+      <div><dt>▦ 出荷先</dt><dd><strong>{{.Shipment.RecipientName}}</strong></dd></div>
+      <div><dt>◆ 住所</dt><dd>{{if .Shipment.RecipientAddress}}{{.Shipment.RecipientAddress}}{{else}}未登録{{end}}</dd></div>
+      <div><dt>● 連絡先</dt><dd>{{if .Shipment.RecipientPhone}}{{.Shipment.RecipientPhone}}{{else}}未登録{{end}}</dd></div>
+      <div><dt>▤ 適格番号</dt><dd>{{if .Shipment.TrackingNumber}}{{.Shipment.TrackingNumber}}{{else}}未登録{{end}}</dd></div>
+      <div><dt>￥ 合計金額</dt><dd><strong>{{formatMoney .Shipment.TotalJPY "JPY"}}</strong></dd></div>
+      {{if .Shipment.Notes}}<div><dt>▣ 備考</dt><dd>{{.Shipment.Notes}}</dd></div>{{end}}
+    </dl>
+    <section class="shipment-detail-section">
+      <h3 class="purchase-section-title">☷ 商品明細（{{len .Shipment.Lines}}点）</h3>
+      <div class="table-wrap purchase-workflow-table shipment-workflow-table">
+        <table>
+          <thead><tr><th>商品コード</th><th>ブランド</th><th>モデル</th><th>金額</th></tr></thead>
+          <tbody>{{range .Shipment.Lines}}<tr><td>{{.ProductCode}}</td><td>{{.Brand}}</td><td>{{.ModelNumber}}</td><td><strong>{{formatMoney .WholesalePriceMinor "JPY"}}</strong></td></tr>{{else}}<tr><td colspan="4">商品明細はありません。</td></tr>{{end}}</tbody>
+          <tfoot><tr><td colspan="3">合計</td><td>{{formatMoney .Shipment.TotalJPY "JPY"}}</td></tr></tfoot>
+        </table>
+      </div>
+    </section>
+    {{if .ShipmentRevisions}}
+    <section class="purchase-revisions"><h3>↶ 修正履歴（{{len .ShipmentRevisions}}件）</h3>{{range $index, $revision := .ShipmentRevisions}}<article><b>{{add $index 1}}</b><div><span>▣ 修正日時</span><strong>{{formatTime $revision.CreatedAt}}</strong><span>● 担当者</span><strong>{{$revision.ActorName}}</strong><span>● 修正内容</span><strong>{{$revision.Memo}}</strong></div></article>{{end}}</section>
+    {{end}}
+  </div>
+  <footer>
+    <span>{{if .Shipment.RevisionCount}}修正履歴：{{.Shipment.RevisionCount}}件{{else}}修正履歴なし{{end}}</span>
+    <button class="button secondary" type="button" data-shipment-workflow-close>× 閉じる</button>
+    <button class="button purchase-edit-button" type="button" data-shipment-workflow-view="edit">✎ 伝票修正</button>
+  </footer>
+</div>
+{{end}}

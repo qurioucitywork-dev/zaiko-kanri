@@ -1,0 +1,37 @@
+{{define "content"}}
+<section class="card returns-card">
+  <div class="card-header"><h2>↶ 返品/持ち帰り</h2></div>
+  <form method="get" action="/returns" class="returns-filter" data-returns-filter>
+    <label><strong>▼ ステータス</strong>
+      <select name="status" data-returns-filter-control>
+        <option value="" {{if eq .Status ""}}selected{{end}}>すべて</option>
+        <option value="pending" {{if eq .Status "pending"}}selected{{end}}>処理待ちあり</option>
+        <option value="completed" {{if eq .Status "completed"}}selected{{end}}>完了済み</option>
+      </select>
+    </label>
+    <label><strong>⌕ キーワード</strong>
+      <input name="q" value="{{.Query}}" placeholder="伝票番号・販売先・ブランド・モデル・商品コード" data-returns-filter-control>
+    </label>
+  </form>
+  <div class="table-wrap">
+    <table class="returns-table">
+      <thead><tr><th>売上伝票番号</th><th>売上日</th><th>販売先</th><th>返品/持ち帰り商品数</th><th>処理待ち</th><th>詳細</th></tr></thead>
+      <tbody>
+      {{range .ReturnSummaries}}
+        <tr data-return-restore-open="{{.SaleID}}" tabindex="0" aria-label="{{.SlipNumber}}の返品・持ち帰り確認を開く">
+          <td><button class="return-slip return-slip-button" type="button" data-return-restore-button="{{.SaleID}}">{{.SlipNumber}}</button></td>
+          <td>{{.SalesDate}}</td><td>{{.CustomerName}}</td><td class="return-count">{{.ItemCount}}件</td>
+          <td>{{if .PendingCount}}<span class="return-pending">◷ {{.PendingCount}}件 処理待ち</span>{{else}}<span class="return-complete">✓ 完了</span>{{end}}</td>
+          <td><button class="return-detail-button" type="button" data-return-restore-button="{{.SaleID}}" aria-label="{{.SlipNumber}}の詳細">⌕</button></td>
+        </tr>
+      {{else}}
+        <tr><td colspan="6"><div class="returns-empty"><span>✓</span><strong>返品/持ち帰り対象の伝票はありません</strong></div></td></tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+</section>
+<dialog class="purchase-workflow-dialog return-restore-dialog" data-return-restore-dialog aria-label="返品/持ち帰り確認">
+  <div class="purchase-workflow-loading">返品/持ち帰り伝票を読み込んでいます…</div>
+</dialog>
+{{end}}

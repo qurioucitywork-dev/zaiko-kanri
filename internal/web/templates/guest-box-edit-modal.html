@@ -1,0 +1,66 @@
+{{define "content"}}{{template "guest-box-edit-modal" .}}{{end}}
+{{define "guest-box-edit-modal"}}
+<div class="guest-box-modal-content guest-box-editor" data-guest-box-editor-content data-box-id="{{.GuestSelectedBox.ID}}">
+  <header>
+    <div><small>BOX{{.GuestSelectedBox.Number}}</small><h2>商品を編集 — {{if .GuestSelectedBox.Name}}{{.GuestSelectedBox.Name}}{{else}}名称未設定{{end}}</h2></div>
+    <button type="button" data-guest-box-editor-close aria-label="閉じる">×</button>
+  </header>
+
+  <section class="guest-registered-products">
+    <div class="guest-lineup-title"><h3>登録済み</h3><strong>{{len .GuestBoxProducts}}点</strong></div>
+    <div class="guest-registered-list">
+      {{range .GuestBoxProducts}}
+      <div>
+        <span><strong>{{.ProductCode}}</strong> {{.Brand}} {{.Model}} <small>{{if .ReferenceNumber}}Ref. {{.ReferenceNumber}}{{end}}</small></span>
+        <form method="post" action="/guest-management/boxes/{{$.GuestSelectedBox.ID}}/products/{{.ProductID}}/remove" data-guest-editor-form>
+          <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+          <button class="button danger small" type="submit">外す</button>
+        </form>
+      </div>
+      {{else}}<p class="empty">登録済み商品はありません。</p>{{end}}
+    </div>
+  </section>
+
+  <section class="guest-product-search">
+    <h3>商品を検索して追加</h3>
+    <form method="get" action="/guest-management/boxes/{{.GuestSelectedBox.ID}}/edit-modal" data-guest-product-search-form>
+      <label>入荷日 From<input type="date" name="date_from" value="{{.GuestProductDateFrom}}"></label>
+      <label>入荷日 To<input type="date" name="date_to" value="{{.GuestProductDateTo}}"></label>
+      <label>ブランド<select name="brand"><option value="">すべて</option>{{range .GuestBrands}}<option value="{{.Name}}" {{if eq $.GuestProductBrand .Name}}selected{{end}}>{{.Name}}</option>{{end}}</select></label>
+      <label>商品コード・モデル<input type="search" name="query" value="{{.GuestProductQuery}}" placeholder="商品コード / モデル / Ref."></label>
+      <button class="button primary" type="submit">検索</button>
+    </form>
+  </section>
+
+  <section class="guest-search-results">
+    <form method="post" action="/guest-management/boxes/{{.GuestSelectedBox.ID}}/products" data-guest-editor-form data-guest-bulk-add>
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <div class="guest-lineup-title"><h3>検索結果</h3><strong>{{if .GuestProductSearched}}{{len .GuestProductCandidates}}件{{else}}—{{end}}</strong></div>
+      {{if .GuestProductSearched}}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>選択</th><th>商品コード</th><th>入荷日</th><th>ブランド</th><th>モデル / Ref.</th><th>現在のBOX</th></tr></thead>
+          <tbody>
+            {{range .GuestProductCandidates}}
+            <tr>
+              <td><input type="checkbox" name="product_id" value="{{.ProductID}}" data-guest-candidate></td>
+              <td><strong>{{.ProductCode}}</strong></td><td>{{.PurchaseDate}}</td><td>{{.Brand}}</td>
+              <td>{{.Model}}<small>{{if .ReferenceNumber}}Ref. {{.ReferenceNumber}}{{end}}</small></td>
+              <td>{{if .AssignedBoxCode}}{{.AssignedBoxCode}}{{else}}未登録{{end}}</td>
+            </tr>
+            {{else}}<tr><td colspan="6" class="empty">条件に一致する商品はありません。</td></tr>{{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <div class="guest-search-empty">検索条件を入力して「検索」を押してください。</div>
+      {{end}}
+      <div class="guest-editor-actions">
+        <span data-guest-selected-count>0件選択</span>
+        <button class="button primary" type="submit" disabled data-guest-bulk-add-button>選択した商品を一括追加</button>
+      </div>
+    </form>
+  </section>
+  <footer><button class="button secondary" type="button" data-guest-box-editor-close>閉じる</button></footer>
+</div>
+{{end}}

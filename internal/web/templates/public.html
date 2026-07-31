@@ -1,39 +1,92 @@
 {{define "content"}}
-<header class="public-header">
-  <a class="brand dark" href="/public/products"><span class="brand-mark">庫</span><span><strong>WATCH STOCK</strong><small>公開商品カタログ</small></span></a>
-  <a class="button secondary" href="/login">社内ログイン</a>
-</header>
-<main class="public-content">
-  {{if .Notice}}<div class="alert success" role="status">{{.Notice}}</div>{{end}}
-  <p class="eyebrow">PUBLIC CATALOG</p>
-  <h1>公開商品</h1>
-  <p class="lead">公開中かつ在庫中の商品だけを掲載しています。購入依頼の送信だけでは在庫は確保されず、担当者の確認後に取置となります。</p>
-  <div class="public-products">
-    {{range .PublicProducts}}
-    <article class="public-product">
-      <div class="public-product-visual"><span>{{.Brand}}</span><strong>{{.ProductType}}</strong></div>
-      <div class="public-product-body">
-        <span class="badge">商品コード {{.ProductCode}}</span>
-        <h2>{{.Brand}} {{.ModelNumber}}</h2>
-        <p>{{if .Condition}}{{.Condition}}{{else}}状態確認済み{{end}} {{if .Accessories}}／付属品：{{.Accessories}}{{end}}</p>
-        <strong class="public-price">{{formatMoney .SalePriceMinor .SaleCurrency}}</strong>
-        <details>
-          <summary class="button primary">購入依頼を送る</summary>
-          <form method="post" action="/public/products/{{.ID}}/purchase-requests" class="public-request-form">
-            <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
-            <label>お名前 <b>必須</b><input name="guest_name" required></label>
-            <label>メールアドレス <b>必須</b><input type="email" name="guest_email" required></label>
-            <label>電話番号<input name="guest_phone"></label>
-            <label>ご要望<textarea name="message" placeholder="配送先やご質問など"></textarea></label>
-            <button class="button primary full" type="submit">内容を確認して送信</button>
-            <small>送信時点では在庫は確保されません。</small>
-          </form>
-        </details>
+<div class="guest-catalog">
+  <header class="guest-header">
+    <a class="guest-brand" href="/public/products"><span>♜</span><strong>在庫管理ツール</strong><em>GUEST</em></a>
+    <a class="guest-search-link" href="#guest-search">⌕ 在庫検索</a>
+    <div class="guest-header-actions">
+      <span class="guest-language"><b>JP</b><i>EN</i></span>
+      <span>▤</span><span class="guest-currency">¥ JPY　⌄</span>
+      <button type="button" class="guest-cart-button" data-guest-cart-open>🛒 カート <b data-guest-cart-count>0</b></button>
+      <span class="guest-account">♟ {{.GuestCompanyName}}</span>
+      <a class="guest-login-link" href="/guest/login">ログイン</a>
+    </div>
+  </header>
+
+  <main class="guest-main">
+    {{if .Notice}}<div class="alert success" role="status">{{.Notice}}</div>{{end}}
+    <div class="guest-tax-note">●　表示価格は税抜き価格です。ご不明な点はお気軽にお問い合わせください。</div>
+    <form id="guest-search" method="get" action="/public/products" class="guest-filter" data-guest-filter>
+      <label><span>⌕</span><input name="q" value="{{.PublicQuery}}" placeholder="ブランド / モデル / 型番で検索…"></label>
+      <select name="brand" aria-label="ブランド"><option value="">すべてのブランド</option>{{range .ProductBrands}}<option value="{{.}}" {{if eq $.PublicBrand .}}selected{{end}}>{{.}}</option>{{end}}</select>
+      <select name="condition" aria-label="コンディション">
+        <option value="">すべてのコンディション</option>
+        <option value="極美品 (S)" {{if eq .PublicCondition "極美品 (S)"}}selected{{end}}>極美品（S）</option>
+        <option value="良品 (A)" {{if eq .PublicCondition "良品 (A)"}}selected{{end}}>良品（A）</option>
+        <option value="美品 (A)" {{if eq .PublicCondition "美品 (A)"}}selected{{end}}>美品（A）</option>
+      </select>
+      <span class="guest-result-count">{{len .PublicProducts}}点</span>
+    </form>
+
+    <div class="guest-product-grid">
+      {{range .PublicProducts}}
+      <article class="guest-product-card" data-guest-card="{{.ID}}">
+        <button type="button" class="guest-card-open" data-guest-detail="{{.ID}}" aria-label="{{.Brand}} {{.ProductType}}の詳細">
+          <div class="guest-product-image">
+            {{if .Images}}{{with index .Images 0}}<img src="/public/companies/{{$.GuestCompanyCode}}/product-images/{{.ID}}" alt="{{$.Title}}">{{end}}
+            {{else}}<div class="guest-image-placeholder"><span>◷</span><small>IMAGE PREPARING</small></div>{{end}}
+          </div>
+          <div class="guest-product-copy"><small>{{.Brand}}</small><h2>{{.ProductType}}</h2><p>Ref. {{if .ModelNumber}}{{.ModelNumber}}{{else}}—{{end}}</p><em>{{if .Condition}}{{.Condition}}{{else}}状態確認済み{{end}}</em></div>
+        </button>
+        <div class="guest-product-price"><small>販売価格（税抜）</small><strong>{{formatMoney .SalePriceMinor .SaleCurrency}}</strong></div>
+        <button type="button" class="guest-add-button" data-guest-add-cart data-id="{{.ID}}" data-brand="{{.Brand}}" data-model="{{.ProductType}}" data-condition="{{.Condition}}" data-price="{{.SalePriceMinor}}" data-currency="{{.SaleCurrency}}">🛒 カートに追加</button>
+      </article>
+
+      <template data-guest-detail-template="{{.ID}}">
+        <div class="guest-detail-panel">
+          <header><h2>◷ {{.Brand}} {{.ProductType}}</h2><button type="button" data-guest-detail-close aria-label="閉じる">×</button></header>
+          <div class="guest-detail-body">
+            <div class="guest-detail-gallery">
+              <div class="guest-detail-main">{{if .Images}}{{with index .Images 0}}<img src="/public/companies/{{$.GuestCompanyCode}}/product-images/{{.ID}}" alt="{{$.Title}}" data-guest-detail-main>{{end}}{{else}}<div class="guest-image-placeholder"><span>◷</span><small>IMAGE PREPARING</small></div>{{end}}</div>
+              {{if .Images}}<div class="guest-detail-thumbs">{{range .Images}}<button type="button" data-guest-detail-thumb="/public/companies/{{$.GuestCompanyCode}}/product-images/{{.ID}}"><img src="/public/companies/{{$.GuestCompanyCode}}/product-images/{{.ID}}" alt="{{.OriginalName}}"></button>{{end}}</div>{{end}}
+            </div>
+            <div class="guest-detail-summary"><small>{{.Brand}}</small><h3>{{.ProductType}}</h3><p>Ref. {{.ModelNumber}}　|　S/N {{if .SerialNumber}}{{.SerialNumber}}{{else}}—{{end}}</p><em>{{.Condition}}</em>
+              <div class="guest-detail-price"><small>販売価格（税抜）</small><strong>{{formatMoney .SalePriceMinor .SaleCurrency}}</strong><span>※ 表示価格は税抜きです</span></div>
+            </div>
+            <dl class="guest-detail-specs"><div><dt>商品種別</dt><dd>{{.ProductType}}</dd></div><div><dt>コンディション</dt><dd>{{.Condition}}</dd></div><div><dt>付属品</dt><dd>{{if .Accessories}}{{.Accessories}}{{else}}—{{end}}</dd></div></dl>
+          </div>
+          <footer><button class="button secondary" type="button" data-guest-detail-close>閉じる</button><button type="button" class="button guest-detail-add" data-guest-add-cart data-id="{{.ID}}" data-brand="{{.Brand}}" data-model="{{.ProductType}}" data-condition="{{.Condition}}" data-price="{{.SalePriceMinor}}" data-currency="{{.SaleCurrency}}">🛒 カートに追加</button></footer>
+        </div>
+      </template>
+      {{else}}<div class="empty-catalog"><span>◇</span><h2>条件に一致する公開商品はありません</h2><p>検索条件を変更してください。</p></div>{{end}}
+    </div>
+  </main>
+
+  <dialog class="guest-dialog guest-detail-dialog" data-guest-detail-dialog aria-label="商品詳細"></dialog>
+  <dialog class="guest-dialog guest-cart-dialog" data-guest-cart-dialog aria-label="カート">
+    <form method="post" action="/public/purchase-requests" class="guest-cart-form" data-guest-cart-form>
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+      <header><h2>🛒 カート</h2><button type="button" data-guest-cart-close aria-label="閉じる">×</button></header>
+      <div class="guest-cart-empty" data-guest-cart-empty>カートに商品がありません。</div>
+      <div data-guest-cart-filled hidden>
+        <div class="guest-cart-items" data-guest-cart-items></div>
+        <div class="guest-cart-total"><span>合計（税抜）</span><div><strong data-cart-total></strong><small>別途消費税がかかります</small></div></div>
+        <h3>▣ 購入前確認チェックリスト</h3>
+        <div class="guest-cart-checks">
+          <label><input type="checkbox" required>商品の詳細情報（コンディション・付属品）を確認しました</label>
+          <label><input type="checkbox" required>表示価格（税抜）に同意しました</label>
+          <label><input type="checkbox" required>返品・交換ポリシーを確認しました</label>
+          <label><input type="checkbox" required>注文後、担当者よりご連絡があることを了承しました</label>
+        </div>
+        <div class="guest-contact-fields" hidden data-guest-contact-fields>
+          <label>お名前 <b>必須</b><input name="guest_name" required></label>
+          <label>メールアドレス <b>必須</b><input type="email" name="guest_email" required></label>
+          <label>電話番号<input name="guest_phone"></label>
+          <label>ご要望<textarea name="message" placeholder="配送先やご質問など"></textarea></label>
+        </div>
+        <button class="guest-request-submit" type="submit" disabled data-guest-request-submit>購入依頼を送る（すべての項目を確認してください）</button>
       </div>
-    </article>
-    {{else}}
-    <div class="empty-catalog"><span>◇</span><h2>現在公開中の商品はありません</h2><p>公開商品が追加されるまでお待ちください。</p></div>
-    {{end}}
-  </div>
-</main>
+      <footer><button class="button secondary" type="button" data-guest-cart-close>カートを閉じる</button></footer>
+    </form>
+  </dialog>
+</div>
 {{end}}

@@ -1,0 +1,2 @@
+-- SQLite does not support a portable rollback for added columns.
+-- The application keeps the registration-detail columns on rollback.

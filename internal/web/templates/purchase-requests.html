@@ -1,29 +1,98 @@
 {{define "content"}}
-<section class="toolbar-card">
-  <div class="filter-bar"><div><strong>購入依頼・取置</strong><span class="toolbar-note">依頼送信時は未確保。承認直前に在庫競合を再確認し、取置期限を固定します。</span></div><span class="badge push-right">{{len .PurchaseRequests}}件</span></div>
-</section>
-<section class="card">
-  <div class="card-header"><div><h2>購入依頼一覧</h2><p>同一商品への複数申請を受け付け、承認できる有効取置は1件だけです。</p></div></div>
-  <div class="request-list">
-  {{range .PurchaseRequests}}
-    <article class="request-card">
-      <div class="request-main">
-        <div><span class="status-badge request-{{.Status}}">{{requestStatus .Status}}</span><strong>{{.RequestNumber}}</strong><time>{{formatTime .RequestedAt}}</time></div>
-        <h3>{{.ProductCode}}｜{{.Brand}} {{.ModelNumber}}</h3>
-        <p><strong>{{.GuestName}}</strong>　{{.GuestEmail}} {{if .GuestPhone}}／{{.GuestPhone}}{{end}}</p>
-        {{if .Message}}<blockquote>{{.Message}}</blockquote>{{end}}
-        {{if .ReservationExpires}}<p class="reservation-expiry">取置期限：{{formatTime .ReservationExpires}}</p>{{end}}
+<section class="card purchase-request-board">
+  <div class="purchase-request-board-head">
+    <h2><span>▰</span> ゲスト購入リクエスト一覧</h2>
+    <p>未対応: <strong>{{.PurchaseRequestPending}}</strong> 件</p>
+  </div>
+
+  <div class="purchase-request-cards">
+  {{range .PurchaseRequestGroups}}
+    <article class="purchase-request-summary {{if eq .Status "pending"}}pending{{else}}handled{{end}}" role="button" tabindex="0"
+      data-purchase-request-open="purchase-request-{{.ID}}" aria-label="{{.DisplayNumber}} {{.GuestName}}の詳細を表示">
+      <span class="purchase-request-icon">{{if eq .Status "pending"}}▰{{else}}✓{{end}}</span>
+      <div class="purchase-request-customer">
+        <h3>{{.GuestName}}</h3>
+        <p><span>▣ {{formatTime .RequestedAt}}</span><span>▰ {{.ItemCount}}点</span>{{if .Message}}<span>○ {{.Message}}</span>{{end}}</p>
       </div>
-      <div class="request-actions">
-        {{if eq .Status "pending"}}
-        <form method="post" action="/purchase-requests/{{.ID}}/approve"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><button class="button primary full" type="submit">承認して取置</button></form>
-        <form method="post" action="/purchase-requests/{{.ID}}/reject" class="reason-action"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="reason" placeholder="却下理由（必須）" required><button class="button danger" type="submit">却下</button></form>
-        {{else if eq .Status "approved"}}
-        <form method="post" action="/purchase-requests/{{.ID}}/cancel" class="reason-action"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input name="reason" placeholder="解除理由（必須）" required><button class="button danger" type="submit">取置解除・取消</button></form>
-        {{else}}<span class="closed-request">処理完了</span>{{end}}
+      <div class="purchase-request-amount">
+        <strong>{{if eq .Status "pending"}}{{formatMoney .Total .Currency}}{{else}}{{formatMoney .ApprovedTotal .Currency}}{{end}}</strong>
+        <small>{{if eq .Status "pending"}}リクエスト合計{{else}}承認済合計{{end}}</small>
       </div>
+      <span class="purchase-request-status {{.Status}}">
+        {{if eq .Status "pending"}}● 未対応{{else}}✓ 対応済{{end}}
+      </span>
+      <span class="purchase-request-chevron" aria-hidden="true">⌄</span>
     </article>
-  {{else}}<div class="empty">購入依頼はありません。</div>{{end}}
+  {{else}}
+    <div class="purchase-request-empty"><span>▰</span><strong>購入リクエストはありません</strong><p>ゲストから届いた購入依頼がここに表示されます。</p></div>
+  {{end}}
   </div>
 </section>
+
+{{range .PurchaseRequestGroups}}
+<dialog class="purchase-request-dialog" id="purchase-request-{{.ID}}" data-purchase-request-dialog>
+  <div class="purchase-request-dialog-panel">
+    <header>
+      <h2><span>▣</span> {{.DisplayNumber}} — {{.GuestName}}</h2>
+      <button type="button" data-purchase-request-close aria-label="閉じる">×</button>
+    </header>
+
+    <div class="purchase-request-dialog-scroll">
+      <section class="purchase-request-detail-grid">
+        <div><small>▤ リクエストID</small><strong>{{.DisplayNumber}}</strong></div>
+        <div><small>▦ 購入者名</small><strong>{{.GuestName}}</strong></div>
+        <div><small>▣ 日時</small><strong>{{formatTime .RequestedAt}}</strong></div>
+        <div><small>▰ 購入点数</small><strong>{{.ItemCount}}点</strong></div>
+        <div><small>⚑ ステータス</small><span class="purchase-request-status {{.Status}}">{{if eq .Status "pending"}}未対応{{else}}対応済{{end}}</span></div>
+        <div><small>○ 備考</small><strong>{{if .Message}}{{.Message}}{{else}}—{{end}}</strong></div>
+      </section>
+
+      <section class="purchase-request-items">
+        <div class="purchase-request-items-head">
+          <span>商品コード</span><span>商品名</span><span>販売価格</span><span>判定</span><span>操作</span>
+        </div>
+        {{range .Items}}
+        <div class="purchase-request-item-row">
+          <strong>{{.ProductCode}}</strong>
+          <span>{{.Brand}} {{.ModelNumber}}</span>
+          <strong>{{formatMoney .SalePriceMinor .SaleCurrency}}</strong>
+          <span>{{if eq .Status "pending"}}未決定{{else}}{{requestStatus .Status}}{{end}}</span>
+          <div class="purchase-request-item-actions">
+          {{if eq .Status "pending"}}
+            <form method="post" action="/purchase-requests/{{.ID}}/approve">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <button class="button purchase-request-approve" type="submit">✓ 承認</button>
+            </form>
+            <form method="post" action="/purchase-requests/{{.ID}}/reject">
+              <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+              <input type="hidden" name="reason" value="購入依頼を拒否">
+              <button class="button purchase-request-reject" type="submit">× 拒否</button>
+            </form>
+          {{else}}
+            <span class="purchase-request-decided">{{requestStatus .Status}}</span>
+          {{end}}
+          </div>
+        </div>
+        {{end}}
+      </section>
+
+      <section class="purchase-request-approved-total">
+        <span>✓ 承認済み合計</span>
+        <span>{{.ApprovedCount}}点</span>
+        <strong>{{formatMoney .ApprovedTotal .Currency}}</strong>
+      </section>
+    </div>
+
+    <footer>
+      <button class="button secondary purchase-request-hold" type="button" data-purchase-request-close>◷ 出荷を保留</button>
+      <button class="button secondary" type="button" data-purchase-request-close>閉じる</button>
+      {{if .CanCreateShip}}
+        <a class="button purchase-request-ship" href="/shipments?request_group_id={{.ID}}">▰ 出荷登録に進む</a>
+      {{else}}
+        <button class="button purchase-request-ship" type="button" disabled>▰ 出荷登録に進む</button>
+      {{end}}
+    </footer>
+  </div>
+</dialog>
+{{end}}
 {{end}}
