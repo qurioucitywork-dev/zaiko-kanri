@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -40,9 +41,28 @@ type productForm struct {
 	Movement         string
 	BeltMaterial     string
 	Dial             string
+	BraceletQty      string
 	Features         string
 	InternalComment  string
 	DuplicateReason  string
+}
+
+var braceletQuantityFeaturePattern = regexp.MustCompile(`(?:^|[\s　,、])コマ数[\s　]*[:：][\s　]*[0-9]+`)
+
+func mergeBraceletQuantityFeature(features, quantity string, selected bool) (string, error) {
+	cleaned := strings.TrimSpace(braceletQuantityFeaturePattern.ReplaceAllString(features, " "))
+	quantity = strings.TrimSpace(quantity)
+	if !selected || quantity == "" {
+		return cleaned, nil
+	}
+	count, err := strconv.Atoi(quantity)
+	if err != nil || count < 1 || count > 999 {
+		return cleaned, errors.New("コマ数は1から999の数字で入力してください")
+	}
+	if cleaned != "" {
+		cleaned += "　"
+	}
+	return cleaned + "コマ数：" + strconv.Itoa(count), nil
 }
 
 func defaultProductForm() productForm {
@@ -248,6 +268,14 @@ func (s *Server) productNextCode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) productCreate(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
+	accessoryValues := r.Form["accessories"]
+	braceletSelected := false
+	for _, accessory := range accessoryValues {
+		if strings.EqualFold(strings.TrimSpace(accessory), "BRACELET PARTS") {
+			braceletSelected = true
+			break
+		}
+	}
 	form := productForm{
 		ProductCode: r.FormValue("product_code"), BuyerID: r.FormValue("buyer_id"),
 		SupplierID: r.FormValue("supplier_id"), PurchaseDate: r.FormValue("purchase_date"),
@@ -255,16 +283,18 @@ func (s *Server) productCreate(w http.ResponseWriter, r *http.Request) {
 		SerialNumber: r.FormValue("serial_number"), ProductType: r.FormValue("product_type"),
 		CostAmount: r.FormValue("cost_amount"), CostCurrency: r.FormValue("cost_currency"),
 		BaseSalePrice: r.FormValue("base_sale_price"), BaseSaleCurrency: r.FormValue("base_sale_currency"),
-		Condition: r.FormValue("condition"), Accessories: strings.Join(r.Form["accessories"], ", "),
+		Condition: r.FormValue("condition"), Accessories: strings.Join(accessoryValues, ", "),
 		Material: r.FormValue("material"), Box: r.FormValue("box"), Movement: r.FormValue("movement"),
 		BeltMaterial: r.FormValue("belt_material"), Dial: r.FormValue("dial"),
-		Features: r.FormValue("features"), InternalComment: r.FormValue("internal_comment"),
+		BraceletQty: r.FormValue("bracelet_qty"), Features: r.FormValue("features"), InternalComment: r.FormValue("internal_comment"),
 		DuplicateReason: r.FormValue("duplicate_reason"),
 	}
 	// Enforce the currency policy on the server. Existing products retain
 	// their persisted currencies when edited.
 	form.CostCurrency = "JPY"
 	form.BaseSaleCurrency = "USD"
+	var braceletErr error
+	form.Features, braceletErr = mergeBraceletQuantityFeature(form.Features, form.BraceletQty, braceletSelected)
 	imageHeaders := []*multipart.FileHeader{}
 	if r.MultipartForm != nil {
 		imageHeaders = r.MultipartForm.File["images"]
@@ -282,7 +312,9 @@ func (s *Server) productCreate(w http.ResponseWriter, r *http.Request) {
 	cost, costErr := database.ParseMinorAmount(form.CostAmount)
 	salePrice, priceErr := database.ParseMinorAmount(form.BaseSalePrice)
 	var createErr error
-	if strings.TrimSpace(form.ProductCode) == "" {
+	if braceletErr != nil {
+		createErr = braceletErr
+	} else if strings.TrimSpace(form.ProductCode) == "" {
 		createErr = errors.New("商品コードを入力するか「採番」を押してください")
 	} else if costErr != nil {
 		createErr = costErr

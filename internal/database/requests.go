@@ -67,6 +67,8 @@ type PurchaseRequest struct {
 	ProductCode        string
 	Brand              string
 	ModelNumber        string
+	CostAmountMinor    int64
+	CostCurrency       string
 	SalePriceMinor     int64
 	SaleCurrency       string
 	RequestNumber      string
@@ -614,7 +616,7 @@ func (s *Store) PurchaseRequest(ctx context.Context, organizationID, requestID s
 
 const purchaseRequestSelect = `
 	SELECT r.id,r.request_group_id,r.organization_id,r.product_id,p.product_code,p.brand,p.model_number,
-	       p.base_sale_price_minor,p.base_sale_currency,r.request_number,
+	       p.cost_amount_minor,p.cost_currency,p.base_sale_price_minor,p.base_sale_currency,r.request_number,
 	       r.guest_name,r.guest_email,r.guest_phone,r.message,r.status,r.requested_at,r.reviewed_at,
 	       COALESCE(v.id,''),COALESCE(v.status,''),v.starts_at,v.expires_at
 	FROM purchase_requests r
@@ -627,7 +629,8 @@ func scanPurchaseRequest(row rowScanner) (PurchaseRequest, error) {
 	var requested string
 	var reviewed, starts, expires sql.NullString
 	err := row.Scan(&request.ID, &request.RequestGroupID, &request.OrganizationID, &request.ProductID, &request.ProductCode,
-		&request.Brand, &request.ModelNumber, &request.SalePriceMinor, &request.SaleCurrency,
+		&request.Brand, &request.ModelNumber, &request.CostAmountMinor, &request.CostCurrency,
+		&request.SalePriceMinor, &request.SaleCurrency,
 		&request.RequestNumber, &request.GuestName,
 		&request.GuestEmail, &request.GuestPhone, &request.Message, &request.Status, &requested,
 		&reviewed, &request.ReservationID, &request.ReservationStatus, &starts, &expires)
@@ -684,7 +687,11 @@ func (s *Store) ApprovePurchaseRequest(ctx context.Context, organizationID, requ
 		INSERT INTO reservations(
 			id,organization_id,product_id,purchase_request_id,status,starts_at,expires_at,
 			created_by,created_at,updated_at
-		) VALUES(?,?,?,?,'active',?,?,?,?,?)`,
+		) VALUES(?,?,?,?,'active',?,?,?,?,?)
+		ON CONFLICT(purchase_request_id) DO UPDATE SET
+			id=excluded.id,product_id=excluded.product_id,status='active',
+			starts_at=excluded.starts_at,expires_at=excluded.expires_at,released_at=NULL,
+			release_reason='',created_by=excluded.created_by,updated_at=excluded.updated_at`,
 		reservationID, organizationID, productID, requestID, now,
 		nowTime.Add(time.Duration(hours)*time.Hour).Format(time.RFC3339Nano), actorID, now, now); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed") {
@@ -788,6 +795,15 @@ func (s *Store) ExpireReservations(ctx context.Context, organizationID string) e
 	}
 	defer tx.Rollback()
 	now := s.now().Format(time.RFC3339Nano)
+	// Purchase requests do not expose an "expired" business status. Reopen any
+	// legacy expired request so it can be decided again after its reservation was
+	// released. The reservation itself keeps its expiry audit state.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE purchase_requests
+		SET status='pending',reviewed_at=NULL,reviewed_by=NULL,updated_at=?
+		WHERE organization_id=? AND status='expired'`, now, organizationID); err != nil {
+		return err
+	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id,product_id,purchase_request_id,created_by FROM reservations
 		WHERE organization_id=? AND status='active' AND expires_at<=?`, organizationID, now)
@@ -812,7 +828,8 @@ func (s *Store) ExpireReservations(ctx context.Context, organizationID string) e
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `
-			UPDATE purchase_requests SET status='expired',updated_at=?
+			UPDATE purchase_requests
+			SET status='pending',reviewed_at=NULL,reviewed_by=NULL,updated_at=?
 			WHERE id=? AND organization_id=? AND status='approved'`, now, value.requestID, organizationID); err != nil {
 			return err
 		}

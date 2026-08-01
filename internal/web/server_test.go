@@ -154,6 +154,7 @@ func TestPurchaseRegistrationPageAndSalePrice(t *testing.T) {
 		"仕入登録", "仕入伝票番号", "明細追加",
 		"No.", "商品コード", "SKU", "仕入金額（JPY）", "売価（USD）",
 		"商品登録", "data-purchase-product-dialog", "BOX番号", "特徴・備考",
+		"data-purchase-modal-bracelet-accessory", "data-purchase-modal-bracelet-qty", "コマ数",
 		`name="purchase_date" value=""`, `name="buyer_id" required`,
 		"base_sale_price",
 	} {
@@ -314,7 +315,8 @@ func TestProductRegistrationPageMatchesOperationalForm(t *testing.T) {
 	body := recorder.Body.String()
 	for _, expected := range []string{
 		"商品登録", "基本情報", "商品詳細", "仕入担当者", `name="material"`,
-		`name="features"`, `name="internal_comment"`, "商品画像（最大10枚）",
+		`name="features"`, `name="internal_comment"`, `name="bracelet_qty"`, "商品画像（最大10枚）",
+		"data-bracelet-accessory", "data-bracelet-quantity-field", "コマ数",
 		"手入力またはバーコードスキャン", "S001 — 田中商事",
 		"BOX1 — ロレックス特集", "BOX10", `name="product_type" value=""`,
 	} {
@@ -332,6 +334,20 @@ func TestProductRegistrationPageMatchesOperationalForm(t *testing.T) {
 		if strings.Contains(body, unexpected) {
 			t.Fatalf("product registration contains mock mismatch %q", unexpected)
 		}
+	}
+}
+
+func TestMergeBraceletQuantityFeature(t *testing.T) {
+	features, err := mergeBraceletQuantityFeature("文字盤：黒　コマ数：6", "8", true)
+	if err != nil || features != "文字盤：黒　コマ数：8" {
+		t.Fatalf("selected bracelet features=%q err=%v", features, err)
+	}
+	features, err = mergeBraceletQuantityFeature(features, "", false)
+	if err != nil || strings.Contains(features, "コマ数") {
+		t.Fatalf("unchecked bracelet features=%q err=%v", features, err)
+	}
+	if _, err = mergeBraceletQuantityFeature("", "1000", true); err == nil {
+		t.Fatal("out-of-range bracelet quantity must be rejected")
 	}
 }
 
@@ -363,7 +379,8 @@ func TestProductRegistrationStoresDetailsAndImage(t *testing.T) {
 		"material": {"ステンレス"}, "box": {"BOX1"}, "movement": {"自動巻き"},
 		"condition": {"極美品"}, "belt_material": {"ステンレス"}, "dial": {"ブラック"},
 		"base_sale_price": {"1180000"}, "base_sale_currency": {"JPY"},
-		"accessories": {"BOX", "GUARANTEE"}, "features": {"コマ数：8"}, "internal_comment": {"社内確認済み"},
+		"accessories": {"BOX", "BRACELET PARTS"}, "bracelet_qty": {"8"},
+		"features": {"文字盤：黒"}, "internal_comment": {"社内確認済み"},
 	}
 	for name, values := range fields {
 		for _, value := range values {
@@ -402,9 +419,9 @@ func TestProductRegistrationStoresDetailsAndImage(t *testing.T) {
 	}
 	product, err := store.Product(t.Context(), "org_preview", products[0].ID)
 	if err != nil || product.Material != "ステンレス" || product.Movement != "自動巻き" ||
-		product.Features != "コマ数：8" || product.InternalComment != "社内確認済み" ||
+		product.Features != "文字盤：黒　コマ数：8" || product.InternalComment != "社内確認済み" ||
 		product.ProductCode != "20260727099" || product.SKU != "FORM-SKU" ||
-		product.Box != "BOX1" || product.Accessories != "BOX, GUARANTEE" ||
+		product.Box != "BOX1" || product.Accessories != "BOX, BRACELET PARTS" ||
 		product.BuyerID != "usr_admin" || product.BeltMaterial != "ステンレス" ||
 		product.Dial != "ブラック" || product.BaseSalePriceMinor != 1180000 ||
 		product.CostCurrency != "JPY" || product.BaseSaleCurrency != "USD" ||
@@ -906,8 +923,8 @@ func TestSalesRegistrationAndSlipListMatchMockWorkflow(t *testing.T) {
 		"売上伝票", `type="button" data-sales-auto-number>＋ 出荷なし（新規発番）`,
 		`name="auto_number" value="0" data-sales-auto-number-state`,
 		`name="tax_mode" value="normal"`,
-		"data-sales-tax-switch", "通常", "免税を切り替え", "管理番号",
-		`list="sales-product-options"`, "明細行を追加", "合計金額（税抜）",
+		"data-sales-tax-switch", "通常", "免税を切り替え", "商品コード",
+		`data-sales-product-option`, `placeholder="商品コードを入力"`, "明細行を追加", "合計金額（税抜）",
 		"消費税（10%）", "税込合計", "売上を確定する",
 	} {
 		if registrationRecorder.Code != http.StatusOK || !strings.Contains(registrationBody, expected) {
@@ -915,7 +932,9 @@ func TestSalesRegistrationAndSlipListMatchMockWorkflow(t *testing.T) {
 		}
 	}
 	if strings.Contains(registrationBody, "登録済み売上伝票一覧") ||
-		strings.Contains(registrationBody, `<select name="product_id"`) {
+		strings.Contains(registrationBody, `<select name="product_id"`) ||
+		strings.Contains(registrationBody, `list="sales-product-options"`) ||
+		strings.Contains(registrationBody, `<datalist`) {
 		t.Fatalf("sales registration still contains the old list or select control: %s", registrationBody)
 	}
 
@@ -996,7 +1015,7 @@ func TestShipmentRegistrationAndSlipListMatchMockWorkflow(t *testing.T) {
 	for _, expected := range []string{
 		"出荷伝票", "通関書類", "印刷", "CSV", "伝票番号", "自動",
 		"出荷日", "出荷先", "備考", "商品コード", "ブランド", "モデル名",
-		"卸値（税抜）", `list="shipment-product-options"`, "明細行を追加",
+		"卸値（税抜）", `data-shipment-product-option`, `placeholder="商品コードを入力"`, "明細行を追加",
 		"合計卸値（税抜）", "リセット", "出荷を確定",
 	} {
 		if registrationRecorder.Code != http.StatusOK || !strings.Contains(registrationBody, expected) {
@@ -1004,7 +1023,9 @@ func TestShipmentRegistrationAndSlipListMatchMockWorkflow(t *testing.T) {
 		}
 	}
 	if strings.Contains(registrationBody, "出荷伝票一覧") ||
-		strings.Contains(registrationBody, `<select name="product_id"`) {
+		strings.Contains(registrationBody, `<select name="product_id"`) ||
+		strings.Contains(registrationBody, `list="shipment-product-options"`) ||
+		strings.Contains(registrationBody, `<datalist`) {
 		t.Fatalf("shipment registration still contains the old list or product select: %s", registrationBody)
 	}
 
@@ -1574,6 +1595,20 @@ func TestAdminCanAggregatePerformanceAndExportCSV(t *testing.T) {
 		app.Handler().ServeHTTP(recorder, request)
 		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), test.expected) {
 			t.Fatalf("mode=%s status=%d body=%s", test.mode, recorder.Code, recorder.Body.String())
+		}
+		if test.mode == "buyers" {
+			for _, expected := range []string{"仕入金額", "出来高", "予想粗利", "実粗利", "担当者別 実績チャート", "消化率（仕入件数ベース）", "仕入担当者別 詳細一覧"} {
+				if !strings.Contains(recorder.Body.String(), expected) {
+					t.Fatalf("buyers performance missing %q", expected)
+				}
+			}
+		}
+		if test.mode == "sales-destinations" {
+			for _, expected := range []string{"総出来高", "予想粗利", "実粗利", "販売点数", "販売先別 実績チャート", "出来高 vs 粗利 比較", "販売先別 詳細一覧", "仕入原価"} {
+				if !strings.Contains(recorder.Body.String(), expected) {
+					t.Fatalf("sales destination performance missing %q", expected)
+				}
+			}
 		}
 	}
 

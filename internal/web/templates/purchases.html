@@ -157,9 +157,13 @@
       <fieldset class="purchase-modal-accessories">
         <legend>付属品</legend>
         <div>
-          {{range $value := productAccessories}}<label><input type="checkbox" value="{{$value}}" data-purchase-modal-accessory><span>{{$value}}</span></label>{{end}}
+          {{range $value := productAccessories}}<label><input type="checkbox" value="{{$value}}" data-purchase-modal-accessory {{if eq $value "BRACELET PARTS"}}data-purchase-modal-bracelet-accessory{{end}}><span>{{$value}}</span></label>{{end}}
         </div>
       </fieldset>
+      <label class="bracelet-quantity-field purchase-bracelet-quantity-field" data-purchase-modal-bracelet-quantity hidden>
+        <span>コマ数</span>
+        <span class="bracelet-quantity-control"><input type="number" min="1" max="999" inputmode="numeric" placeholder="例: 8" data-purchase-modal-bracelet-qty disabled><em>コマ</em></span>
+      </label>
       <label class="purchase-modal-features"><span>特徴・備考</span><textarea rows="3" data-purchase-modal-field="features"></textarea></label>
     </div>
     <div class="purchase-product-dialog-actions">

@@ -157,7 +157,7 @@ func TestReservationExpiryAndCancellationReleaseProduct(t *testing.T) {
 	}
 	expired, _ := store.PurchaseRequest(ctx, "org_preview", request.ID)
 	productAfter, _ := store.Product(ctx, "org_preview", product.ID)
-	if expired.Status != "expired" || expired.ReservationStatus != "expired" || productAfter.InventoryStatus != "in_stock" {
+	if expired.Status != "pending" || expired.ReservationStatus != "expired" || productAfter.InventoryStatus != "in_stock" {
 		t.Fatalf("expiry not reflected: request=%+v product=%s", expired, productAfter.InventoryStatus)
 	}
 

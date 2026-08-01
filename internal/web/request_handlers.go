@@ -1,7 +1,9 @@
 package web
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -28,7 +30,17 @@ type purchaseRequestGroupView struct {
 	ApprovedTotal int64
 	Currency      string
 	CanCreateShip bool
-	Items         []database.PurchaseRequest
+	Items         []purchaseRequestItemView
+}
+
+type purchaseRequestItemView struct {
+	database.PurchaseRequest
+	PurchasePriceJPY int64
+	SalePriceUSD     int64
+	SalePriceJPY     int64
+	PurchaseJPYReady bool
+	SaleUSDReady     bool
+	SaleJPYReady     bool
 }
 
 func purchaseRequestDisplayNumber(requestNumber string) string {
@@ -44,6 +56,10 @@ func purchaseRequestDisplayNumber(requestNumber string) string {
 }
 
 func buildPurchaseRequestGroupViews(groups []database.PurchaseRequestGroup) ([]purchaseRequestGroupView, int) {
+	return buildPurchaseRequestGroupViewsWithRate(groups, database.ExchangeRate{})
+}
+
+func buildPurchaseRequestGroupViewsWithRate(groups []database.PurchaseRequestGroup, usdJPY database.ExchangeRate) ([]purchaseRequestGroupView, int) {
 	views := make([]purchaseRequestGroupView, 0, len(groups))
 	pendingGroups := 0
 	for _, group := range groups {
@@ -54,16 +70,27 @@ func buildPurchaseRequestGroupViews(groups []database.PurchaseRequestGroup) ([]p
 		view := purchaseRequestGroupView{
 			ID: group.ID, DisplayNumber: purchaseRequestDisplayNumber(first.RequestNumber),
 			GuestName: first.GuestName, Message: first.Message, RequestedAt: first.RequestedAt,
-			ItemCount: len(group.Items), Currency: first.SaleCurrency, Items: group.Items,
+			ItemCount: len(group.Items), Currency: "JPY",
 		}
 		for _, item := range group.Items {
-			view.Total += item.SalePriceMinor
-			switch item.Status {
+			itemView := purchaseRequestPriceView(item, usdJPY)
+			view.Items = append(view.Items, itemView)
+			if itemView.SaleJPYReady {
+				view.Total += itemView.SalePriceJPY
+			}
+			status := item.Status
+			if status == "expired" {
+				status = "pending"
+				view.Items[len(view.Items)-1].Status = status
+			}
+			switch status {
 			case "pending":
 				view.PendingCount++
 			case "approved":
 				view.ApprovedCount++
-				view.ApprovedTotal += item.SalePriceMinor
+				if itemView.SaleJPYReady {
+					view.ApprovedTotal += itemView.SalePriceJPY
+				}
 			}
 		}
 		switch {
@@ -79,6 +106,31 @@ func buildPurchaseRequestGroupViews(groups []database.PurchaseRequestGroup) ([]p
 		views = append(views, view)
 	}
 	return views, pendingGroups
+}
+
+func purchaseRequestPriceView(item database.PurchaseRequest, usdJPY database.ExchangeRate) purchaseRequestItemView {
+	view := purchaseRequestItemView{PurchaseRequest: item}
+	rateReady := usdJPY.RateScaled > 0 && usdJPY.Scale > 0
+	if item.CostCurrency == "JPY" {
+		view.PurchasePriceJPY, view.PurchaseJPYReady = item.CostAmountMinor, true
+	} else if item.CostCurrency == "USD" && rateReady {
+		view.PurchasePriceJPY, _ = database.ConvertMinor(item.CostAmountMinor, usdJPY.RateScaled, usdJPY.Scale, false)
+		view.PurchaseJPYReady = true
+	}
+	if item.SaleCurrency == "USD" {
+		view.SalePriceUSD, view.SaleUSDReady = item.SalePriceMinor, true
+		if rateReady {
+			view.SalePriceJPY, _ = database.ConvertMinor(item.SalePriceMinor, usdJPY.RateScaled, usdJPY.Scale, false)
+			view.SaleJPYReady = true
+		}
+	} else if item.SaleCurrency == "JPY" {
+		view.SalePriceJPY, view.SaleJPYReady = item.SalePriceMinor, true
+		if rateReady {
+			view.SalePriceUSD, _ = database.ConvertMinor(item.SalePriceMinor, usdJPY.RateScaled, usdJPY.Scale, true)
+			view.SaleUSDReady = true
+		}
+	}
+	return view
 }
 
 func (s *Server) publicProducts(w http.ResponseWriter, r *http.Request) {
@@ -234,7 +286,12 @@ func (s *Server) purchaseRequests(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "購入依頼を取得できませんでした。", http.StatusInternalServerError)
 		return
 	}
-	groupViews, pendingCount := buildPurchaseRequestGroupViews(groups)
+	usdJPY, rateErr := s.store.LatestExchangeRate(r.Context(), user.OrganizationID, "USD", "JPY")
+	if rateErr != nil && !errors.Is(rateErr, sql.ErrNoRows) {
+		http.Error(w, "為替レートを取得できませんでした。", http.StatusInternalServerError)
+		return
+	}
+	groupViews, pendingCount := buildPurchaseRequestGroupViewsWithRate(groups, usdJPY)
 	var total int64
 	for _, group := range groupViews {
 		total += group.Total

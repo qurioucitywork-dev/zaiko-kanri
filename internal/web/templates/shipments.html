@@ -56,22 +56,21 @@
     <button class="button primary" type="submit" data-shipment-submit>▰ 出荷を確定する</button>
   </div>
 
-  <datalist id="shipment-product-options">
+  <div id="shipment-product-options" hidden aria-hidden="true">
     {{range .Products}}
-    <option value="{{.ProductCode}}"
+    <span data-shipment-product-option
       data-id="{{.ID}}" data-code="{{.ProductCode}}" data-brand="{{.Brand}}"
       data-model="{{if .ProductType}}{{.ProductType}}{{else}}{{.ModelNumber}}{{end}}"
       data-price="{{.CostAmountMinor}}">
-      {{.Brand}} {{if .ProductType}}{{.ProductType}}{{else}}{{.ModelNumber}}{{end}}
-    </option>
+    </span>
     {{end}}
-  </datalist>
+  </div>
 
   <template data-shipment-line-template>
     <div class="shipment-line" data-shipment-line>
       <label class="shipment-product-select">
         <span class="sr-only">商品コード</span>
-        <input list="shipment-product-options" placeholder="20260412-001" autocomplete="off" required data-shipment-product-code>
+        <input type="text" placeholder="商品コードを入力" autocomplete="off" spellcheck="false" required data-shipment-product-code>
       </label>
       <input type="hidden" name="product_id" value="" data-shipment-product>
       <input type="hidden" name="quantity" value="1">

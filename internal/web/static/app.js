@@ -39,6 +39,16 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!Number.isFinite(rateScaled) || rateScaled <= 0 || !Number.isFinite(scale) || scale <= 0) return null;
     return Math.trunc(amount * rateScaled / scale);
   };
+  const braceletQuantityPattern = /(?:^|[\s　,、])コマ数[\s　]*[:：][\s　]*(\d+)/g;
+  const readBraceletQuantity = (features) => {
+    const match = String(features || "").match(/コマ数[\s　]*[:：][\s　]*(\d+)/);
+    return match?.[1] || "";
+  };
+  const writeBraceletQuantity = (features, quantity) => {
+    const cleaned = String(features || "").replace(braceletQuantityPattern, " ").trim();
+    const value = String(quantity || "").trim();
+    return value ? `${cleaned}${cleaned ? "　" : ""}コマ数：${value}` : cleaned;
+  };
 
   const loginCard = document.querySelector("[data-login-card]");
   if (loginCard) {
@@ -228,6 +238,19 @@ document.addEventListener("DOMContentLoaded", () => {
   if (productRegister) {
     const productCode = productRegister.querySelector("[data-product-code]");
     const purchaseDate = productRegister.querySelector('input[name="purchase_date"]');
+    const braceletAccessory = productRegister.querySelector("[data-bracelet-accessory]");
+    const braceletQuantityField = productRegister.querySelector("[data-bracelet-quantity-field]");
+    const braceletQuantityInput = braceletQuantityField?.querySelector('input[name="bracelet_qty"]');
+    const syncProductBraceletQuantity = () => {
+      const selected = Boolean(braceletAccessory?.checked);
+      if (braceletQuantityField) braceletQuantityField.hidden = !selected;
+      if (braceletQuantityInput) {
+        braceletQuantityInput.disabled = !selected;
+        if (!selected) braceletQuantityInput.value = "";
+      }
+    };
+    braceletAccessory?.addEventListener("change", syncProductBraceletQuantity);
+    syncProductBraceletQuantity();
     productRegister.querySelector("[data-product-number]")?.addEventListener("click", async (event) => {
       const button = event.currentTarget;
       button.disabled = true;
@@ -285,6 +308,7 @@ document.addEventListener("DOMContentLoaded", () => {
     productRegister.addEventListener("reset", () => {
       setTimeout(() => {
         productRegister.querySelectorAll("[data-product-image-slot]").forEach(clearProductImage);
+        syncProductBraceletQuantity();
       });
     });
     const productSaleInput = productRegister.querySelector("[data-usd-price-input]");
@@ -323,6 +347,18 @@ document.addEventListener("DOMContentLoaded", () => {
     const purchaseSupplier = purchaseForm.querySelector("[data-purchase-supplier]");
     const lineHeader = purchaseLines.querySelector("[data-purchase-line-header]");
     const productDialog = purchaseForm.querySelector("[data-purchase-product-dialog]");
+    const modalBraceletAccessory = productDialog?.querySelector("[data-purchase-modal-bracelet-accessory]");
+    const modalBraceletQuantityField = productDialog?.querySelector("[data-purchase-modal-bracelet-quantity]");
+    const modalBraceletQuantityInput = productDialog?.querySelector("[data-purchase-modal-bracelet-qty]");
+    const syncPurchaseBraceletQuantity = () => {
+      const selected = Boolean(modalBraceletAccessory?.checked);
+      if (modalBraceletQuantityField) modalBraceletQuantityField.hidden = !selected;
+      if (modalBraceletQuantityInput) {
+        modalBraceletQuantityInput.disabled = !selected;
+        if (!selected) modalBraceletQuantityInput.value = "";
+      }
+    };
+    modalBraceletAccessory?.addEventListener("change", syncPurchaseBraceletQuantity);
     let activePurchaseRow = null;
     let nextPurchaseRowID = 1;
     let nextProductSequence = 1;
@@ -479,6 +515,9 @@ document.addEventListener("DOMContentLoaded", () => {
       productDialog.querySelectorAll("[data-purchase-modal-accessory]").forEach((field) => {
         field.checked = selectedAccessories.has(field.value);
       });
+      const modalFeatures = productDialog.querySelector('[data-purchase-modal-field="features"]');
+      if (modalBraceletQuantityInput) modalBraceletQuantityInput.value = readBraceletQuantity(modalFeatures?.value);
+      syncPurchaseBraceletQuantity();
       productDialog.showModal();
       productDialog.querySelector('[data-purchase-modal-field="sku"]')?.focus();
     });
@@ -515,6 +554,13 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
       skuField.setCustomValidity("");
+      const modalFeatures = productDialog.querySelector('[data-purchase-modal-field="features"]');
+      if (modalFeatures) {
+        modalFeatures.value = writeBraceletQuantity(
+          modalFeatures.value,
+          modalBraceletAccessory?.checked ? modalBraceletQuantityInput?.value : ""
+        );
+      }
       productDialog.querySelectorAll("[data-purchase-modal-field]").forEach((field) => {
         const name = field.dataset.purchaseModalField;
         const rowField = activePurchaseRow.querySelector(`[name="${name}"]`) ||
@@ -1313,6 +1359,54 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
+  const buyerChart = document.querySelector("[data-buyer-bar-chart]");
+  if (buyerChart) {
+    const chartButtons = [...document.querySelectorAll("[data-buyer-chart-mode]")];
+    const chartBars = [...buyerChart.querySelectorAll(".buyer-bar")];
+    const showBuyerChartMode = (mode) => {
+      chartButtons.forEach((button) => button.classList.toggle("active", button.dataset.buyerChartMode === mode));
+      chartBars.forEach((bar) => {
+        const height = Number(mode === "profit" ? bar.dataset.profit : bar.dataset.revenue) || 0;
+        bar.style.height = `${Math.max(0, Math.min(100, height))}%`;
+      });
+    };
+    chartButtons.forEach((button) => button.addEventListener("click", () => showBuyerChartMode(button.dataset.buyerChartMode)));
+    showBuyerChartMode("revenue");
+  }
+  document.querySelectorAll("[data-consumption]").forEach((bar) => {
+    const percentage = Math.max(0, Math.min(100, Number(bar.dataset.consumption) || 0));
+    bar.style.flexBasis = `${percentage}%`;
+  });
+  document.querySelectorAll("[data-consumption-width]").forEach((bar) => {
+    const percentage = Math.max(0, Math.min(100, Number(bar.dataset.consumptionWidth) || 0));
+    bar.style.width = `${percentage}%`;
+  });
+
+  const destinationDonut = document.querySelector("[data-destination-donut]");
+  if (destinationDonut) {
+    const destinationButtons = [...document.querySelectorAll("[data-destination-chart-mode]")];
+    const destinationSlices = [...destinationDonut.querySelectorAll(".donut-slice")];
+    const destinationLegendValues = [...destinationDonut.querySelectorAll("[data-revenue-composition]")];
+    const showDestinationChartMode = (mode) => {
+      destinationButtons.forEach((button) => button.classList.toggle("active", button.dataset.destinationChartMode === mode));
+      destinationSlices.forEach((slice) => {
+        const dash = mode === "profit" ? slice.dataset.profitDash : slice.dataset.revenueDash;
+        const offset = mode === "profit" ? slice.dataset.profitOffset : slice.dataset.revenueOffset;
+        slice.style.strokeDasharray = `${Number(dash) || 0} 100`;
+        slice.style.strokeDashoffset = String(Number(offset) || 0);
+      });
+      destinationLegendValues.forEach((value) => {
+        value.textContent = mode === "profit" ? value.dataset.profitComposition : value.dataset.revenueComposition;
+      });
+    };
+    destinationButtons.forEach((button) => button.addEventListener("click", () => showDestinationChartMode(button.dataset.destinationChartMode)));
+    showDestinationChartMode("revenue");
+  }
+  document.querySelectorAll("[data-destination-comparison-chart] [data-bar-height]").forEach((bar) => {
+    const height = Math.max(0, Math.min(100, Number(bar.dataset.barHeight) || 0));
+    bar.style.height = `${height}%`;
+  });
+
   const salesForm = document.querySelector("[data-sales-form]");
   const salesLines = document.querySelector("[data-sales-lines]");
   const salesTemplate = document.querySelector("[data-sales-line-template]");
@@ -1328,10 +1422,13 @@ document.addEventListener("DOMContentLoaded", () => {
     const autoNumberState = salesForm.querySelector("[data-sales-auto-number-state]");
     const salesDateInput = salesForm.querySelector('[name="sales_date"]');
     const shipmentLookupStatus = salesForm.querySelector("[data-sales-shipment-lookup-status]");
-    const productOptions = [...document.querySelectorAll("#sales-product-options option")];
+    const productOptions = [...document.querySelectorAll("[data-sales-product-option]")];
+    const productOptionsByCode = new Map(
+      productOptions.map((option) => [option.dataset.code.trim(), option])
+    );
     const selectedProductOption = (row) => {
       const code = row.querySelector("[data-sales-product-code]")?.value.trim();
-      return productOptions.find((option) => option.value === code);
+      return productOptionsByCode.get(code);
     };
     const setSalesLinePosted = (row) => {
       const posted = row.querySelector("[data-sales-posted]").checked;
@@ -1386,7 +1483,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (prefill) {
         const option = productOptions.find((candidate) => candidate.dataset.id === prefill.productId);
         if (option) {
-          row.querySelector("[data-sales-product-code]").value = option.value;
+          row.querySelector("[data-sales-product-code]").value = option.dataset.code;
           fillSalesLine(row);
           row.querySelector("[data-sales-price]").value = prefill.price || option.dataset.price || "0";
         } else {
@@ -1416,6 +1513,12 @@ document.addEventListener("DOMContentLoaded", () => {
     salesLines.addEventListener("input", (event) => {
       if (event.target.matches("[data-sales-product-code]")) fillSalesLine(event.target.closest("[data-sales-line]"));
       if (event.target.matches("[data-sales-price]")) updateSalesTotals();
+    });
+    salesLines.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || !event.target.matches("[data-sales-product-code]")) return;
+      event.preventDefault();
+      fillSalesLine(event.target.closest("[data-sales-line]"));
+      event.target.reportValidity();
     });
     salesLines.addEventListener("click", (event) => {
       const remove = event.target.closest("[data-remove-sales-line]");
@@ -1605,11 +1708,14 @@ document.addEventListener("DOMContentLoaded", () => {
   if (shipmentForm) {
     const shipmentLines = shipmentForm.querySelector("[data-shipment-lines]");
     const shipmentTemplate = shipmentForm.querySelector("[data-shipment-line-template]");
-    const shipmentOptions = [...shipmentForm.querySelectorAll("#shipment-product-options option")];
+    const shipmentOptions = [...shipmentForm.querySelectorAll("[data-shipment-product-option]")];
+    const shipmentOptionsByCode = new Map(
+      shipmentOptions.map((option) => [option.dataset.code.trim(), option])
+    );
     const money = (value) => `¥${Math.max(0, Number(value) || 0).toLocaleString("ja-JP")}`;
     const selectedShipmentOption = (row) => {
       const code = row.querySelector("[data-shipment-product-code]").value.trim();
-      return shipmentOptions.find((option) => option.value === code);
+      return shipmentOptionsByCode.get(code);
     };
     const updateShipmentTotal = () => {
       const total = [...shipmentLines.querySelectorAll("[data-shipment-price]")]
@@ -1622,7 +1728,8 @@ document.addEventListener("DOMContentLoaded", () => {
       row.querySelector("[data-shipment-brand]").textContent = option?.dataset.brand || "―";
       row.querySelector("[data-shipment-model]").textContent = option?.dataset.model || "―";
       if (option) row.querySelector("[data-shipment-price]").value = option.dataset.price || "0";
-      row.querySelector("[data-shipment-product-code]").setCustomValidity(option ? "" : "一覧から商品コードを選択してください。");
+      const codeInput = row.querySelector("[data-shipment-product-code]");
+      codeInput.setCustomValidity(option || !codeInput.value.trim() ? "" : "登録済みの商品コードを入力してください。");
       updateShipmentTotal();
     };
     const addShipmentLine = (code = "", shouldFocus = true) => {
@@ -1644,6 +1751,12 @@ document.addEventListener("DOMContentLoaded", () => {
     });
     shipmentLines.addEventListener("change", (event) => {
       if (event.target.matches("[data-shipment-product-code]")) fillShipmentLine(event.target.closest("[data-shipment-line]"));
+    });
+    shipmentLines.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || !event.target.matches("[data-shipment-product-code]")) return;
+      event.preventDefault();
+      fillShipmentLine(event.target.closest("[data-shipment-line]"));
+      event.target.reportValidity();
     });
     shipmentLines.addEventListener("click", (event) => {
       const remove = event.target.closest("[data-remove-shipment-line]");

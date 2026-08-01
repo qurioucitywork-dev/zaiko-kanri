@@ -108,10 +108,14 @@
             <legend>付属品</legend>
             <div>
               {{range $value := productAccessories}}
-              <label><input type="checkbox" name="accessories" value="{{$value}}" {{if contains $.ProductForm.Accessories $value}}checked{{end}}><span>{{$value}}</span></label>
+              <label><input type="checkbox" name="accessories" value="{{$value}}" {{if eq $value "BRACELET PARTS"}}data-bracelet-accessory{{end}} {{if contains $.ProductForm.Accessories $value}}checked{{end}}><span>{{$value}}</span></label>
               {{end}}
             </div>
           </fieldset>
+          <label class="bracelet-quantity-field" data-bracelet-quantity-field hidden>
+            <span>コマ数</span>
+            <span class="bracelet-quantity-control"><input type="number" name="bracelet_qty" min="1" max="999" inputmode="numeric" value="{{.ProductForm.BraceletQty}}" placeholder="例: 8" disabled><em>コマ</em></span>
+          </label>
           <label><span>特徴・備考（半角英数カナ）</span><textarea name="features" rows="4" placeholder="文字盤：黒　ベゼル：黒　コマ数：8　不備：なし">{{.ProductForm.Features}}</textarea></label>
           <label class="product-internal-comment"><span>コメント <em>🔒 社内専用</em></span><textarea name="internal_comment" rows="4" placeholder="社内メモ・仕入れ状況・注意事項など（帳票・印刷・CSVには含まれません）">{{.ProductForm.InternalComment}}</textarea></label>
         </div>

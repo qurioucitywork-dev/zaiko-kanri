@@ -26,6 +26,101 @@
   <a class="{{if eq .PerformanceMode.Key "sales-destinations"}}active{{end}}" href="/performance?mode=sales-destinations&date_from={{.PerformanceFrom}}&date_to={{.PerformanceTo}}"><span>▦</span>販売先別</a>
 </nav>
 
+{{if eq .PerformanceMode.Key "buyers"}}
+<span class="sr-only">{{.PerformanceMode.ChartTitle}}</span>
+<section class="buyer-kpi-grid" aria-label="仕入担当者別集計">
+  <article class="card buyer-kpi blue"><span class="buyer-kpi-icon">↪</span><small>仕入金額</small><strong>{{formatMoney .BuyerPerformanceSummary.PurchaseAmountJPY "JPY"}}</strong><p>期間内</p></article>
+  <article class="card buyer-kpi green"><span class="buyer-kpi-icon">¥</span><small>出来高</small><strong>{{formatMoney .BuyerPerformanceSummary.RevenueJPY "JPY"}}</strong><p>期間内売上</p></article>
+  <article class="card buyer-kpi orange"><span class="buyer-kpi-icon">⌁</span><small>予想粗利</small><strong>{{formatMoney .BuyerPerformanceSummary.ExpectedProfitJPY "JPY"}}</strong><p>予想粗利率 {{.BuyerPerformanceSummary.ExpectedMargin}}</p></article>
+  <article class="card buyer-kpi teal"><span class="buyer-kpi-icon">●</span><small>実粗利</small><strong>{{formatMoney .BuyerPerformanceSummary.ActualProfitJPY "JPY"}}</strong><p>実粗利率 {{.BuyerPerformanceSummary.ActualMargin}}</p></article>
+</section>
+
+{{if .BuyerPerformanceRows}}
+<div class="buyer-chart-grid">
+  <section class="card buyer-chart-card">
+    <div class="card-header compact"><h2>担当者別 実績チャート</h2><div class="buyer-chart-switch" role="group" aria-label="チャート表示"><button type="button" class="active" data-buyer-chart-mode="revenue">出来高</button><button type="button" data-buyer-chart-mode="profit">粗利</button></div></div>
+    <div class="buyer-bar-chart" data-buyer-bar-chart>
+      <div class="buyer-chart-gridlines" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      {{range .BuyerPerformanceRows}}
+      <div class="buyer-bar-column"><div class="buyer-bar {{.ColorClass}}" data-revenue="{{.RevenueBar}}" data-profit="{{.ProfitBar}}" title="{{.Name}} 出来高 {{formatMoney .RevenueJPY "JPY"}}"></div><span>{{.Name}}</span></div>
+      {{end}}
+    </div>
+  </section>
+
+  <section class="card buyer-chart-card">
+    <div class="card-header compact"><h2>消化率（仕入件数ベース）</h2></div>
+    <div class="buyer-consumption-chart">
+      <div class="buyer-chart-gridlines" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      {{range .BuyerPerformanceRows}}
+      <div class="buyer-consumption-column"><div class="buyer-consumption-stack"><div class="sold" data-consumption="{{.Consumption}}"></div><div class="unsold"></div></div><span>{{.Name}}</span></div>
+      {{end}}
+    </div>
+    <div class="buyer-chart-legend"><span><i class="sold"></i>売上済</span><span><i class="unsold"></i>未消化</span></div>
+  </section>
+</div>
+
+<section class="card buyer-detail-card">
+  <div class="card-header compact"><h2>仕入担当者別 詳細一覧</h2></div>
+  <div class="table-wrap" tabindex="0" aria-label="仕入担当者別詳細実績">
+    <table class="buyer-detail-table">
+      <thead><tr><th>担当者</th><th>仕入件数</th><th>仕入金額</th><th>売上件数</th><th>売上金額（出来高）</th><th>予想粗利<small>予定</small></th><th>実粗利<small>実績</small></th><th>粗利率</th><th>在庫額</th><th>消化率</th></tr></thead>
+      <tbody>{{range .BuyerPerformanceRows}}<tr><th>{{.Name}}</th><td>{{.PurchaseCount}}点</td><td>{{formatMoney .PurchaseAmountJPY "JPY"}}</td><td>{{.SalesCount}}点</td><td class="money">{{formatMoney .RevenueJPY "JPY"}}</td><td class="expected">{{formatMoney .ExpectedProfitJPY "JPY"}}</td><td class="actual">{{formatMoney .ActualProfitJPY "JPY"}}</td><td class="actual">{{.GrossMargin}}</td><td class="inventory">{{formatMoney .InventoryAmountJPY "JPY"}}</td><td><div class="consumption-cell"><span><i data-consumption-width="{{.Consumption}}"></i></span><strong>{{.Consumption}}%</strong></div></td></tr>{{end}}</tbody>
+    </table>
+  </div>
+</section>
+{{else}}
+<section class="card performance-empty buyer-performance-empty"><span>◔</span><p>指定期間の仕入担当者別実績データはありません</p></section>
+{{end}}
+{{else if eq .PerformanceMode.Key "sales-destinations"}}
+<span class="sr-only">{{.PerformanceMode.ChartTitle}}</span>
+<section class="buyer-kpi-grid" aria-label="販売先別集計">
+  <article class="card buyer-kpi green"><span class="buyer-kpi-icon">¥</span><small>総出来高</small><strong>{{formatMoney .SalesDestinationPerformanceSummary.RevenueJPY "JPY"}}</strong><p>期間内売上合計</p></article>
+  <article class="card buyer-kpi orange"><span class="buyer-kpi-icon">⌁</span><small>予想粗利</small><strong>{{formatMoney .SalesDestinationPerformanceSummary.ExpectedProfitJPY "JPY"}}</strong><p>予想粗利率 {{.SalesDestinationPerformanceSummary.ExpectedMargin}}</p></article>
+  <article class="card buyer-kpi teal"><span class="buyer-kpi-icon">●</span><small>実粗利</small><strong>{{formatMoney .SalesDestinationPerformanceSummary.ActualProfitJPY "JPY"}}</strong><p>実粗利率 {{.SalesDestinationPerformanceSummary.ActualMargin}}</p></article>
+  <article class="card buyer-kpi blue"><span class="buyer-kpi-icon">▰</span><small>販売点数</small><strong>{{.SalesDestinationPerformanceSummary.SalesCount}}点</strong><p>期間内</p></article>
+</section>
+
+{{if .SalesDestinationPerformanceRows}}
+<div class="destination-chart-grid">
+  <section class="card destination-chart-card">
+    <div class="card-header compact"><h2>販売先別 実績チャート</h2><div class="buyer-chart-switch" role="group" aria-label="販売先チャート表示"><button type="button" class="active" data-destination-chart-mode="revenue">出来高</button><button type="button" data-destination-chart-mode="profit">粗利</button></div></div>
+    <div class="destination-donut-body" data-destination-donut>
+      <svg class="performance-donut destination-donut" viewBox="0 0 42 42" role="img" aria-label="販売先別 実績チャート">
+        <circle class="donut-track" cx="21" cy="21" r="15.9155"></circle>
+        {{range .SalesDestinationPerformanceRows}}<circle class="donut-slice" cx="21" cy="21" r="15.9155" stroke="{{.Color}}" data-revenue-dash="{{.RevenueDash}}" data-revenue-offset="{{.RevenueOffset}}" data-profit-dash="{{.ProfitDash}}" data-profit-offset="{{.ProfitOffset}}"></circle>{{end}}
+        <circle class="donut-hole" cx="21" cy="21" r="8.8"></circle>
+      </svg>
+      <ul class="performance-legend destination-legend">
+        {{range .SalesDestinationPerformanceRows}}<li><i style="background:{{.Color}}"></i><span>{{.Name}}</span><strong data-revenue-composition="{{.RevenueComposition}}" data-profit-composition="{{.ProfitComposition}}">{{.RevenueComposition}}</strong></li>{{end}}
+      </ul>
+    </div>
+  </section>
+
+  <section class="card destination-chart-card">
+    <div class="card-header compact"><h2>出来高 vs 粗利 比較</h2></div>
+    <div class="destination-comparison-chart" data-destination-comparison-chart>
+      <div class="buyer-chart-gridlines" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+      {{range .SalesDestinationPerformanceRows}}
+      <div class="destination-bar-column"><div class="destination-bar-pair"><i class="revenue" data-bar-height="{{.RevenueBar}}" title="{{.Name}} 出来高 {{formatMoney .RevenueJPY "JPY"}}"></i><i class="profit" data-bar-height="{{.ProfitBar}}" title="{{.Name}} 粗利 {{formatMoney .ActualProfitJPY "JPY"}}"></i></div><span>{{.Name}}</span></div>
+      {{end}}
+    </div>
+    <div class="destination-comparison-legend"><span><i class="revenue"></i>出来高</span><span><i class="profit"></i>粗利</span></div>
+  </section>
+</div>
+
+<section class="card buyer-detail-card destination-detail-card">
+  <div class="card-header compact"><h2>販売先別 詳細一覧</h2></div>
+  <div class="table-wrap" tabindex="0" aria-label="販売先別詳細実績">
+    <table class="buyer-detail-table destination-detail-table">
+      <thead><tr><th>販売先</th><th>件数</th><th>売上金額（出来高）</th><th>仕入原価</th><th>予想粗利<small>予定</small></th><th>実粗利<small>実績</small></th><th>粗利率</th><th>構成比</th></tr></thead>
+      <tbody>{{range .SalesDestinationPerformanceRows}}<tr><th><i style="background:{{.Color}}"></i>{{.Name}}</th><td>{{.SalesCount}}点</td><td class="money">{{formatMoney .RevenueJPY "JPY"}}</td><td>{{formatMoney .CostJPY "JPY"}}</td><td class="expected">{{formatMoney .ExpectedProfitJPY "JPY"}}</td><td class="actual">{{formatMoney .ActualProfitJPY "JPY"}}</td><td class="actual">{{.GrossMargin}}</td><td>{{.Composition}}</td></tr>{{end}}</tbody>
+    </table>
+  </div>
+</section>
+{{else}}
+<section class="card performance-empty buyer-performance-empty"><span>◔</span><p>指定期間の販売先別実績データはありません</p></section>
+{{end}}
+{{else}}
 <div class="performance-grid">
   <section class="card performance-chart-card">
     <div class="card-header compact"><h2>{{.PerformanceMode.ChartTitle}}</h2></div>
@@ -67,4 +162,5 @@
     {{else}}<p class="empty">集計対象がありません。</p>{{end}}
   </section>
 </div>
+{{end}}
 {{end}}

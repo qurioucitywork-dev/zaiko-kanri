@@ -49,13 +49,20 @@
 
       <section class="purchase-request-items">
         <div class="purchase-request-items-head">
-          <span>商品コード</span><span>商品名</span><span>販売価格</span><span>判定</span><span>操作</span>
+          <span>商品コード</span><span>商品名</span><span>仕入価格</span><span>販売価格</span><span>判定</span><span>操作</span>
         </div>
         {{range .Items}}
         <div class="purchase-request-item-row">
           <strong>{{.ProductCode}}</strong>
           <span>{{.Brand}} {{.ModelNumber}}</span>
-          <strong>{{formatMoney .SalePriceMinor .SaleCurrency}}</strong>
+          <strong class="purchase-request-price purchase-request-cost">
+            {{if .PurchaseJPYReady}}{{formatMoney .PurchasePriceJPY "JPY"}}{{else}}—{{end}}
+            <small>仕入・円</small>
+          </strong>
+          <strong class="purchase-request-price">
+            {{if .SaleUSDReady}}{{formatMoney .SalePriceUSD "USD"}}{{else}}—{{end}}
+            <small>{{if .SaleJPYReady}}{{formatMoney .SalePriceJPY "JPY"}}{{else}}円換算未設定{{end}}</small>
+          </strong>
           <span>{{if eq .Status "pending"}}未決定{{else}}{{requestStatus .Status}}{{end}}</span>
           <div class="purchase-request-item-actions">
           {{if eq .Status "pending"}}

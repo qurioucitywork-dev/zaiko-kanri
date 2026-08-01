@@ -82,23 +82,22 @@
     <button class="button primary" type="submit" data-sales-submit>▣ 売上を確定する</button>
   </div>
 
-  <datalist id="sales-product-options">
+  <div id="sales-product-options" hidden aria-hidden="true">
     {{range .Products}}
-    <option value="{{.ProductCode}}"
+    <span data-sales-product-option
       data-id="{{.ID}}" data-code="{{.ProductCode}}" data-brand="{{.Brand}}" data-model="{{.ProductType}}"
       data-reference="{{.ModelNumber}}" data-serial="{{.SerialNumber}}"
       data-accessories="{{.Accessories}}" data-price="{{.BaseSalePriceMinor}}">
-      {{.Brand}} {{.ProductType}}
-    </option>
+    </span>
     {{end}}
-  </datalist>
+  </div>
 
   <template data-sales-line-template>
     <div class="sales-line" data-sales-line>
       <label class="sales-posted" title="計上する"><input type="checkbox" checked data-sales-posted><span class="sr-only">計上</span></label>
       <label class="sales-product-select">
         <span class="sr-only">商品コード</span>
-        <input list="sales-product-options" placeholder="管理番号" autocomplete="off" required data-sales-product-code>
+        <input type="text" placeholder="商品コードを入力" autocomplete="off" spellcheck="false" required data-sales-product-code>
       </label>
       <input type="hidden" name="product_id" value="" data-sales-product>
       <input type="hidden" name="quantity" value="1">
