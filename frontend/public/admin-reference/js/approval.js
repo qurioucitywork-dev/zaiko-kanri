@@ -810,9 +810,16 @@ function buildShippingDetail(detail) {
   const itemRows = items.map(it => {
     if (typeof it === 'string') {
       const inv = APP_DATA.inventory.find(i => i.code === it);
-      return { code: it, brand: inv?.brand || '—', model: inv?.model || '—', price: inv?.salePrice || 0 };
+      return { code: it, brand: inv?.brand || '—', model: inv?.model || '—', price: inv?.purchasePrice || 0 };
     }
-    return { code: it.code || '—', brand: it.brand || '—', model: it.model || '—', price: it.wholesale || it.salePrice || 0 };
+    return {
+      code: it.code || '—',
+      brand: it.brand || '—',
+      model: it.model || '—',
+      price: typeof getShippingPurchasePrice === 'function'
+        ? getShippingPurchasePrice(it)
+        : (Number(it.purchasePrice) || Number(it.wholesale) || 0),
+    };
   });
 
   const totalPrice = itemRows.reduce((s, i) => s + (i.price || 0), 0);
@@ -837,8 +844,8 @@ function buildShippingDetail(detail) {
           <span class="appr-content-val"><code>${detail.shipId || '—'}</code></span>
         </div>
         <div class="appr-content-item">
-          <span class="appr-content-label">合計金額（USD）</span>
-          <span class="appr-content-val appr-price">${formatSalePrice(detail.total || totalPrice)}</span>
+          <span class="appr-content-label">合計仕入金額（JPY）</span>
+          <span class="appr-content-val appr-price">${formatPrice(totalPrice)}</span>
         </div>
       </div>
 
@@ -851,7 +858,7 @@ function buildShippingDetail(detail) {
               <th>商品コード</th>
               <th>ブランド</th>
               <th>モデル</th>
-              <th>金額（USD）</th>
+              <th>仕入金額（JPY）</th>
             </tr>
           </thead>
           <tbody>
@@ -860,12 +867,12 @@ function buildShippingDetail(detail) {
                 <td><code style="font-size:11px;">${it.code}</code></td>
                 <td>${it.brand}</td>
                 <td>${it.model}</td>
-                <td style="text-align:right;font-weight:bold;">${formatSalePrice(it.price)}</td>
+                <td style="text-align:right;font-weight:bold;">${formatPrice(it.price)}</td>
               </tr>
             `).join('')}
             <tr class="appr-items-total">
               <td colspan="3" style="text-align:right;">合計</td>
-              <td style="text-align:right;">${formatSalePrice(detail.total || totalPrice)}</td>
+              <td style="text-align:right;">${formatPrice(totalPrice)}</td>
             </tr>
           </tbody>
         </table>

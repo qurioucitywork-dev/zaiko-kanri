@@ -3686,7 +3686,7 @@ function applyShipmentToSales(ship) {
     const inv = APP_DATA.inventory.find(i => i.code === it.code);
     tbody.insertAdjacentHTML('beforeend',
       buildSalesLineHTML(salesLineCount, it.code, it.brand || inv?.brand || '', it.model || inv?.model || '',
-        it.salePrice || it.wholesale || inv?.salePrice || 0, inv || null)
+        it.salePrice || inv?.salePrice || it.wholesale || 0, inv || null)
     );
   });
   if (salesLineCount === 0) addSalesLine();
@@ -5052,6 +5052,27 @@ function buildPurchaseRecordTemplateHTML(slip) {
 }
 
 /**
+ * 出荷明細の仕入金額を円で返す。
+ * 新規保存値、在庫マスタ、旧データの卸値の順で参照し、旧伝票も表示できるようにする。
+ */
+function getShippingPurchasePrice(item) {
+  if (!item) return 0;
+  const savedPurchasePrice = Number(item.purchasePrice);
+  if (Number.isFinite(savedPurchasePrice) && savedPurchasePrice > 0) return Math.round(savedPurchasePrice);
+
+  const inventoryItem = (APP_DATA.inventory || []).find(record => record.code === item.code);
+  const inventoryPurchasePrice = Number(inventoryItem?.purchasePrice);
+  if (Number.isFinite(inventoryPurchasePrice) && inventoryPurchasePrice > 0) return Math.round(inventoryPurchasePrice);
+
+  const legacyWholesale = Number(item.wholesale);
+  return Number.isFinite(legacyWholesale) && legacyWholesale > 0 ? Math.round(legacyWholesale) : 0;
+}
+
+function getShippingPurchaseTotal(items) {
+  return (items || []).reduce((total, item) => total + getShippingPurchasePrice(item), 0);
+}
+
+/**
  * 保存済み出荷伝票を雛形準拠の帳票HTMLへ変換する。
  */
 function _shBulkMeisai() {
@@ -5079,7 +5100,7 @@ function buildShipmentRecordTemplateHTML(slip) {
       inventoryItem.accessories?.length ? `付属品: ${inventoryItem.accessories.join('・')}` : '',
       inventoryItem.note ? `備考: ${inventoryItem.note}` : '',
     ].filter(Boolean).join('\n') || line.code || '—';
-    return { no: index + 1, detail, amount: Number(inventoryItem.purchasePrice) || 0, code: line.code || '' };
+    return { no: index + 1, detail, amount: getShippingPurchasePrice(line), code: line.code || '' };
   });
   return buildTemplateStyleSlipDocument({
     title: '出荷伝票',
@@ -5167,11 +5188,10 @@ function _shBulkMeisaiLegacy() {
         <td style="text-align:center;">${idx + 1}</td>
         <td><code style="font-size:11px;">${it.code || '—'}</code></td>
         <td>${it.brand || '—'} ${it.model || ''}</td>
-        <td style="text-align:right;">${formatSalePrice(it.wholesale || 0)}</td>
+        <td style="text-align:right;">${formatPrice(getShippingPurchasePrice(it))}</td>
       </tr>`).join('');
 
-    const totalWholesale = (slip.items || [])
-      .reduce((s, it) => s + (it.wholesale || 0), 0);
+    const totalPurchasePrice = getShippingPurchaseTotal(slip.items || []);
 
     const statusBadge = slip.status && slip.status !== '未処理'
       ? `<span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:700;background:#f0fdf4;color:#16a34a;border:1px solid #86efac;">${slip.status}</span>`
@@ -5222,14 +5242,14 @@ function _shBulkMeisaiLegacy() {
               <th style="width:36px;text-align:center;">No.</th>
               <th style="width:130px;">商品コード</th>
               <th>商品名</th>
-              <th style="width:120px;text-align:right;">卸価格</th>
+              <th style="width:120px;text-align:right;">仕入金額（JPY）</th>
             </tr>
           </thead>
           <tbody>${itemRows}</tbody>
           <tfoot>
             <tr>
               <td colspan="3" style="text-align:right;font-weight:700;">合計</td>
-              <td style="text-align:right;font-weight:700;">${formatSalePrice(totalWholesale)}</td>
+              <td style="text-align:right;font-weight:700;">${formatPrice(totalPurchasePrice)}</td>
             </tr>
           </tfoot>
         </table>
@@ -5571,9 +5591,9 @@ function exportSlipCSV() {
     const exportData = _shSelectedIds.size > 0
       ? data.filter(s => _shSelectedIds.has(s.id))
       : data;
-    rows = [['伝票番号','出荷日','出荷先','商品コード','ブランド','モデル','卸価格','備考','修正回数']];
+    rows = [['伝票番号','出荷日','出荷先','商品コード','ブランド','モデル','仕入金額（JPY）','備考','修正回数']];
     exportData.forEach(s => (s.items||[]).forEach(it =>
-      rows.push([s.id, s.date, getBuyerName(s.destination), it.code, it.brand, it.model, it.wholesale, s.note||'', (s.revisions||[]).length])));
+      rows.push([s.id, s.date, getBuyerName(s.destination), it.code, it.brand, it.model, getShippingPurchasePrice(it), s.note||'', (s.revisions||[]).length])));
     const csvSh = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
     const aSh = document.createElement('a');
     aSh.href = URL.createObjectURL(new Blob(['\uFEFF' + csvSh], {type:'text/csv;charset=utf-8;'}));
@@ -5754,6 +5774,7 @@ function buildSlipDetailBody(type, rec) {
       </div>`;
   } else if (type === 'shipping') {
     const buyer = APP_DATA.buyers.find(b => b.code === rec.destination);
+    const purchaseTotal = getShippingPurchaseTotal(rec.items || []);
     metaHtml = `
       <div class="slip-detail-meta">
         ${metaRow('<i class="fa-solid fa-file-lines"></i> 伝票番号', `<code style="font-size:13px;">${rec.id}</code>`)}
@@ -5762,7 +5783,7 @@ function buildSlipDetailBody(type, rec) {
         ${buyer?.address ? metaRow('<i class="fa-solid fa-location-dot"></i> 住所', buyer.address) : ''}
         ${buyer?.contact ? metaRow('<i class="fa-solid fa-phone"></i> 連絡先', buyer.contact) : ''}
         ${buyer?.invoice ? metaRow('<i class="fa-solid fa-receipt"></i> 適格番号', buyer.invoice) : ''}
-        ${metaRow('<i class="fa-solid fa-dollar-sign"></i> 合計金額（USD）', `<span class="slip-detail-price">${formatSalePrice(rec.total)}</span>`)}
+        ${metaRow('<i class="fa-solid fa-yen-sign"></i> 合計仕入金額（JPY）', `<span class="slip-detail-price">${formatPrice(purchaseTotal)}</span>`)}
         ${rec.note ? metaRow('<i class="fa-solid fa-note-sticky"></i> 備考', rec.note) : ''}
       </div>`;
     itemsHtml = buildItemsTable(rec.items||[], 'shipping');
@@ -5796,22 +5817,25 @@ function metaRow(label, val) {
 
 function buildItemsTable(items, type) {
   if (!items.length) return '';
-  const priceKey = type === 'shipping' ? 'wholesale' : 'salePrice';
+  const isShipping = type === 'shipping';
+  const priceLabel = isShipping ? '仕入金額（JPY）' : '金額（USD）';
+  const getAmount = item => isShipping ? getShippingPurchasePrice(item) : (Number(item.salePrice) || 0);
+  const formatAmount = amount => isShipping ? formatPrice(amount) : formatSalePrice(amount);
   return `
     <hr class="appr-detail-divider">
     <div class="appr-detail-content-title"><i class="fa-solid fa-list-check"></i> 商品明細（${items.length}点）</div>
     <table class="appr-items-table">
-      <thead><tr><th>商品コード</th><th>ブランド</th><th>モデル</th><th style="text-align:right;">金額（USD）</th></tr></thead>
+      <thead><tr><th>商品コード</th><th>ブランド</th><th>モデル</th><th style="text-align:right;">${priceLabel}</th></tr></thead>
       <tbody>
         ${items.map(it => `<tr>
           <td><code style="font-size:11px;">${it.code||'—'}</code></td>
           <td>${it.brand||'—'}</td>
           <td>${it.model||'—'}</td>
-          <td style="text-align:right;font-weight:bold;">${formatSalePrice(it[priceKey]||0)}</td>
+          <td style="text-align:right;font-weight:bold;">${formatAmount(getAmount(it))}</td>
         </tr>`).join('')}
         <tr class="appr-items-total">
           <td colspan="3" style="text-align:right;">合計</td>
-          <td style="text-align:right;">${formatSalePrice(items.reduce((s,i)=>s+(i[priceKey]||0),0))}</td>
+          <td style="text-align:right;">${formatAmount(items.reduce((sum, item) => sum + getAmount(item), 0))}</td>
         </tr>
       </tbody>
     </table>`;
@@ -7731,8 +7755,8 @@ function buildReviseFields(type, rec) {
           id="rv-ship-brand-${idx}" value="${it.brand||''}">
         <input class="form-control" style="flex:1;font-size:12px;" placeholder="モデル"
           id="rv-ship-model-${idx}" value="${it.model||''}">
-        <input type="text" inputmode="numeric" class="form-control" style="width:110px;font-size:12px;" placeholder="卸値（USD）"
-          id="rv-ship-wholesale-${idx}" value="${formatPriceInput(it.wholesale||0)}" data-raw-value="${it.wholesale||0}"
+        <input type="text" inputmode="numeric" class="form-control" style="width:110px;font-size:12px;" placeholder="仕入金額（JPY）"
+          id="rv-ship-wholesale-${idx}" value="${formatPriceInput(getShippingPurchasePrice(it))}" data-raw-value="${getShippingPurchasePrice(it)}"
           oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)">
       </div>`).join('');
     return `
@@ -7756,7 +7780,7 @@ function buildReviseFields(type, rec) {
         <span style="flex:1.2;font-size:11px;color:var(--text-muted);">商品コード</span>
         <span style="flex:1;font-size:11px;color:var(--text-muted);">ブランド</span>
         <span style="flex:1;font-size:11px;color:var(--text-muted);">モデル</span>
-        <span style="width:110px;font-size:11px;color:var(--text-muted);">卸値（USD）</span>
+        <span style="width:110px;font-size:11px;color:var(--text-muted);">仕入金額（JPY）</span>
       </div>
       <div id="rv-ship-items">${itemsHtml}</div>
       <div class="form-group" style="margin-top:10px;">
@@ -7870,17 +7894,21 @@ function submitSlipRevise() {
       () => { record.destination = _rv('rv-destination'); });
     chk('備考',     record.note,        _rv('rv-note'),         v => { record.note        = v; });
     // 明細を更新
+    const previousTotal = getShippingPurchaseTotal(record.items || []);
     let newTotal = 0;
     (record.items||[]).forEach((it, idx) => {
       chk(`明細${idx+1}コード`,  it.code,      _rv(`rv-ship-code-${idx}`),      v => { it.code      = v; });
       chk(`明細${idx+1}ブランド`, it.brand,    _rv(`rv-ship-brand-${idx}`),     v => { it.brand     = v; });
       chk(`明細${idx+1}モデル`,  it.model,     _rv(`rv-ship-model-${idx}`),     v => { it.model     = v; });
-      const newW = getPriceValue(document.getElementById(`rv-ship-wholesale-${idx}`));
-      chk(`明細${idx+1}卸値`,    it.wholesale, newW,                             v => { it.wholesale = parseInt(v)||0; });
-      newTotal += getPriceValue(document.getElementById(`rv-ship-wholesale-${idx}`));
+      const newPurchasePrice = getPriceValue(document.getElementById(`rv-ship-wholesale-${idx}`));
+      chk(`明細${idx+1}仕入金額（JPY）`, getShippingPurchasePrice(it), newPurchasePrice, v => {
+        it.purchasePrice = parseInt(v) || 0;
+        it.wholesale = it.purchasePrice;
+      });
+      newTotal += newPurchasePrice;
     });
-    if (record.total !== newTotal) {
-      diffs.push({ field: '合計卸値（USD）', before: formatSalePrice(record.total), after: formatSalePrice(newTotal) });
+    if (previousTotal !== newTotal) {
+      diffs.push({ field: '合計仕入金額（JPY）', before: formatPrice(previousTotal), after: formatPrice(newTotal) });
       record.total = newTotal;
     }
 
@@ -8242,6 +8270,17 @@ function autoFillItem(input, lineId, type) {
   const item   = APP_DATA.inventory.find(i => i.code === code && i.status === '在庫中');
   const prefix = type === 'sales' ? 'sl' : 'sh';
 
+  const syncShippingPurchasePrice = inventoryItem => {
+    if (type !== 'shipping') return;
+    const priceInput = document.getElementById(`sh-price-${lineId}`);
+    if (!priceInput) return;
+
+    const purchasePriceJpy = Number(inventoryItem?.purchasePrice) || 0;
+    priceInput.value = inventoryItem ? String(purchasePriceJpy) : '';
+    priceFormatHandler(priceInput);
+    calcShippingTotal();
+  };
+
   if (item) {
     // ブランド・モデル
     const setCell = (id, val, muted) => {
@@ -8260,6 +8299,7 @@ function autoFillItem(input, lineId, type) {
         ? item.accessories.join('、') : '—';
       setCell(`sl-accs-${lineId}`, accsText, true);
     }
+    syncShippingPurchasePrice(item);
     input.style.borderColor = 'var(--success)';
   } else if (code) {
     const setErr = (id, val) => {
@@ -8274,6 +8314,7 @@ function autoFillItem(input, lineId, type) {
         if (el) { el.textContent = '—'; el.style.color = 'var(--text-muted)'; }
       });
     }
+    syncShippingPurchasePrice(null);
     input.style.borderColor = 'var(--danger)';
   } else {
     const reset = (id) => {
@@ -8285,6 +8326,7 @@ function autoFillItem(input, lineId, type) {
     if (type === 'sales') {
       ['ref','serial','accs'].forEach(f => reset(`sl-${f}-${lineId}`));
     }
+    syncShippingPurchasePrice(null);
     input.style.borderColor = '';
   }
 }
@@ -9294,7 +9336,7 @@ function calcShippingTotal() {
   document.querySelectorAll('[id^="sh-price-"]').forEach(input => {
     total += getPriceValue(input);
   });
-  document.getElementById('shippingTotalDisplay').textContent = formatSalePrice(total);
+  document.getElementById('shippingTotalDisplay').textContent = formatPrice(total);
 }
 
 function unlockShippingEdit() {
@@ -9335,7 +9377,14 @@ async function saveShipping() {
       if (!canUseInventoryItemForShipping(item)) {
         unavailableItems.push(`${code}（${item?.status || '未登録'}）`);
       }
-      items.push({ code, brand: item?.brand || '', model: item?.model || '', wholesale: price, salePrice: price });
+      items.push({
+        code,
+        brand: item?.brand || '',
+        model: item?.model || '',
+        purchasePrice: price,
+        wholesale: price,
+        salePrice: Number(item?.salePrice) || 0,
+      });
     }
   });
   if (unavailableItems.length > 0) {
@@ -9344,7 +9393,7 @@ async function saveShipping() {
   }
   if (items.length === 0) { showToast('error', '入力エラー', '有効な明細行がありません'); return; }
 
-  const total = items.reduce((s, i) => s + i.wholesale, 0);
+  const total = items.reduce((sum, item) => sum + item.purchasePrice, 0);
   const shipId    = document.getElementById('sh-id').value;
   const shipDate  = document.getElementById('sh-date').value;
   const shipDest  = document.getElementById('sh-dest').value;
@@ -9419,7 +9468,7 @@ async function saveShipping() {
 }
 
 function doShippingToSales(items, shipId, shipDate, shipDest, shipNote, sourceShip = {}) {
-  const total = items.reduce((s, i) => s + i.wholesale, 0);
+  const total = items.reduce((sum, item) => sum + (Number(item.salePrice) || 0), 0);
   resetShippingForm();
   navigateTo('sales');
 
@@ -9485,6 +9534,7 @@ function buildShipmentSlipHTML() {
     const code = document.getElementById(`sh-code-${lineId}`)?.value?.trim() || '';
     if (!code) return;
     const inventoryItem = APP_DATA.inventory.find(item => item.code === code) || {};
+    const purchasePrice = getPriceValue(document.getElementById(`sh-price-${lineId}`));
     const detail = [
       [inventoryItem.brand, inventoryItem.model].filter(Boolean).join(' / '),
       [inventoryItem.ref && `型番: ${inventoryItem.ref}`, inventoryItem.serial && `シリアル: ${inventoryItem.serial}`].filter(Boolean).join('　'),
@@ -9495,7 +9545,7 @@ function buildShipmentSlipHTML() {
     items.push({
       no: items.length + 1,
       detail,
-      amount: Number(inventoryItem.purchasePrice) || 0,
+      amount: purchasePrice,
       code,
     });
   });
@@ -9711,8 +9761,8 @@ function _buildCustomsItems() {
   lines.forEach(line => {
     const lid   = line.dataset.lineId;
     const code  = document.getElementById(`sh-code-${lid}`)?.value?.trim() || '';
-    const price = getPriceValue(document.getElementById(`sh-price-${lid}`));
-    if (!code && price === 0) return; // 空行スキップ
+    const purchasePrice = getPriceValue(document.getElementById(`sh-price-${lid}`));
+    if (!code && purchasePrice === 0) return; // 空行スキップ
 
     seq++;
     const inv = APP_DATA.inventory.find(i => i.code === code);
@@ -9740,7 +9790,8 @@ function _buildCustomsItems() {
     const images = inv?.images || [];
     const imgUrl = images.length > 0 ? images[0] : '';
 
-    items.push({ seq, code, brand, model, ref, serial, matName, movName, dial, belt, price, itemNote, imgUrl });
+    const salePrice = Number(inv?.salePrice) || 0;
+    items.push({ seq, code, brand, model, ref, serial, matName, movName, dial, belt, price: salePrice, itemNote, imgUrl });
   });
 
   return items;
@@ -10011,15 +10062,15 @@ function _downloadShippingDraftCSV() {
   const note = document.getElementById('sh-note')?.value || '';
   const headers = [
     '伝票番号', '出荷日', '出荷先コード', '出荷先名', '商品コード', 'ブランド', 'モデル',
-    '型番', 'シリアル', '付属品', '仕入金額（JPY）', '卸値（USD・税抜）', '備考',
+    '型番', 'シリアル', '付属品', '仕入金額（JPY・税抜）', '備考',
   ];
   const rows = [headers];
 
   document.querySelectorAll('#shippingLines .slip-line').forEach(line => {
     const lineId = line.dataset.lineId;
     const code = document.getElementById(`sh-code-${lineId}`)?.value?.trim() || '';
-    const wholesale = parseSalesPrice(document.getElementById(`sh-price-${lineId}`)?.value || '0');
-    if (!code && wholesale === 0) return;
+    const purchasePrice = getPriceValue(document.getElementById(`sh-price-${lineId}`));
+    if (!code && purchasePrice === 0) return;
     const inventoryItem = APP_DATA.inventory.find(item => item.code === code);
     rows.push([
       slipId,
@@ -10032,8 +10083,7 @@ function _downloadShippingDraftCSV() {
       inventoryItem?.ref || '',
       inventoryItem?.serial || '',
       (inventoryItem?.accessories || []).join('・'),
-      inventoryItem?.purchasePrice || 0,
-      wholesale,
+      purchasePrice,
       note,
     ]);
   });

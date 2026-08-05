@@ -889,7 +889,27 @@ window.eval(`APP_DATA.purchaseSlips.splice(${dashboardPurchaseLength})`);
 window.eval(`APP_DATA.sales.splice(${dashboardSalesLength})`);
 window.init_dashboard();
 assert.equal(document.getElementById("salesTotalDisplay").textContent.trim(), "$0");
-assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), "$0");
+assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), "¥0");
+
+window.navigateTo("shipping");
+window.resetShippingForm();
+const shippingCodeInput = document.querySelector('#shippingLines [id^="sh-code-"]');
+const shippingLineId = shippingCodeInput.id.replace("sh-code-", "");
+const shippingPriceInput = document.getElementById(`sh-price-${shippingLineId}`);
+const shippingInventoryItem = inventory.find(item => item.status === "在庫中" && Number(item.purchasePrice) > 0);
+assert.ok(shippingInventoryItem, "shipping autofill test requires an in-stock item with a purchase price");
+shippingCodeInput.value = shippingInventoryItem.code;
+window.autoFillItem(shippingCodeInput, Number(shippingLineId), "shipping");
+const expectedPurchasePriceJpy = shippingInventoryItem.purchasePrice;
+assert.equal(window.getPriceValue(shippingPriceInput), expectedPurchasePriceJpy,
+  "shipping purchase amount must be filled from the inventory purchase price without currency conversion");
+assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), window.formatPrice(expectedPurchasePriceJpy),
+  "shipping total must update after purchase-price autofill");
+shippingCodeInput.value = "";
+window.autoFillItem(shippingCodeInput, Number(shippingLineId), "shipping");
+assert.equal(window.getPriceValue(shippingPriceInput), 0,
+  "clearing the inventory code must also clear the linked purchase price");
+assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), "¥0");
 
 assert.equal(typeof window.persistGuestSnapshot, "function");
 assert.equal(typeof window.unpublishGuestProducts, "function");
@@ -991,7 +1011,7 @@ assert.match(apiBridgeSource, /const sourceSale = saleDetails\.find/u,
 assert.match(appSource, /unpublishGuestProducts\(soldProductCodes\)/u, "confirmed sales must automatically unpublish sold products");
 assert.match(appSource, /unpublishGuestProducts\(shippedProductCodes\)/u, "confirmed shipments must automatically unpublish shipped products");
 assert.match(approvalSource, /unpublishGuestProducts\(soldProductCodes\)/u, "approved worker sales must automatically unpublish sold products");
-assert.match(appSource, /formatSalePrice\(totalWholesale\)/u, "shipping print total must use USD");
+assert.match(appSource, /formatPrice\(totalPurchasePrice\)/u, "shipping print total must use JPY");
 assert.match(appSource, /formatSalePrice\(total\)/u, "sales invoice total must use USD");
 assert.equal(appSource.includes("formatPrice(rec.total)"), false, "sales and shipping detail totals must not use JPY formatting");
 assert.equal(appSource.includes("r.guestName.includes"), false, "shipping must never locate a buyer by guest/company name");
@@ -1560,15 +1580,13 @@ assert.match(shippingDownloadButton.textContent, /ダウンロード/u);
 assert.equal(shippingDownloadButton.textContent.includes("CSV"), false, "shipping button must be labelled as download");
 const shippingDownload = window.exportCSV("shipping");
 assert.match(shippingDownload.filename, /^shipping_slip_.*\.csv$/u);
-assert.match(shippingDownload.csv, /仕入金額（JPY）/u);
-assert.match(shippingDownload.csv, new RegExp(String(shippingTemplateItem.purchasePrice)), "shipping download must include the purchase amount");
-assert.match(shippingDownload.csv, /999999/u, "shipping download must include the entered wholesale amount");
+assert.match(shippingDownload.csv, /仕入金額（JPY・税抜）/u);
+assert.match(shippingDownload.csv, /999999/u, "shipping download must include the entered JPY purchase amount");
 assert.equal(downloadClicks.at(-1).filename, shippingDownload.filename);
 const shippingPrintHtml = window.buildShipmentSlipHTML();
 assert.match(shippingPrintHtml, /出荷伝票/u);
 assert.match(shippingPrintHtml, /明細表/u);
-assert.match(shippingPrintHtml, new RegExp(window.formatPrice(shippingTemplateItem.purchasePrice).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), "shipping slips must print the inventory purchase amount");
-assert.equal(shippingPrintHtml.includes("¥999,999"), false, "shipping form wholesale values must not replace purchase amounts on the slip");
+assert.match(shippingPrintHtml, /¥999,999/u, "shipping slips must print the entered JPY purchase amount");
 assert.match(shippingPrintHtml, new RegExp(companyInfo.companyName));
 assert.match(shippingPrintHtml, new RegExp(companyInfo.address));
 assert.equal(shippingPrintHtml.includes("お振込先"), false, "shipping slips must not print bank details");
