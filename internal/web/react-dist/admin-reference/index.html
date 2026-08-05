@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>在庫管理ツール — ログイン</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+<style>
+  body {
+    overflow: auto;
+    background: linear-gradient(135deg, #1a3a5c 0%, #2c5282 50%, #1a3a5c 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .login-wrapper {
+    display: flex;
+    width: 900px;
+    max-width: 96vw;
+    min-height: 520px;
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+  }
+
+  /* 左パネル */
+  .login-left {
+    flex: 1;
+    background: linear-gradient(160deg, #1a3a5c 0%, #2980b9 100%);
+    padding: 50px 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    color: white;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .login-left::before {
+    content: "";
+    position: absolute;
+    font-size: 180px;
+    opacity: 0.05;
+    right: -20px;
+    bottom: -20px;
+    line-height: 1;
+  }
+
+  .login-left .app-title {
+    font-size: 26px;
+    font-weight: bold;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .login-left .app-subtitle {
+    font-size: 13px;
+    opacity: 0.8;
+    margin-bottom: 30px;
+  }
+
+  .login-left .feature-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .login-left .feature-list li {
+    font-size: 13px;
+    opacity: 0.85;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .login-left .feature-list li::before {
+    content: "✓";
+    background: rgba(255,255,255,0.2);
+    border-radius: 50%;
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px;
+    flex-shrink: 0;
+  }
+
+  .login-left .version-info {
+    font-size: 11px;
+    opacity: 0.5;
+  }
+
+  /* 右パネル */
+  .login-right {
+    width: 400px;
+    background: white;
+    padding: 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .login-right h2 {
+    font-size: 20px;
+    color: var(--primary);
+    margin-bottom: 6px;
+  }
+
+  .login-right .login-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 28px;
+  }
+
+  /* ログインタブ */
+  .login-tabs {
+    display: flex;
+    border-radius: 8px;
+    background: var(--bg);
+    padding: 3px;
+    margin-bottom: 24px;
+    gap: 3px;
+  }
+
+  .login-tab {
+    flex: 1;
+    padding: 8px;
+    text-align: center;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 6px;
+    color: var(--text-muted);
+    transition: all 0.2s;
+    border: none;
+    background: none;
+    font-family: inherit;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .login-tab.active {
+    background: white;
+    color: var(--primary);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+    font-weight: bold;
+  }
+
+  .login-form { display: flex; flex-direction: column; gap: 14px; }
+
+  .input-group {
+    position: relative;
+  }
+
+  .input-group label {
+    display: block;
+    font-size: 12px;
+    font-weight: bold;
+    color: var(--text);
+    margin-bottom: 5px;
+  }
+
+  .input-group input {
+    width: 100%;
+    padding: 10px 14px 10px 38px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    outline: none;
+    transition: all 0.2s;
+    font-family: inherit;
+    color: var(--text);
+  }
+
+  .input-group input:focus {
+    border-color: var(--primary-light);
+    box-shadow: 0 0 0 3px rgba(41,128,185,0.12);
+  }
+
+  .input-group .input-icon {
+    position: absolute;
+    left: 12px;
+    bottom: 11px;
+    color: var(--text-muted);
+    font-size: 15px;
+  }
+
+  .login-btn {
+    width: 100%;
+    padding: 12px;
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+
+  .login-btn:hover { background: #2980b9; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(41,128,185,0.3); }
+  .login-btn:active { transform: translateY(0); }
+  .login-btn.guest-btn { background: var(--success); }
+  .login-btn.guest-btn:hover { background: #219a52; box-shadow: 0 4px 12px rgba(39,174,96,0.3); }
+
+  .error-msg {
+    background: #fde8e8;
+    border: 1px solid #f5c6c6;
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--danger);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .hint-box {
+    background: #f0f7ff;
+    border: 1px solid #bee3f8;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 11px;
+    color: #2b6cb0;
+    margin-top: 4px;
+  }
+
+  .hint-box strong { display: block; margin-bottom: 4px; font-size: 12px; }
+
+  .login-form-panel { display: none; }
+  .login-form-panel.active { display: flex; flex-direction: column; gap: 14px; }
+
+  .demo-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    color: #856404;
+    font-weight: bold;
+    margin-bottom: 16px;
+  }
+
+  /* ===== レスポンシブ ===== */
+  @media (max-width: 640px) {
+    body { align-items: flex-start; padding: 0; }
+
+    .login-wrapper {
+      flex-direction: column;
+      width: 100%;
+      max-width: 100%;
+      min-height: 100svh;
+      border-radius: 0;
+      box-shadow: none;
+    }
+
+    /* 左パネル：コンパクトなヘッダーバーに */
+    .login-left {
+      flex-direction: row;
+      align-items: center;
+      padding: 16px 20px;
+      min-height: auto;
+      justify-content: flex-start;
+      gap: 12px;
+    }
+    .login-left .feature-list,
+    .login-left .version-info { display: none; }
+    .login-left .app-subtitle { display: none; }
+    .login-left .app-title {
+      font-size: 18px;
+      margin-bottom: 0;
+    }
+
+    /* 右パネル：全画面 */
+    .login-right {
+      width: 100%;
+      padding: 24px 20px 40px;
+      flex: 1;
+    }
+
+    .login-tabs { margin-bottom: 20px; }
+    .login-tab { font-size: 12px; padding: 7px 6px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="login-wrapper">
+  <!-- 左パネル -->
+  <div class="login-left">
+    <div>
+      <div class="app-title"><i class="fa-solid fa-boxes-stacked"></i> 在庫管理ツール</div>
+      <div class="app-subtitle">時計・貴金属 業務管理システム v1.0</div>
+      <ul class="feature-list">
+        <li>仕入・売上・出荷をワンシステムで管理</li>
+        <li>古物営業法対応の個品採番機能</li>
+        <li>マスタ一元管理（ブランド・仕入先等）</li>
+        <li>実績分析・構成比グラフ</li>
+        <li>ゲスト（取引先）アクセス対応</li>
+      </ul>
+    </div>
+    <div class="version-info">© 2026 在庫管理ツール — プロトタイプ v1.0</div>
+  </div>
+
+  <!-- 右パネル -->
+  <div class="login-right">
+    <div class="demo-badge"><i class="fa-solid fa-bolt"></i> デモ版 — サンプルデータで動作します</div>
+    <h2>ログイン</h2>
+    <p class="login-desc">ログイン種別を選択してください</p>
+
+    <!-- タブ切替 -->
+    <div class="login-tabs">
+      <button class="login-tab active" id="tab-admin" onclick="switchTab('admin')"><i class="fa-solid fa-user-tie"></i> 管理者</button>
+      <button class="login-tab" id="tab-buyer" onclick="switchTab('buyer')"><i class="fa-solid fa-id-badge"></i> 作業者</button>
+      <button class="login-tab" id="tab-guest" onclick="switchTab('guest')"><i class="fa-solid fa-building"></i> ゲスト</button>
+    </div>
+
+    <!-- 管理者フォーム -->
+    <div class="login-form-panel active" id="form-admin">
+      <div class="input-group">
+        <label>ユーザーID</label>
+        <span class="input-icon"><i class="fa-solid fa-user"></i></span>
+        <input type="text" id="admin-id" value="admin" placeholder="ユーザーIDを入力">
+      </div>
+      <div class="input-group">
+        <label>パスワード</label>
+        <span class="input-icon"><i class="fa-solid fa-lock"></i></span>
+        <input type="password" id="admin-pw" value="preview-admin-2026" placeholder="パスワードを入力">
+      </div>
+      <div class="error-msg hidden" id="admin-error"><i class="fa-solid fa-circle-xmark"></i> IDまたはパスワードが正しくありません</div>
+      <button class="login-btn" onclick="doAdminLogin()"><i class="fa-solid fa-right-to-bracket"></i> 管理者としてログイン</button>
+      <div class="hint-box">
+        <strong><i class="fa-solid fa-clipboard-list"></i> デモ用認証情報</strong>
+        ID: <b>admin</b> ／ PW: <b>preview-admin-2026</b><br>
+        PostgreSQLの管理者アカウントで認証します
+      </div>
+    </div>
+
+    <!-- 作業者フォーム -->
+    <div class="login-form-panel" id="form-buyer">
+      <div class="input-group">
+        <label>作業者ID</label>
+        <span class="input-icon"><i class="fa-solid fa-id-badge"></i></span>
+        <input type="text" id="buyer-id" value="worker" placeholder="worker">
+      </div>
+      <div class="input-group">
+        <label>パスワード</label>
+        <span class="input-icon"><i class="fa-solid fa-lock"></i></span>
+        <input type="password" id="buyer-pw" value="preview-worker-2026" placeholder="パスワードを入力">
+      </div>
+      <div class="error-msg hidden" id="buyer-error"><i class="fa-solid fa-circle-xmark"></i> IDまたはパスワードが正しくありません</div>
+      <button class="login-btn" style="background:#7c3aed;" onclick="doBuyerLogin()"><i class="fa-solid fa-right-to-bracket"></i> 作業者としてログイン</button>
+      <div class="hint-box" style="border-color:#c4b5fd;background:#f5f3ff;color:#5b21b6;">
+        <strong><i class="fa-solid fa-id-badge"></i> デモ用認証情報（作業者）</strong>
+        ID: <b>worker</b> ／ PW: <b>preview-worker-2026</b><br>
+        <span style="font-size:10px;">※承認が必要な操作は管理者へ申請されます</span>
+      </div>
+    </div>
+
+    <!-- ゲストフォーム -->
+    <div class="login-form-panel" id="form-guest">
+      <div class="input-group">
+        <label>ゲストID（会社コード）</label>
+        <span class="input-icon"><i class="fa-solid fa-building"></i></span>
+        <input type="text" id="guest-id" value="G001" placeholder="ゲストIDを入力">
+      </div>
+      <div class="input-group">
+        <label>パスワード</label>
+        <span class="input-icon"><i class="fa-solid fa-lock"></i></span>
+        <input type="password" id="guest-pw" value="preview-guest-2026" placeholder="パスワードを入力">
+      </div>
+      <div class="error-msg hidden" id="guest-error"><i class="fa-solid fa-circle-xmark"></i> IDまたはパスワードが正しくありません</div>
+      <button class="login-btn guest-btn" onclick="doGuestLogin()"><i class="fa-solid fa-right-to-bracket"></i> ゲストとしてログイン</button>
+      <div class="hint-box">
+        <strong><i class="fa-solid fa-clipboard-list"></i> デモ用認証情報（ゲスト）</strong>
+        ID: <b>G001</b> ／ PW: <b>preview-guest-2026</b><br>
+        ※1社単位でIDを発行。定期的にPWを切替。
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/login_info.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/api_bridge.js"></script>
+<script>
+  function switchTab(type) {
+    ['admin','buyer','guest'].forEach(t => {
+      document.getElementById('tab-' + t)?.classList.toggle('active', t === type);
+      document.getElementById('form-' + t)?.classList.toggle('active', t === type);
+    });
+  }
+
+  async function doAdminLogin() {
+    const id = document.getElementById('admin-id').value.trim();
+    const pw = document.getElementById('admin-pw').value;
+    try {
+      await ZaikoAPI.login(id, pw, 'admin');
+      window.location.href = 'app.html';
+    } catch (error) {
+      document.getElementById('admin-error').classList.remove('hidden');
+    }
+  }
+
+  async function doBuyerLogin() {
+    const id = document.getElementById('buyer-id').value.trim();
+    const pw = document.getElementById('buyer-pw').value;
+    try {
+      await ZaikoAPI.login(id, pw, 'worker');
+      window.location.href = 'app.html';
+    } catch (error) {
+      document.getElementById('buyer-error').classList.remove('hidden');
+    }
+  }
+
+  async function doGuestLogin() {
+    const id = document.getElementById('guest-id').value.trim();
+    const pw = document.getElementById('guest-pw').value;
+    try {
+      await ZaikoAPI.login(id, pw, 'guest');
+      sessionStorage.setItem('inv_guest_session', JSON.stringify({ id, role: 'guest' }));
+      window.location.href = 'guest.html?id=' + encodeURIComponent(id);
+    } catch (error) {
+      document.getElementById('guest-error').classList.remove('hidden');
+    }
+  }
+
+  // Enter key support
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      const adminActive = document.getElementById('form-admin').classList.contains('active');
+      const buyerActive = document.getElementById('form-buyer').classList.contains('active');
+      if (adminActive) doAdminLogin();
+      else if (buyerActive) doBuyerLogin();
+      else doGuestLogin();
+    }
+  });
+</script>
+<script src="https://www.genspark.ai/sandbox_inspect.js"></script></body>
+</html>

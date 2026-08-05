@@ -192,7 +192,7 @@ func TestMigrateExistingPhase5DatabasePreservesData(t *testing.T) {
 		t.Fatalf("products before=%d after=%d err=%v", len(before), len(after), err)
 	}
 	versions, err := store.MigrationVersions(ctx)
-	if err != nil || len(versions) != 6 || versions[5] != "000006_approvals" {
+	if err != nil || len(versions) != 7 || versions[6] != "000007_document_operations" {
 		t.Fatalf("versions=%v err=%v", versions, err)
 	}
 }

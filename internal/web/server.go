@@ -17,6 +17,8 @@ import (
 
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/config"
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/persistence"
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/storage"
 )
 
 //go:embed templates/base.html templates/login.html templates/dashboard.html templates/users.html templates/settings.html templates/audit.html templates/public.html templates/products.html templates/product-new.html templates/product-detail.html templates/purchases.html templates/purchase-new.html templates/purchase-detail.html templates/market.html templates/market-import.html templates/market-import-preview.html templates/sales.html templates/sale-new.html templates/sale-detail.html templates/shipments.html templates/shipment-new.html templates/shipment-detail.html templates/purchase-requests.html templates/approvals.html static/app.css static/app.js
@@ -26,11 +28,13 @@ const sessionCookie = "zaiko_session"
 const csrfCookie = "zaiko_csrf"
 
 type Server struct {
-	cfg       config.Config
-	store     *database.Store
-	log       *slog.Logger
-	templates map[string]*template.Template
-	handler   http.Handler
+	cfg        config.Config
+	store      *database.Store
+	repository *persistence.Repository
+	objects    storage.Store
+	log        *slog.Logger
+	templates  map[string]*template.Template
+	handler    http.Handler
 }
 
 type pageData struct {
@@ -75,14 +79,14 @@ type pageData struct {
 	PublicProducts   []database.PublicProduct
 	PurchaseRequests []database.PurchaseRequest
 	Approvals        []database.ApprovalRequest
-	SalesTotalJPY    int64
+	SalesTotalUSD    int64
 	SalesCount       int
 	RequestCount     int
 	PreviewMode      bool
 }
 
-func New(cfg config.Config, store *database.Store, logger *slog.Logger) (*Server, error) {
-	s := &Server{cfg: cfg, store: store, log: logger}
+func New(cfg config.Config, store *database.Store, repository *persistence.Repository, objects storage.Store, logger *slog.Logger) (*Server, error) {
+	s := &Server{cfg: cfg, store: store, repository: repository, objects: objects, log: logger}
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
 	}
@@ -93,12 +97,91 @@ func New(cfg config.Config, store *database.Store, logger *slog.Logger) (*Server
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /api/v1/health", s.apiHealth)
+	mux.HandleFunc("POST /api/v1/auth/login", s.apiLogin)
+	mux.HandleFunc("POST /api/v1/auth/password-reset", s.apiPasswordResetComplete)
+	mux.Handle("GET /api/v1/auth/me", s.apiAuthenticated("", http.HandlerFunc(s.apiMe)))
+	mux.Handle("POST /api/v1/auth/logout", s.apiAuthenticated("", http.HandlerFunc(s.apiLogout)))
+	mux.Handle("GET /api/v1/dashboard", s.apiAuthenticated("dashboard.read", http.HandlerFunc(s.apiDashboard)))
+	mux.Handle("GET /api/v1/products", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProducts)))
+	mux.Handle("POST /api/v1/products", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductCreate)))
+	mux.Handle("GET /api/v1/products/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProduct)))
+	mux.Handle("GET /api/v1/purchases", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiPurchases)))
+	mux.Handle("GET /api/v1/purchases/{id}", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiPurchase)))
+	mux.Handle("POST /api/v1/purchases", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseCreate)))
+	mux.Handle("POST /api/v1/purchases/{id}/confirm", s.apiAuthenticated("purchase.confirm", http.HandlerFunc(s.apiPurchaseConfirm)))
+	mux.Handle("GET /api/v1/market-prices", s.apiAuthenticated("market.read", http.HandlerFunc(s.apiMarketPrices)))
+	mux.Handle("POST /api/v1/market-prices", s.apiAuthenticated("market.write", http.HandlerFunc(s.apiMarketPriceCreate)))
+	mux.Handle("PATCH /api/v1/market-prices/{id}", s.apiAuthenticated("market.write", http.HandlerFunc(s.apiMarketPriceUpdate)))
+	mux.Handle("POST /api/v1/market-prices/imports/preview", s.apiAuthenticated("market.import", http.HandlerFunc(s.apiMarketImportPreview)))
+	mux.Handle("GET /api/v1/market-prices/imports/{id}", s.apiAuthenticated("market.import", http.HandlerFunc(s.apiMarketImportDetail)))
+	mux.Handle("POST /api/v1/market-prices/imports/{id}/commit", s.apiAuthenticated("market.import", http.HandlerFunc(s.apiMarketImportCommit)))
+	mux.Handle("GET /api/v1/boxes", s.apiAuthenticated("inventory.publish", http.HandlerFunc(s.apiBoxes)))
+	mux.Handle("PUT /api/v1/boxes/{code}", s.apiAuthenticated("inventory.publish", http.HandlerFunc(s.apiBoxUpdate)))
+	mux.Handle("GET /api/v1/guest/catalog", s.apiAuthenticated("", http.HandlerFunc(s.apiGuestCatalog)))
+	mux.Handle("GET /api/v1/guest/purchase-requests", s.apiAuthenticated("", http.HandlerFunc(s.apiPurchaseRequests)))
+	mux.Handle("POST /api/v1/guest/purchase-requests", s.apiAuthenticated("", http.HandlerFunc(s.apiGuestPurchaseRequestCreate)))
+	mux.Handle("GET /api/v1/purchase-requests", s.apiAuthenticated("request.read", http.HandlerFunc(s.apiPurchaseRequests)))
+	mux.Handle("POST /api/v1/purchase-requests/{id}/{decision}", s.apiAuthenticated("request.review", http.HandlerFunc(s.apiPurchaseRequestReview)))
+	mux.Handle("GET /api/v1/notifications", s.apiAuthenticated("", http.HandlerFunc(s.apiNotifications)))
+	mux.Handle("POST /api/v1/notifications/{id}/read", s.apiAuthenticated("", http.HandlerFunc(s.apiNotificationRead)))
+	mux.Handle("GET /api/v1/approvals", s.apiAuthenticated("approval.read", http.HandlerFunc(s.apiApprovals)))
+	mux.Handle("POST /api/v1/approvals", s.apiAuthenticated("approval.request", http.HandlerFunc(s.apiApprovalCreate)))
+	mux.Handle("POST /api/v1/approvals/{id}/{decision}", s.apiAuthenticated("approval.approve", http.HandlerFunc(s.apiApprovalDecision)))
+	mux.Handle("GET /api/v1/sales", s.apiAuthenticated("sales.read", http.HandlerFunc(s.apiSales)))
+	mux.Handle("GET /api/v1/sales/{id}", s.apiAuthenticated("sales.read", http.HandlerFunc(s.apiSale)))
+	mux.Handle("POST /api/v1/sales", s.apiAuthenticated("sales.write", http.HandlerFunc(s.apiSaleCreate)))
+	mux.Handle("POST /api/v1/sales/{id}/confirm", s.apiAuthenticated("sales.confirm", http.HandlerFunc(s.apiSaleConfirm)))
+	mux.Handle("GET /api/v1/shipments", s.apiAuthenticated("shipment.read", http.HandlerFunc(s.apiShipments)))
+	mux.Handle("GET /api/v1/shipments/{id}", s.apiAuthenticated("shipment.read", http.HandlerFunc(s.apiShipment)))
+	mux.Handle("POST /api/v1/shipments", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiShipmentCreate)))
+	mux.Handle("POST /api/v1/shipments/{id}/confirm", s.apiAuthenticated("shipment.confirm", http.HandlerFunc(s.apiShipmentConfirm)))
+	mux.Handle("PATCH /api/v1/shipments/{id}/tracking", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiShipmentTrackingUpdate)))
+	mux.Handle("GET /api/v1/returns", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiReturns)))
+	mux.Handle("GET /api/v1/returns/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiReturn)))
+	mux.Handle("POST /api/v1/returns", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiReturnCreate)))
+	mux.Handle("POST /api/v1/returns/{id}/confirm", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiReturnConfirm)))
+	mux.Handle("PATCH /api/v1/returns/{id}/tracking", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiReturnTrackingUpdate)))
+	mux.Handle("GET /api/v1/documents", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocuments)))
+	mux.Handle("GET /api/v1/document-events", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocumentEvents)))
+	mux.Handle("POST /api/v1/document-events", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocumentEventCreate)))
+	mux.Handle("GET /api/v1/exports/{kind}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiCSVExport)))
+	mux.Handle("GET /api/v1/settings", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiSettings)))
+	mux.Handle("PUT /api/v1/settings/{key}", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiSettingUpdate)))
+	mux.Handle("GET /api/v1/admin-access-code", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiAdminAccessCode)))
+	mux.Handle("POST /api/v1/admin-access-code/rotate", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiAdminAccessCodeRotate)))
+	mux.Handle("POST /api/v1/admin-access-code/verify", s.apiAuthenticated("", http.HandlerFunc(s.apiAdminAccessCodeVerify)))
+	mux.Handle("GET /api/v1/company", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiCompanyInfo)))
+	mux.Handle("PUT /api/v1/company", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiCompanyInfoUpdate)))
+	mux.Handle("GET /api/v1/exchange-rates", s.apiAuthenticated("market.read", http.HandlerFunc(s.apiExchangeRates)))
+	mux.Handle("POST /api/v1/exchange-rates", s.apiAuthenticated("market.write", http.HandlerFunc(s.apiExchangeRateCreate)))
+	mux.Handle("POST /api/v1/products/{id}/files", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductFileUpload)))
+	mux.Handle("GET /api/v1/products/{id}/files", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProductFiles)))
+	mux.Handle("PATCH /api/v1/products/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductUpdate)))
+	mux.Handle("GET /api/v1/product-files/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProductFile)))
+	mux.Handle("GET /api/v1/users", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUsers)))
+	mux.Handle("GET /api/v1/purchase-staff", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiPurchaseStaff)))
+	mux.Handle("POST /api/v1/users", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUserCreate)))
+	mux.Handle("PATCH /api/v1/users/{id}", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUserUpdate)))
+	mux.Handle("POST /api/v1/users/{id}/password", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUserPassword)))
+	mux.Handle("POST /api/v1/users/{id}/password-reset", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiPasswordResetRequest)))
+	mux.Handle("GET /api/v1/partners", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiPartners)))
+	mux.Handle("POST /api/v1/partners", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiPartnerCreate)))
+	mux.Handle("PATCH /api/v1/partners/{id}", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiPartnerUpdate)))
+	mux.Handle("GET /api/v1/audit-logs", s.apiAuthenticated("audit.read", http.HandlerFunc(s.apiAuditLogs)))
+	mux.Handle("GET /api/v1/email-outbox", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiEmailOutbox)))
+	mux.Handle("GET /api/v1/masters/{kind}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiMasterItems)))
+	mux.Handle("POST /api/v1/masters/{kind}", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiMasterCreate)))
+	mux.Handle("PATCH /api/v1/masters/{kind}/{id}", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiMasterUpdate)))
+	mux.HandleFunc("GET /app", redirectToReact)
+	mux.HandleFunc("GET /app/{path...}", s.reactApp)
 	mux.HandleFunc("GET /login", s.loginPage)
 	mux.HandleFunc("POST /login", s.login)
 	mux.HandleFunc("GET /public/products", s.publicProducts)
 	mux.HandleFunc("POST /public/products/{id}/purchase-requests", s.publicPurchaseRequest)
 
-	mux.Handle("GET /", s.authenticated("dashboard.read", http.HandlerFunc(s.dashboard)))
+	mux.HandleFunc("GET /", redirectToReact)
+	mux.Handle("GET /legacy", s.authenticated("dashboard.read", http.HandlerFunc(s.dashboard)))
 	mux.Handle("POST /logout", s.authenticated("", http.HandlerFunc(s.logout)))
 	mux.Handle("GET /products", s.authenticated("inventory.read", http.HandlerFunc(s.products)))
 	mux.Handle("GET /products/export.csv", s.authenticated("inventory.read", http.HandlerFunc(s.productsCSV)))
@@ -137,7 +220,7 @@ func New(cfg config.Config, store *database.Store, logger *slog.Logger) (*Server
 	mux.Handle("POST /purchase-requests/{id}/approve", s.authenticated("request.review", http.HandlerFunc(s.purchaseRequestApprove)))
 	mux.Handle("POST /purchase-requests/{id}/reject", s.authenticated("request.review", http.HandlerFunc(s.purchaseRequestReject)))
 	mux.Handle("POST /purchase-requests/{id}/cancel", s.authenticated("request.review", http.HandlerFunc(s.purchaseRequestCancel)))
-	mux.Handle("GET /approvals", s.authenticated("approval.read", http.HandlerFunc(s.approvals)))
+	mux.Handle("GET /approvals", s.authenticated("approval.approve", http.HandlerFunc(s.approvals)))
 	mux.Handle("POST /approvals/{id}/approve", s.authenticated("approval.approve", http.HandlerFunc(s.approvalApprove)))
 	mux.Handle("POST /approvals/{id}/return", s.authenticated("approval.approve", http.HandlerFunc(s.approvalReturn)))
 	mux.Handle("POST /approvals/{id}/reject", s.authenticated("approval.approve", http.HandlerFunc(s.approvalReject)))
@@ -368,7 +451,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	var salesCount int
 	for _, sale := range sales {
 		if sale.Status == "confirmed" {
-			salesTotal += sale.TotalJPY
+			salesTotal += sale.TotalUSD
 			salesCount++
 		}
 	}
@@ -381,7 +464,7 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, "dashboard", http.StatusOK, pageData{
 		Title: "ダッシュボード", Active: "dashboard", User: user, CSRF: csrfFromRequest(r), Stats: stats,
-		SalesTotalJPY: salesTotal, SalesCount: salesCount, RequestCount: requestCount,
+		SalesTotalUSD: salesTotal, SalesCount: salesCount, RequestCount: requestCount,
 	})
 }
 
@@ -522,10 +605,19 @@ func (s *Server) requestIdentity(next http.Handler) http.Handler {
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+		if r.URL.Path == "/app" || strings.HasPrefix(r.URL.Path, "/app/") {
+			// The reference design is the canonical application UI. It uses inline
+			// styles and handlers plus Font Awesome and Chart.js. Business data still
+			// travels through the same-origin Go REST API; product photos may use the
+			// reference image CDN until they are replaced by the local/S3 adapter.
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; font-src 'self' data: https://cdn.jsdelivr.net; img-src 'self' data: blob: https://sspark.genspark.ai; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+			w.Header().Set("X-Frame-Options", "DENY")
+		} else {
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+			w.Header().Set("X-Frame-Options", "DENY")
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "same-origin")
-		w.Header().Set("X-Frame-Options", "DENY")
 		next.ServeHTTP(w, r)
 	})
 }

@@ -24,7 +24,7 @@ func (s *Server) marketPrices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "market", http.StatusOK, pageData{
-		Title: "相場・為替", Active: "market", User: user, MarketPrices: records,
+		Title: "相場表", Active: "market", User: user, MarketPrices: records,
 		ExchangeRates: rates, CSRF: csrfFromRequest(r), Notice: r.URL.Query().Get("notice"),
 	})
 }

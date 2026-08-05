@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>在庫・伝票ステータス図</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px;
+      background: #ffffff;
+      color: #173b5f;
+      font-family: "Yu Gothic", "Meiryo", sans-serif;
+    }
+    section {
+      display: inline-block;
+      margin: 0 0 48px;
+      padding: 24px;
+      background: #ffffff;
+      border: 1px solid #d7e1eb;
+      border-radius: 12px;
+    }
+    h1 {
+      margin: 0 0 20px;
+      font-size: 24px;
+      font-weight: 700;
+      color: #173b5f;
+    }
+    .diagram { display: inline-block; }
+    .diagram svg { display: block; max-width: none !important; height: auto; }
+  </style>
+</head>
+<body>
+  <section id="purchase-section">
+    <h1>1. 仕入から在庫化まで</h1>
+    <div class="diagram" id="purchase"></div>
+  </section>
+
+  <section id="sales-section">
+    <h1>2. 購入申請・取置・出荷・売上</h1>
+    <div class="diagram" id="sales"></div>
+  </section>
+
+  <section id="returns-section">
+    <h1>3. 返品・交換・返金</h1>
+    <div class="diagram" id="returns"></div>
+  </section>
+
+  <section id="special-section">
+    <h1>4. 特殊な在庫移動</h1>
+    <div class="diagram" id="special"></div>
+  </section>
+
+  <script type="module">
+    import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: "base",
+      fontFamily: '"Yu Gothic", "Meiryo", sans-serif',
+      flowchart: { htmlLabels: true, curve: "basis", nodeSpacing: 42, rankSpacing: 52 },
+      themeVariables: {
+        background: "#ffffff",
+        primaryColor: "#eaf4fb",
+        primaryTextColor: "#173b5f",
+        primaryBorderColor: "#2e86bd",
+        secondaryColor: "#fff4df",
+        secondaryTextColor: "#173b5f",
+        secondaryBorderColor: "#ed8324",
+        tertiaryColor: "#edf7ef",
+        tertiaryTextColor: "#173b5f",
+        tertiaryBorderColor: "#35a66f",
+        lineColor: "#557087",
+        edgeLabelBackground: "#ffffff",
+        fontSize: "17px"
+      }
+    });
+
+    const diagrams = {
+      purchase: `flowchart TD
+    P0["仕入内容を入力<br/>伝票：下書き"]
+    P1["作業者が申請<br/>伝票：承認待ち"]
+    P2["管理者が承認<br/>伝票：確定"]
+    P3["未納<br/>商品：入荷待ち<br/>所在：仕入先"]
+    P4["一部納品<br/>納品分：在庫中<br/>残数：入荷待ち"]
+    P5["全数納品・検品完了<br/>伝票：完了<br/>商品：在庫中<br/>所在：自社"]
+    P6["検品不合格<br/>商品：検品保留"]
+    P7["仕入取消<br/>伝票：取消"]
+    P8["仕入返品伝票を起票<br/>商品：仕入返品処理中"]
+    P9["仕入先へ返送<br/>商品：仕入返品済"]
+    P10["修理・再検品"]
+    P11["廃棄処理"]
+
+    P0 --> P1
+    P1 -->|差戻し| P0
+    P1 -->|承認| P2
+    P1 -->|却下| P7
+    P2 --> P3
+    P3 -->|一部受入| P4
+    P3 -->|全数受入| P5
+    P3 -->|発注取消| P7
+    P4 -->|残数受入| P5
+    P4 -->|残数取消| P5
+    P5 -->|不良発見| P6
+    P6 -->|再販可能| P5
+    P6 -->|仕入先へ返品| P8
+    P6 -->|修理| P10
+    P6 -->|再販不可| P11
+    P5 -->|仕入返品| P8
+    P8 --> P9
+    P10 -->|修理完了| P5`,
+
+      sales: `flowchart TD
+    I["商品：在庫中<br/>所在：自社"]
+    Q["ゲスト購入リクエスト<br/>承認待ち"]
+    R["管理者承認<br/>商品：取置中"]
+    RJ["却下・期限切れ・取消<br/>商品：在庫中へ戻す"]
+    S0["出荷伝票：下書き"]
+    S1["出荷伝票：確定<br/>商品：出荷予定"]
+    S2["一部出荷"]
+    S3["出荷済<br/>所在：輸送中"]
+    S4["納品完了<br/>所在：顧客"]
+    S5["持ち帰り・受取拒否<br/>返品処理中"]
+    H0["商品は自社に保管<br/>商品：引渡待ち"]
+    H1["店頭・自社で引渡し完了"]
+    V0["売上伝票：下書き"]
+    V1["売上伝票：確定<br/>入金待ち"]
+    V2["一部入金"]
+    V3["入金済"]
+    V4["支払期限超過"]
+    V5["貸倒処理"]
+
+    I --> Q
+    Q -->|承認| R
+    Q -->|却下・取消| RJ
+    RJ --> I
+    R -->|取置解除| I
+    R --> S0
+    S0 --> S1
+    S1 -->|一部のみ| S2
+    S2 -->|残数出荷| S3
+    S1 -->|全数出荷| S3
+    S3 -->|配送完了| S4
+    S3 -->|受取拒否・配送失敗| S5
+    R -->|売上計上後も自社保管| H0
+    H0 -->|商品引渡し| H1
+    S4 --> V0
+    H0 --> V0
+    R -->|出荷前請求| V0
+    V0 --> V1
+    V1 -->|一部入金| V2
+    V1 -->|全額入金| V3
+    V2 -->|残額入金| V3
+    V1 -->|期限超過| V4
+    V2 -->|期限超過| V4
+    V4 -->|回収| V3
+    V4 -->|回収不能| V5`,
+
+      returns: `flowchart TD
+    A["返品受付"]
+    B{"売上伝票は<br/>確定済みか"}
+    C["売上前取消<br/>取置・出荷を解除"]
+    D["売上返品伝票を起票"]
+    E{"商品は<br/>どこにあるか"}
+    F["商品は自社<br/>物理的な返送なし"]
+    G["商品は顧客<br/>返品処理中"]
+    H["商品返送中"]
+    I["自社で返品受領・検品"]
+    J{"検品結果"}
+    K["再販可能<br/>商品：在庫中"]
+    L["修理可能<br/>商品：修理中"]
+    M["再販不可<br/>商品：廃棄"]
+    N["交換<br/>代替商品を取置・出荷"]
+    O{"入金状態"}
+    P["未入金<br/>請求取消"]
+    Q["一部入金<br/>差額調整・返金"]
+    R["入金済<br/>返金待ち"]
+    S["返金済"]
+
+    A --> B
+    B -->|未確定| C
+    B -->|確定済み| D
+    D --> E
+    E -->|自社| F
+    E -->|顧客| G
+    G --> H
+    H --> I
+    F --> J
+    I --> J
+    J -->|再販可| K
+    J -->|修理| L
+    J -->|再販不可| M
+    J -->|交換希望| N
+    L -->|修理完了| K
+    D --> O
+    O -->|未入金| P
+    O -->|一部入金| Q
+    O -->|入金済| R
+    Q --> S
+    R --> S`,
+
+      special: `flowchart LR
+    I["在庫中"]
+    C["委託中<br/>所在：委託先<br/>所有権：自社"]
+    S["売上済<br/>所有権：顧客"]
+    L["貸出中<br/>所在：相手先<br/>所有権：自社"]
+    R["検品保留・修理"]
+    X["紛失処理"]
+    T["移動中"]
+    I2["在庫中<br/>所在：移動先倉庫"]
+    H["棚卸保留"]
+    I3["在庫追加"]
+
+    I -->|委託出庫| C
+    C -->|委託販売成立| S
+    C -->|売れずに返却| I
+    I -->|貸出・展示| L
+    L -->|返却・検品OK| I
+    L -->|破損| R
+    L -->|紛失| X
+    I -->|倉庫移動| T
+    T -->|移動完了| I2
+    I -->|棚卸差異| H
+    H -->|現物確認| I
+    H -->|不足確定| X
+    H -->|過剰在庫発見| I3`
+    };
+
+    for (const [id, definition] of Object.entries(diagrams)) {
+      const { svg } = await mermaid.render(`${id}-svg`, definition);
+      document.getElementById(id).innerHTML = svg;
+    }
+    document.body.dataset.ready = "true";
+  </script>
+</body>
+</html>

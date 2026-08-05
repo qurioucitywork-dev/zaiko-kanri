@@ -13,16 +13,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"golang.org/x/crypto/bcrypt"
-	_ "modernc.org/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-//go:embed migrations/000001_phase1.up.sql migrations/000002_inventory.up.sql migrations/000003_market.up.sql migrations/000004_sales_shipments.up.sql migrations/000005_requests_reservations.up.sql migrations/000006_approvals.up.sql
+//go:embed migrations/000001_phase1.up.sql migrations/000002_inventory.up.sql migrations/000003_market.up.sql migrations/000004_sales_shipments.up.sql migrations/000005_requests_reservations.up.sql migrations/000006_approvals.up.sql migrations/000007_document_operations.up.sql
 var schemaFS embed.FS
 
 const (
 	RoleAdmin  = "admin"
 	RoleWorker = "worker"
+	RoleGuest  = "guest"
 )
 
 type Store struct {
@@ -79,9 +82,13 @@ func Open(path string) (*Store, error) {
 	if path != ":memory:" && !strings.HasPrefix(path, "file:") {
 		dsn = "file:" + path
 	}
-	db, err := sql.Open("sqlite", dsn)
+	orm, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
+	}
+	db, err := orm.DB()
+	if err != nil {
+		return nil, fmt.Errorf("access database connection: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, now: func() time.Time { return time.Now().UTC() }}
@@ -112,6 +119,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"000004_sales_shipments", "migrations/000004_sales_shipments.up.sql"},
 		{"000005_requests_reservations", "migrations/000005_requests_reservations.up.sql"},
 		{"000006_approvals", "migrations/000006_approvals.up.sql"},
+		{"000007_document_operations", "migrations/000007_document_operations.up.sql"},
 	} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=?`, migration.version).Scan(&count); err != nil {
@@ -282,6 +290,7 @@ func defaultOrganizationSettings() []Setting {
 		{"reservation.duration_hours", "", "integer", false},
 		{"exchange_rate.provider", "manual", "string", false},
 		{"csv.encoding", "UTF-8-BOM", "string", false},
+		{"security.admin_access_code", "", "string", false},
 	}
 }
 

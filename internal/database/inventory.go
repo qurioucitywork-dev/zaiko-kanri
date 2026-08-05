@@ -18,6 +18,8 @@ var (
 	ErrInvalidStatusTransition  = errors.New("許可されていない在庫状態の変更です")
 )
 
+const previewSalePriceJPYPerUSD int64 = 155
+
 type Supplier struct {
 	ID   string
 	Code string
@@ -191,6 +193,9 @@ func (s *Store) SeedInventoryPreview(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.migratePreviewSalePricesToUSD(ctx, now); err != nil {
+		return err
+	}
 	var count int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM products WHERE organization_id='org_preview'`).Scan(&count); err != nil {
 		return err
@@ -202,10 +207,50 @@ func (s *Store) SeedInventoryPreview(ctx context.Context) error {
 		OrganizationID: "org_preview", SupplierID: "sup_001", PurchaseDate: "2026-07-26",
 		SKU: "ROLEX-SUB-001", Brand: "ロレックス", ModelNumber: "116610LN",
 		SerialNumber: "ZX123456", ProductType: "腕時計", CostAmountMinor: 850000, CostCurrency: "JPY",
-		BaseSalePriceMinor: 1180000, BaseSaleCurrency: "JPY", Condition: "極美品 (S)",
+		BaseSalePriceMinor: 7613, BaseSaleCurrency: "USD", Condition: "極美品 (S)",
 		Accessories: "BOX, GUARANTEE", CreatedBy: "usr_admin",
 	})
 	return err
+}
+
+// migratePreviewSalePricesToUSD upgrades local preview rows created before the
+// USD policy. The fixed rate matches the reference admin's manually managed
+// preview rate and intentionally does not affect non-preview organizations.
+func (s *Store) migratePreviewSalePricesToUSD(ctx context.Context, updatedAt string) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id,base_sale_price_minor FROM products
+		WHERE organization_id='org_preview' AND base_sale_currency='JPY'`)
+	if err != nil {
+		return err
+	}
+	type legacySalePrice struct {
+		id    string
+		price int64
+	}
+	var legacy []legacySalePrice
+	for rows.Next() {
+		var item legacySalePrice
+		if err := rows.Scan(&item.id, &item.price); err != nil {
+			rows.Close()
+			return err
+		}
+		legacy = append(legacy, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range legacy {
+		usd := (item.price + previewSalePriceJPYPerUSD/2) / previewSalePriceJPYPerUSD
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE products SET base_sale_price_minor=?,base_sale_currency='USD',updated_at=?
+			WHERE id=?`, usd, updatedAt, item.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Suppliers(ctx context.Context, organizationID string) ([]Supplier, error) {

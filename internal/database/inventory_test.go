@@ -42,6 +42,38 @@ func singleInput(date, sku, serial string) SingleProductInput {
 	}
 }
 
+func TestSeedInventoryPreviewUsesAndMigratesUSDPrices(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	if err := store.SeedInventoryPreview(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var id, currency string
+	var price int64
+	if err := store.db.QueryRow(`
+		SELECT id,base_sale_price_minor,base_sale_currency
+		FROM products WHERE organization_id='org_preview' LIMIT 1`).Scan(&id, &price, &currency); err != nil {
+		t.Fatal(err)
+	}
+	if price != 7613 || currency != "USD" {
+		t.Fatalf("seed sale price=%d %s want 7613 USD", price, currency)
+	}
+	if _, err := store.db.Exec(`
+		UPDATE products SET base_sale_price_minor=1180000,base_sale_currency='JPY' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SeedInventoryPreview(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`
+		SELECT base_sale_price_minor,base_sale_currency FROM products WHERE id=?`, id).Scan(&price, &currency); err != nil {
+		t.Fatal(err)
+	}
+	if price != 7613 || currency != "USD" {
+		t.Fatalf("migrated sale price=%d %s want 7613 USD", price, currency)
+	}
+}
+
 func TestConfirmPurchaseGeneratesQuantityAndIsIdempotent(t *testing.T) {
 	store := inventoryStore(t)
 	ctx := context.Background()

@@ -5,7 +5,13 @@
 | 変数 | 開発初期値 | 本番要件 |
 |---|---|---|
 | `ZAIKO_ADDRESS` | `127.0.0.1:8080` | リバースプロキシ配下の待受 |
+| `ZAIKO_DATABASE_DRIVER` | `sqlite` | 完全移行後は `postgres` |
+| `ZAIKO_DATABASE_URL` | 空 | PostgreSQL接続時は必須。Secrets Managerから注入 |
 | `ZAIKO_DATABASE_PATH` | `.data/zaiko.db` | 絶対パス、永続ディスク |
+| `ZAIKO_STORAGE_DRIVER` | `local` | ECSでは `s3` |
+| `ZAIKO_S3_BUCKET` | 空 | S3利用時は必須 |
+| `ZAIKO_S3_REGION` | `ap-northeast-1` | 配置リージョン |
+| `ZAIKO_S3_ENDPOINT` | 空 | LocalStack等の検証時だけ指定 |
 | `ZAIKO_UPLOAD_DIRECTORY` | `.data/uploads` | 絶対パス、バックアップ対象 |
 | `ZAIKO_ENV` | `development` | `production` |
 | `ZAIKO_COOKIE_SECURE` | `false` | `true`必須 |

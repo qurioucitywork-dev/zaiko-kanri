@@ -1,0 +1,225 @@
+/* =====================================================
+   相場表 — 在庫一覧と同じ業務画面トーンで追加
+   ===================================================== */
+
+.market-guide {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a5f;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.market-guide > i {
+  margin-top: 3px;
+  color: #2563eb;
+}
+
+.market-guide strong { font-weight: 700; }
+
+.market-guide .market-guide-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #bfdbfe;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.market-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px 16px;
+}
+
+.market-filter-grid > .inv-filter-item {
+  min-width: 0;
+}
+
+.market-date-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.market-date-range .inv-filter-input {
+  width: 100%;
+  min-width: 0;
+  padding-right: 8px;
+  padding-left: 8px;
+}
+
+.market-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 1280px;
+}
+
+.market-table th,
+.market-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.market-table .market-col-hidden {
+  display: none !important;
+}
+
+.market-table td[data-market-col="purchasePrice"],
+.market-table td[data-market-col="marketPrice"] {
+  font-variant-numeric: tabular-nums;
+}
+
+.market-table tbody tr {
+  cursor: pointer;
+  transition: background-color 0.18s ease;
+}
+
+.market-table tbody tr:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.3);
+  outline-offset: -3px;
+}
+
+.market-import-date {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #1e3a5f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.market-import-date i { color: #64748b; }
+
+.market-price-yen,
+.market-price-usd {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.market-price-yen { color: var(--primary); }
+.market-price-usd { color: #047857; }
+
+.market-price-usd::before {
+  content: 'USD';
+  display: inline-block;
+  margin-right: 5px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #d1fae5;
+  color: #047857;
+  font-size: 9px;
+  font-weight: 800;
+  vertical-align: 1px;
+}
+
+.market-import-summary {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid #a7f3d0;
+  background: #ecfdf5;
+  color: #065f46;
+  font-size: 12px;
+}
+
+.market-import-summary.show { display: flex; }
+
+.market-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+}
+
+.market-edit-section {
+  padding: 14px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.market-edit-section:first-child { padding-top: 0; }
+.market-edit-section:last-child { border-bottom: 0; padding-bottom: 0; }
+
+.market-edit-section-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.market-currency-field {
+  position: relative;
+}
+
+.market-currency-prefix {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #047857;
+  font-weight: 800;
+  pointer-events: none;
+}
+
+.market-currency-field input { padding-left: 28px; }
+
+.market-required-error {
+  display: none;
+  margin-top: 4px;
+  color: #b91c1c;
+  font-size: 11px;
+}
+
+.market-required-error.show { display: block; }
+
+@media (max-width: 1100px) {
+  .market-filter-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 600px) {
+  .market-filter-grid,
+  .market-edit-grid { grid-template-columns: 1fr; }
+
+  .market-guide {
+    align-items: flex-start;
+    white-space: normal;
+  }
+
+  .market-guide .market-guide-unit {
+    display: flex;
+    width: fit-content;
+    margin: 5px 0 0;
+  }
+
+  #marketEditModal { padding: 8px; }
+  #marketEditModal .modal { max-height: 96vh !important; }
+  #marketEditModal .modal-body { padding: 16px !important; }
+
+  #market-result-area .card-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .market-table tbody tr { transition: none; }
+}

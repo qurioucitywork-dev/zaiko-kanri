@@ -36,7 +36,7 @@
           <label>商品種別 <b>必須</b><input name="product_type" value="{{.ProductForm.ProductType}}" required></label>
           <label>SKU <small>任意・重複可</small><input name="sku" value="{{.ProductForm.SKU}}"></label>
           <label>シリアル番号 <small>未入力・重複可</small><input name="serial_number" value="{{.ProductForm.SerialNumber}}"></label>
-          <label>基準売価<div class="input-pair"><select name="base_sale_currency"><option {{if eq .ProductForm.BaseSaleCurrency "USD"}}selected{{end}}>USD</option><option {{if eq .ProductForm.BaseSaleCurrency "JPY"}}selected{{end}}>JPY</option></select><input name="base_sale_price" inputmode="numeric" value="{{.ProductForm.BaseSalePrice}}" placeholder="0"></div></label>
+          <label>売価（USD）<div class="input-pair"><select name="base_sale_currency" aria-label="売価通貨"><option selected>USD</option></select><input name="base_sale_price" inputmode="numeric" value="{{.ProductForm.BaseSalePrice}}" placeholder="0"></div></label>
           <label>商品状態<input name="condition" value="{{.ProductForm.Condition}}" placeholder="例：極美品 (S)"></label>
           <label class="span-two">付属品<input name="accessories" value="{{.ProductForm.Accessories}}" placeholder="例：BOX, GUARANTEE"></label>
         </div>

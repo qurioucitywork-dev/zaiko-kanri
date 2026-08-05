@@ -18,10 +18,10 @@
           <select name="product_id" required><option value="">選択してください</option>{{range .Products}}<option value="{{.ID}}">{{.ProductCode}}｜{{.Brand}} {{.ModelNumber}}（{{productStatus .InventoryStatus}}）</option>{{end}}</select>
         </label>
         <label>数量 <b>必須</b><input type="number" name="quantity" min="1" max="999" value="1" required></label>
-        <label>売上通貨 <select name="currency"><option>JPY</option><option>USD</option></select></label>
-        <label>売上単価 <b>必須</b><input name="unit_price" inputmode="numeric" value="0" required></label>
+        <label>売上通貨 <input name="currency" value="USD" readonly aria-readonly="true"></label>
+        <label>売上単価（USD） <b>必須</b><input name="unit_price" inputmode="numeric" value="0" required></label>
       </div>
-      <p class="form-hint">USDの場合、確定時点の最新USD/JPYレートを売上明細へ固定します。</p>
+      <p class="form-hint">売価はUSDで登録し、確定時点の最新USD/JPYレートを売上明細へ固定します。</p>
     </fieldset>
     <div class="form-actions"><a class="button ghost" href="/sales">キャンセル</a><button class="button primary" type="submit">下書き保存</button></div>
   </form>

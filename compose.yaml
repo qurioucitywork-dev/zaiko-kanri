@@ -1,0 +1,39 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      ZAIKO_ADDRESS: 0.0.0.0:8080
+      ZAIKO_ENV: development
+      ZAIKO_DATABASE_DRIVER: ${ZAIKO_DATABASE_DRIVER:-sqlite}
+      ZAIKO_DATABASE_URL: postgres://zaiko:zaiko-local@postgres:5432/zaiko?sslmode=disable
+      ZAIKO_DATABASE_PATH: /data/zaiko.db
+      ZAIKO_UPLOAD_DIRECTORY: /data/uploads
+      ZAIKO_STORAGE_DRIVER: local
+      ZAIKO_COOKIE_SECURE: "false"
+    volumes:
+      - app-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: zaiko
+      POSTGRES_USER: zaiko
+      POSTGRES_PASSWORD: zaiko-local
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zaiko -d zaiko"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  app-data:
+  postgres-data:

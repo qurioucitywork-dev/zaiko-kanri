@@ -21,7 +21,7 @@
       <option value="code_asc" {{if eq .Sort "code_asc"}}selected{{end}}>商品コード昇順</option>
       <option value="code_desc" {{if eq .Sort "code_desc"}}selected{{end}}>商品コード降順</option>
       <option value="brand_asc" {{if eq .Sort "brand_asc"}}selected{{end}}>ブランド順</option>
-      <option value="sale_price_desc" {{if eq .Sort "sale_price_desc"}}selected{{end}}>基準売価の高い順</option>
+      <option value="sale_price_desc" {{if eq .Sort "sale_price_desc"}}selected{{end}}>売価（USD）の高い順</option>
     </select>
     {{if eq .User.Role "admin"}}
     <label class="check-field"><input type="checkbox" name="include_cancelled" value="1" {{if .IncludeCancelled}}checked{{end}}>取消を含む</label>
@@ -37,7 +37,7 @@
 {{define "product-results"}}
 <section class="card" id="product-results" aria-live="polite" aria-busy="false">
   <div class="card-header">
-    <div><h2>在庫商品</h2><p>商品コードは仕入日単位で自動採番され、登録後は変更できません。</p></div>
+    <div><h2>在庫商品</h2><p>商品コードは仕入日単位で自動採番されます。売価はUSDで管理します。</p></div>
     <div class="result-actions">
       <span class="badge">{{.TotalProducts}}件</span>
       <a class="button secondary small" href="/products/export.csv?q={{urlquery .Query}}&status={{urlquery .Status}}&sort={{urlquery .Sort}}{{if .IncludeCancelled}}&include_cancelled=1{{end}}">CSV出力</a>
@@ -45,7 +45,7 @@
   </div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th scope="col">商品コード</th><th scope="col">商品</th><th scope="col">SKU / シリアル</th><th scope="col">仕入先・仕入日</th><th scope="col">原価</th><th scope="col">基準売価・参考換算</th><th scope="col">粗利・利益率</th><th scope="col">状態</th><th scope="col">画像</th></tr></thead>
+      <thead><tr><th scope="col">商品コード</th><th scope="col">商品</th><th scope="col">SKU / シリアル</th><th scope="col">仕入先・仕入日</th><th scope="col">原価</th><th scope="col">売価（USD）・参考円換算</th><th scope="col">粗利・利益率</th><th scope="col">状態</th><th scope="col">画像</th></tr></thead>
       <tbody>
       {{range .Products}}
         <tr class="clickable-row">

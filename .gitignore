@@ -1,5 +1,6 @@
 # Local development tools and generated state
 /.tooling/
+/.pnpm-store/
 /.data/
 /.tmp/
 /bin/
@@ -17,3 +18,12 @@ coverage.out
 .idea/
 .DS_Store
 Thumbs.db
+
+# Frontend dependencies (built assets under internal/web/react-dist are committed)
+/frontend/node_modules/
+
+# Terraform local state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars

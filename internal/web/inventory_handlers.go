@@ -8,8 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -106,7 +105,7 @@ func (s *Server) productsCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="inventory-products.csv"`)
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
 	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"商品コード", "SKU", "ブランド", "型番", "シリアル", "仕入日", "仕入先", "原価", "原価通貨", "基準売価", "売価通貨", "在庫状態"})
+	_ = writer.Write([]string{"商品コード", "SKU", "ブランド", "型番", "シリアル", "仕入日", "仕入先", "原価", "原価通貨", "売価（USD）", "売価通貨", "在庫状態"})
 	for _, product := range page.Products {
 		_ = writer.Write([]string{
 			safeCSVCell(product.ProductCode), safeCSVCell(product.SKU), safeCSVCell(product.Brand),
@@ -147,7 +146,7 @@ func (s *Server) productCreate(w http.ResponseWriter, r *http.Request) {
 		SKU: r.FormValue("sku"), Brand: r.FormValue("brand"), ModelNumber: r.FormValue("model_number"),
 		SerialNumber: r.FormValue("serial_number"), ProductType: r.FormValue("product_type"),
 		CostAmount: r.FormValue("cost_amount"), CostCurrency: r.FormValue("cost_currency"),
-		BaseSalePrice: r.FormValue("base_sale_price"), BaseSaleCurrency: r.FormValue("base_sale_currency"),
+		BaseSalePrice: r.FormValue("base_sale_price"), BaseSaleCurrency: "USD",
 		Condition: r.FormValue("condition"), Accessories: r.FormValue("accessories"),
 		DuplicateReason: r.FormValue("duplicate_reason"),
 	}
@@ -371,30 +370,18 @@ func (s *Server) productImageUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	imageID, _ := database.NewID("img")
-	relativePath := filepath.Join(user.OrganizationID, productID, imageID+extension)
-	targetPath := filepath.Join(s.cfg.UploadDirectory, relativePath)
-	if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
-		http.Error(w, "画像保存先を準備できませんでした。", http.StatusInternalServerError)
-		return
-	}
-	destination, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o640)
+	relativePath := path.Join(user.OrganizationID, productID, imageID+extension)
+	written, err := s.objects.Put(r.Context(), relativePath, contentType, io.LimitReader(file, 8<<20))
 	if err != nil {
-		http.Error(w, "画像を保存できませんでした。", http.StatusInternalServerError)
-		return
-	}
-	written, copyErr := io.Copy(destination, io.LimitReader(file, 8<<20))
-	closeErr := destination.Close()
-	if copyErr != nil || closeErr != nil {
-		_ = os.Remove(targetPath)
 		http.Error(w, "画像を保存できませんでした。", http.StatusInternalServerError)
 		return
 	}
 	image, err := s.store.AddProductImage(r.Context(), database.ProductImage{
-		ID: imageID, ProductID: productID, StoragePath: relativePath, OriginalName: filepath.Base(header.Filename),
+		ID: imageID, ProductID: productID, StoragePath: relativePath, OriginalName: path.Base(strings.ReplaceAll(header.Filename, "\\", "/")),
 		ContentType: contentType, SizeBytes: written,
 	}, user.OrganizationID, user.ID)
 	if err != nil {
-		_ = os.Remove(targetPath)
+		_ = s.objects.Delete(r.Context(), relativePath)
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
@@ -414,17 +401,13 @@ func (s *Server) productImage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	base, err := filepath.Abs(s.cfg.UploadDirectory)
+	object, err := s.objects.Get(r.Context(), image.StoragePath)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	target, err := filepath.Abs(filepath.Join(base, image.StoragePath))
-	if err != nil || (!strings.HasPrefix(target, base+string(os.PathSeparator)) && target != base) {
-		http.NotFound(w, r)
-		return
-	}
+	defer object.Body.Close()
 	w.Header().Set("Content-Type", image.ContentType)
 	w.Header().Set("Content-Disposition", `inline; filename="`+url.PathEscape(image.OriginalName)+`"`)
-	http.ServeFile(w, r, target)
+	_, _ = io.Copy(w, object.Body)
 }

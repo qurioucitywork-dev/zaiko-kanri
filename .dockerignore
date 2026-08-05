@@ -1,0 +1,8 @@
+.git
+.data
+.tooling
+.pnpm-store
+frontend/node_modules
+infra/terraform/.terraform
+*.tfstate*
+.env
