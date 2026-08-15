@@ -54,6 +54,7 @@ type ConsignmentSlipRecord struct {
 	CreatedAt        time.Time               `json:"createdAt"`
 	UpdatedAt        time.Time               `json:"updatedAt"`
 	Lines            []ConsignmentLineRecord `gorm:"-" json:"lines,omitempty"`
+	OfficialPDF      *OfficialDocumentRef    `gorm:"-" json:"officialPdf,omitempty"`
 }
 
 func (r *Repository) CreateConsignment(ctx context.Context, input ConsignmentCreateInput) (ConsignmentSlipRecord, error) {

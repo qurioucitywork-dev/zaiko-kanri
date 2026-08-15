@@ -5598,6 +5598,23 @@ function canIssuePurchaseSlip() {
   return !session || (typeof isAdmin === 'function' && isAdmin());
 }
 
+/** サーバーが発行時点で固定保存した正式PDFを、認証Cookie付きで取得する。 */
+async function downloadOfficialPDF(reference) {
+  if (!reference?.downloadUrl) return false;
+  const response = await fetch(reference.downloadUrl, { credentials: 'same-origin' });
+  if (!response.ok) throw new Error('保存済みPDFをダウンロードできませんでした。');
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = reference.fileName || 'document.pdf';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return true;
+}
+
 async function issuePurchaseSlipDocument(slipId, event) {
   event?.stopPropagation?.();
   if (!canIssuePurchaseSlip()) {
@@ -5617,8 +5634,9 @@ async function issuePurchaseSlipDocument(slipId, event) {
     issueButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 発行中';
   }
   try {
+	let issuedRecord = null;
     if (window.ZaikoAPI?.issuePurchaseSlip) {
-      await window.ZaikoAPI.issuePurchaseSlip(slip);
+	  issuedRecord = await window.ZaikoAPI.issuePurchaseSlip(slip);
       slip = (APP_DATA.purchaseSlips || []).find(record => record.id === slipId) || slip;
     } else {
       slip.issuedAt = new Date().toISOString();
@@ -5628,7 +5646,9 @@ async function issuePurchaseSlipDocument(slipId, event) {
       renderSlipList(APP_DATA.purchaseSlips || []);
     }
     if (typeof peRenderList === 'function') peRenderList();
-    _downloadTemplateDocument('仕入伝票', `${slip.id}_仕入伝票.html`, buildPurchaseRecordTemplateHTML(slip));
+	if (!(await downloadOfficialPDF(issuedRecord?.officialPdf))) {
+	  _downloadTemplateDocument('仕入伝票', `${slip.id}_仕入伝票.html`, buildPurchaseRecordTemplateHTML(slip));
+	}
   } catch (error) {
     showToast('error', '発行できませんでした', error?.message || '仕入伝票の発行処理に失敗しました。');
   } finally {
@@ -5652,15 +5672,18 @@ async function issueConsignmentSlipDocument(slipId, event) {
   const original = button?.innerHTML || '';
   if (button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 発行中'; }
   try {
+	let issuedRecord = null;
     if (window.ZaikoAPI?.issueConsignmentSlip) {
-      await window.ZaikoAPI.issueConsignmentSlip(slip);
+	  issuedRecord = await window.ZaikoAPI.issueConsignmentSlip(slip);
       slip = (APP_DATA.consignments || []).find(record => record.id === slipId) || slip;
     } else {
       slip.issuedAt = new Date().toISOString();
       slip.issuedBy = typeof currentUserId === 'function' ? (currentUserId() || 'preview-admin') : 'preview-admin';
     }
     if (typeof renderSlipList === 'function' && currentSlipTab === 'consignment') renderSlipList(APP_DATA.consignments || []);
-    _downloadTemplateDocument('委託伝票', `${slip.id}_委託伝票.html`, buildConsignmentRecordTemplateHTML(slip));
+	if (!(await downloadOfficialPDF(issuedRecord?.officialPdf))) {
+	  _downloadTemplateDocument('委託伝票', `${slip.id}_委託伝票.html`, buildConsignmentRecordTemplateHTML(slip));
+	}
   } catch (error) {
     showToast('error', '発行できませんでした', error?.message || '委託伝票の発行処理に失敗しました。');
   } finally {
@@ -5716,8 +5739,9 @@ async function issueSaleSlipDocument(slipId, event) {
     issueButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 発行中';
   }
   try {
+	let issuedRecord = null;
     if (window.ZaikoAPI?.issueSaleSlip) {
-      await window.ZaikoAPI.issueSaleSlip(slip);
+	  issuedRecord = await window.ZaikoAPI.issueSaleSlip(slip);
       slip = (APP_DATA.sales || []).find(record => record.id === slipId) || slip;
     } else {
       slip.issuedAt = new Date().toISOString();
@@ -5726,7 +5750,9 @@ async function issueSaleSlipDocument(slipId, event) {
     if (typeof renderSlipList === 'function' && typeof currentSlipTab !== 'undefined' && currentSlipTab === 'sales') {
       renderSlipList(APP_DATA.sales || []);
     }
-    _downloadTemplateDocument('請求書（売上伝票）', `${slip.id}_請求書.html`, buildSalesRecordTemplateHTML(slip));
+	if (!(await downloadOfficialPDF(issuedRecord?.officialPdf))) {
+	  _downloadTemplateDocument('請求書（売上伝票）', `${slip.id}_請求書.html`, buildSalesRecordTemplateHTML(slip));
+	}
   } catch (error) {
     showToast('error', '発行できませんでした', error?.message || '売上伝票の発行処理に失敗しました。');
   } finally {

@@ -133,6 +133,12 @@ func (s *Server) apiPurchaseIssue(w http.ResponseWriter, r *http.Request) {
 		writePurchaseError(w, err)
 		return
 	}
+	pdfRef, err := s.storeOfficialPDF(r, "purchase", record.ID, record.SlipNumber, purchasePDF(record), record)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "purchase_pdf_failed", "仕入伝票は発行されましたが、正式PDFを保存できませんでした。再発行してください。")
+		return
+	}
+	record.OfficialPDF = pdfRef
 	after, _ := json.Marshal(record)
 	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
 		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "purchase_slip", TargetID: record.ID,

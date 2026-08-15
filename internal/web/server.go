@@ -151,6 +151,7 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/documents", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocuments)))
 	mux.Handle("GET /api/v1/document-events", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocumentEvents)))
 	mux.Handle("POST /api/v1/document-events", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocumentEventCreate)))
+	mux.Handle("GET /api/v1/document-events/{id}/file", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocumentEventFile)))
 	mux.Handle("GET /api/v1/exports/{kind}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiCSVExport)))
 	mux.Handle("GET /api/v1/settings", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiSettings)))
 	mux.Handle("PUT /api/v1/settings/{key}", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiSettingUpdate)))

@@ -59,29 +59,30 @@ type SaleLineRecord struct {
 }
 
 type SaleSlipRecord struct {
-	ID                 string           `json:"id"`
-	SlipNumber         string           `json:"slipNumber"`
-	BuyerCode          string           `json:"buyerCode"`
-	BuyerName          string           `json:"buyerName"`
-	SaleDate           DateString       `json:"saleDate"`
-	DisplayCurrency    string           `json:"displayCurrency"`
-	TaxMode            string           `json:"taxMode"`
-	TaxRateBasisPoints int              `json:"taxRateBasisPoints"`
-	Status             string           `json:"status"`
-	Notes              string           `json:"notes"`
-	SubtotalMinor      int64            `json:"subtotalMinor"`
-	TaxAmountMinor     int64            `json:"taxAmountMinor"`
-	TotalMinor         int64            `json:"totalMinor"`
-	ConvertedTotalJPY  int64            `json:"convertedTotalJpy"`
-	FXRateSnapshotID   string           `json:"fxRateSnapshotId"`
-	FXRateScaled       int64            `json:"fxRateScaled"`
-	FXScale            int64            `json:"fxScale"`
-	ConfirmedAt        *time.Time       `json:"confirmedAt,omitempty"`
-	IssuedAt           *time.Time       `json:"issuedAt,omitempty"`
-	IssuedBy           string           `json:"issuedBy,omitempty"`
-	CreatedAt          time.Time        `json:"createdAt"`
-	UpdatedAt          time.Time        `json:"updatedAt"`
-	Lines              []SaleLineRecord `gorm:"-" json:"lines,omitempty"`
+	ID                 string               `json:"id"`
+	SlipNumber         string               `json:"slipNumber"`
+	BuyerCode          string               `json:"buyerCode"`
+	BuyerName          string               `json:"buyerName"`
+	SaleDate           DateString           `json:"saleDate"`
+	DisplayCurrency    string               `json:"displayCurrency"`
+	TaxMode            string               `json:"taxMode"`
+	TaxRateBasisPoints int                  `json:"taxRateBasisPoints"`
+	Status             string               `json:"status"`
+	Notes              string               `json:"notes"`
+	SubtotalMinor      int64                `json:"subtotalMinor"`
+	TaxAmountMinor     int64                `json:"taxAmountMinor"`
+	TotalMinor         int64                `json:"totalMinor"`
+	ConvertedTotalJPY  int64                `json:"convertedTotalJpy"`
+	FXRateSnapshotID   string               `json:"fxRateSnapshotId"`
+	FXRateScaled       int64                `json:"fxRateScaled"`
+	FXScale            int64                `json:"fxScale"`
+	ConfirmedAt        *time.Time           `json:"confirmedAt,omitempty"`
+	IssuedAt           *time.Time           `json:"issuedAt,omitempty"`
+	IssuedBy           string               `json:"issuedBy,omitempty"`
+	CreatedAt          time.Time            `json:"createdAt"`
+	UpdatedAt          time.Time            `json:"updatedAt"`
+	Lines              []SaleLineRecord     `gorm:"-" json:"lines,omitempty"`
+	OfficialPDF        *OfficialDocumentRef `gorm:"-" json:"officialPdf,omitempty"`
 }
 
 type fxSnapshot struct {

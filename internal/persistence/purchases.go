@@ -113,6 +113,7 @@ type PurchaseSlipRecord struct {
 	UpdatedAt             time.Time            `json:"updatedAt"`
 	Lines                 []PurchaseLineRecord `gorm:"-" json:"lines,omitempty"`
 	CreatedProducts       []Product            `gorm:"-" json:"createdProducts,omitempty"`
+	OfficialPDF           *OfficialDocumentRef `gorm:"-" json:"officialPdf,omitempty"`
 }
 
 func normalizePurchaseTaxMode(value string) (string, int, error) {

@@ -75,6 +75,19 @@ type DocumentEventRecord struct {
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
+// OfficialDocumentRef points to an immutable PDF stored at issuance time.
+// The URL is API-relative so it remains valid when local storage is replaced
+// by S3 without exposing the underlying object key.
+type OfficialDocumentRef struct {
+	EventID     string    `json:"eventId"`
+	Version     int       `json:"version"`
+	FileName    string    `json:"fileName"`
+	DownloadURL string    `json:"downloadUrl"`
+	SHA256      string    `json:"sha256"`
+	SizeBytes   int64     `json:"sizeBytes"`
+	IssuedAt    time.Time `json:"issuedAt"`
+}
+
 func normalizeDocumentEvent(input DocumentEventInput) (DocumentEventInput, error) {
 	input.DocumentType = strings.ToLower(strings.TrimSpace(input.DocumentType))
 	input.DocumentID = strings.TrimSpace(input.DocumentID)
@@ -87,6 +100,7 @@ func normalizeDocumentEvent(input DocumentEventInput) (DocumentEventInput, error
 	validTypes := map[string]bool{
 		"purchase": true, "sale": true, "shipment": true, "return": true,
 		"purchase_return": true, "inventory": true, "market": true, "documents": true, "stocktake": true,
+		"consignment": true,
 	}
 	validActions := map[string]bool{"preview": true, "print": true, "download": true}
 	validFormats := map[string]bool{"html": true, "pdf": true, "csv": true}

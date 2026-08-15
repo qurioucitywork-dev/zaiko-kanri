@@ -42,6 +42,12 @@ func (s *Server) apiConsignmentIssue(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "consignment_issue_failed", "委託伝票を発行できませんでした。")
 		return
 	}
+	pdfRef, err := s.storeOfficialPDF(r, "consignment", record.ID, record.SlipNumber, consignmentPDF(record), record)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "consignment_pdf_failed", "委託伝票は発行されましたが、正式PDFを保存できませんでした。再発行してください。")
+		return
+	}
+	record.OfficialPDF = pdfRef
 	after, _ := json.Marshal(record)
 	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: user.OrganizationID, ActorUserID: user.ID,
 		TargetType: "consignment_slip", TargetID: record.ID, Action: "consignment.issued", AfterJSON: string(after),
