@@ -34,7 +34,7 @@ const ROLE_ADMIN_ONLY_PAGES = ['approval', 'password', 'company', 'login-info'];
 const ROLE_ADMIN_AUTH_PAGES = ['master', 'box'];
 const ROLE_WORKSPACE_PAGES = [
   'dashboard', 'market', 'inventory', 'purchase-entry', 'purchase', 'sales',
-  'sales-list', 'shipping', 'returns', 'master', 'box', 'performance',
+  'sales-list', 'shipping', 'consignment', 'returns', 'master', 'box', 'performance',
   'stocktake', 'purchase-list', 'client',
 ];
 

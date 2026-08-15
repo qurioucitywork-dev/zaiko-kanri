@@ -3,7 +3,7 @@
 (function () {
   const state = { csrfToken: '', user: null, hydrated: false, company: null, latestRate: 155 };
   const statusLabel = {
-    purchasing: '仕入中', in_stock: '在庫中', reserved: '取置中', return_pending: '仕入返品中', shipped: '出荷済', sold: '売上済', cancelled: '取消',
+    purchasing: '仕入中', in_stock: '在庫中', reserved: '取置中', return_pending: '仕入返品中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '取消',
     draft: '未処理', confirmed: '処理済', pending: '未対応', approved: '承認済', rejected: '却下', returned: '差戻し',
   };
 
@@ -95,6 +95,9 @@
     assign('conditions', 'conditions');
     assign('accessories', 'accessoryRecords');
     if (results.accessories?.items) APP_DATA.accessories = results.accessories.items.map(item => item.name);
+    assign('auctions', 'auctionRecords');
+    assign('belt-materials', 'beltMaterialRecords');
+    assign('dials', 'dialRecords');
   }
 
   function applyPartners(partners) {
@@ -180,13 +183,21 @@
       code: product.productCode,
       sku: product.sku,
       brand: product.brand,
+      brandCode: masterCode(masters.brands?.items, product.brandId),
       model: product.modelNumber,
       ref: product.referenceNumber || '',
       serial: product.serialNumber,
       supplier: (product.supplierRoleId || '').replace('partner_role_', ''),
       staff: staffName(product.purchaseStaffProfileId),
-      purchasePrice: product.costCurrency === 'USD' ? Math.round(product.costAmountMinor * rate) : product.costAmountMinor,
-      purchaseCurrency: product.costCurrency,
+      // The JPY acquisition value is the immutable purchase-line snapshot.
+      // Do not recalculate it with the latest master rate when hydrating stock.
+      purchasePrice: Number(product.fixedPurchaseCostJpyMinor)
+        || (product.costCurrency === 'JPY' ? Number(product.costAmountMinor) || 0 : Math.round((Number(product.costAmountMinor) || 0) * rate)),
+      purchaseCurrency: product.purchaseSourceCurrency || product.costCurrency,
+      purchaseOriginalPrice: Number(product.purchaseSourceAmountMinor) || Number(product.costAmountMinor) || 0,
+      purchaseFxRateScaled: Number(product.purchaseFxRateScaled) || 0,
+      purchaseFxScale: Number(product.purchaseFxScale) || 0,
+      purchaseFxRateObservedAt: product.purchaseFxRateObservedAt || null,
       salePrice: product.baseSaleCurrency === 'JPY' ? Math.round(product.baseSalePriceMinor / rate) : product.baseSalePriceMinor,
       saleCurrency: product.baseSaleCurrency,
       purchaseDate: product.purchaseDate,
@@ -194,7 +205,8 @@
       material: masterCode(masters.materials?.items, product.materialId),
       movement: masterCode(masters.movements?.items, product.movementId),
       condition: masterCode(masters.conditions?.items, product.conditionId) || product.condition,
-      accessories: String(product.accessories || '').split(',').map(value => value.trim()).filter(Boolean),
+      accessories: String(product.accessories || '').split(',').map(value => value.trim()).filter(Boolean).map(code =>
+        masters.accessories?.items?.find(item => item.code === code)?.name || code),
       belt: product.beltText || '', dial: product.dialText || '', braceletQty: product.braceletQuantity || null,
       images: [],
       imageCount: product.imageCount || 0,
@@ -207,44 +219,158 @@
   function purchaseView(record, productByLine, rate, staffDirectory) {
     const staffName = (staffDirectory || []).find(user => user.staffCode === record.staffCode)?.displayName
       || record.staffCode;
+    const accessoryNames = values => (Array.isArray(values) ? values : String(values || '').split(','))
+      .map(value => String(value || '').trim()).filter(Boolean).map(code =>
+        APP_DATA.accessoryRecords?.find(item => item.code === code)?.name || code);
+    const productNotes = value => {
+      const parts = String(value || '').split(' / ').map(part => part.trim()).filter(Boolean);
+      const boxPart = parts.find(part => part.startsWith('BOX:')) || '';
+      return {
+        boxNo: boxPart.slice(4).trim(),
+        note: parts.filter(part => !/^(?:BOX|ベルト|文字盤):/u.test(part)).join(' / '),
+      };
+    };
     return {
       _id: record.id, id: record.slipNumber, date: record.purchaseDate, supplier: record.supplierCode,
       staff: staffName, staffCode: record.staffCode, note: record.notes, status: statusLabel[record.status] || record.status,
-      registeredAt: record.createdAt, revisions: [], apiManaged: true,
-      lines: (record.lines || []).map(line => ({
-        lineNo: line.lineNumber,
-        code: productByLine.get(line.id)?.code || '',
-        sku: line.sku,
-        quantity: line.quantity,
-        purchasePrice: line.costCurrency === 'USD' ? Math.round(line.unitCostMinor * rate) : line.unitCostMinor,
-        purchaseCurrency: line.costCurrency,
-        salePrice: line.baseSaleCurrency === 'JPY' ? Math.round(line.baseSalePriceMinor / rate) : line.baseSalePriceMinor,
-        saleCurrency: line.baseSaleCurrency,
-        productDetail: { brand: line.brandName, model: line.modelNumber, ref: line.referenceNumber, serial: line.serialNumber,
-          condition: line.conditionCode, accessories: line.accessoryCodes || [], belt: line.beltText || '',
-          dial: line.dialText || '', braceletQty: line.braceletQuantity || null },
-      })),
+      purchaseTaxMode: record.purchaseTaxMode === 'overseas' ? 'overseas' : 'domestic',
+      taxRateBasisPoints: record.purchaseTaxMode === 'overseas' ? 0 : 1000,
+      registeredAt: record.createdAt, issuedAt: record.issuedAt || null, issuedBy: record.issuedBy || null,
+      revisions: [], apiManaged: true,
+      lines: (record.lines || []).map(line => {
+        // purchaseSlipLineId is the stable DB link. Keep the original line snapshot for audit,
+        // while presenting the latest editable product details after the product has been created.
+        const currentProduct = productByLine.get(line.id);
+        const annotations = productNotes(line.notes);
+        return {
+          lineNo: line.lineNumber,
+          code: currentProduct?.code || '',
+          sku: currentProduct ? currentProduct.sku : line.sku,
+          quantity: line.quantity,
+          // 仕入伝票の金額は起票時通貨の原額を保持する。商品詳細は最新値へ追随するが、
+          // 海外仕入を円換算してしまわないよう伝票明細の通貨スナップショットを優先する。
+          purchasePrice: line.unitCostMinor,
+          purchaseCurrency: line.costCurrency,
+          convertedPurchasePriceJpy: Number(line.convertedTotalJpy) || 0,
+          purchaseFxRateScaled: Number(line.fxRateScaled) || 0,
+          purchaseFxScale: Number(line.fxScale) || 0,
+          purchaseFxRateObservedAt: line.fxRateObservedAt || null,
+          salePrice: currentProduct
+            ? currentProduct.salePrice
+            : (line.baseSaleCurrency === 'JPY' ? Math.round(line.baseSalePriceMinor / rate) : line.baseSalePriceMinor),
+          saleCurrency: currentProduct?.saleCurrency || line.baseSaleCurrency,
+          productDetail: {
+            brand: currentProduct ? currentProduct.brand : line.brandName,
+            brandCode: currentProduct ? (currentProduct.brandCode || '') : (line.brandCode || ''),
+            model: currentProduct ? currentProduct.model : line.modelNumber,
+            ref: currentProduct ? currentProduct.ref : line.referenceNumber,
+            serial: currentProduct ? currentProduct.serial : line.serialNumber,
+            material: currentProduct ? currentProduct.material : (line.materialCode || ''),
+            movement: currentProduct ? currentProduct.movement : (line.movementCode || ''),
+            condition: currentProduct ? currentProduct.condition : line.conditionCode,
+            accessories: currentProduct ? [...(currentProduct.accessories || [])] : accessoryNames(line.accessoryCodes),
+            belt: currentProduct ? currentProduct.belt : (line.beltText || ''),
+            dial: currentProduct ? currentProduct.dial : (line.dialText || ''),
+            braceletQty: currentProduct ? currentProduct.braceletQty : (line.braceletQuantity || null),
+            boxNo: currentProduct ? (currentProduct.boxNo ?? null) : annotations.boxNo,
+            note: currentProduct ? currentProduct.note : annotations.note,
+          },
+        };
+      }),
     };
   }
 
   function saleView(record) {
+    const rate = Number(record.fxRateScaled) > 0 && Number(record.fxScale) > 0
+      ? Number(record.fxRateScaled) / Number(record.fxScale)
+      : Number(state.latestRate || 155);
+    const inputCurrency = record.displayCurrency === 'JPY' ? 'JPY' : 'USD';
+    const toUSD = amount => inputCurrency === 'JPY'
+      ? Math.round((Number(amount) || 0) / rate)
+      : Number(amount) || 0;
+    const sourceMatch = String(record.notes || '').match(/^(出荷|委託)伝票:\s*(\S+)/mu);
+    const sourceDocumentType = sourceMatch?.[1] === '出荷'
+      ? 'shipment'
+      : (sourceMatch?.[1] === '委託' ? 'consignment' : '');
+    const sourceDocumentId = sourceMatch?.[2] || '';
     return {
       _id: record.id, id: record.slipNumber, date: record.saleDate, buyer: record.buyerCode,
       status: statusLabel[record.status] || record.status, currency: record.displayCurrency, taxMode: record.taxMode,
-      total: record.totalMinor, totalJpy: record.convertedTotalJpy, note: record.notes, apiManaged: true,
-      items: (record.lines || []).map(line => ({ code: line.productCode, brand: line.brand, model: line.modelNumber,
-        salePrice: line.unitPriceMinor, currency: line.saleCurrency, subtotal: line.subtotalMinor,
-        taxAmount: line.taxAmountMinor, total: line.totalMinor })),
+      inputCurrency, usdJpyRate: rate,
+      fxRateSnapshotId: record.fxRateSnapshotId || '',
+      fxRateScaled: Number(record.fxRateScaled) || 0, fxScale: Number(record.fxScale) || 0,
+      issuedAt: record.issuedAt || null, issuedBy: record.issuedBy || null,
+      taxFree: record.taxMode === 'tax_exempt' && inputCurrency !== 'USD',
+      total: toUSD(record.subtotalMinor), taxAmount: toUSD(record.taxAmountMinor),
+      grandTotal: toUSD(record.totalMinor), totalJpy: record.convertedTotalJpy,
+      displaySubtotalMinor: Number(record.subtotalMinor) || 0,
+      displayTaxAmountMinor: Number(record.taxAmountMinor) || 0,
+      displayTotalMinor: Number(record.totalMinor) || 0,
+      note: record.notes, apiManaged: true,
+      sourceDocumentType, sourceDocumentId,
+      sourceShipmentId: sourceDocumentType === 'shipment' ? sourceDocumentId : '',
+      sourceConsignmentId: sourceDocumentType === 'consignment' ? sourceDocumentId : '',
+      items: (record.lines || []).map(line => ({
+        code: line.productCode, brand: line.brand, model: line.modelNumber,
+        ref: line.referenceNumber || '', serial: line.serialNumber || '',
+        accessories: String(line.accessories || '').split(',').map(value => value.trim()).filter(Boolean).map(code =>
+          APP_DATA.accessoryRecords?.find(item => item.code === code)?.name || code),
+        salePrice: line.saleCurrency === 'JPY'
+          ? Math.round((Number(line.unitPriceMinor) || 0) / rate)
+          : Number(line.unitPriceMinor) || 0,
+        inputAmount: Number(line.unitPriceMinor) || 0,
+        inputCurrency: line.saleCurrency,
+        currency: line.saleCurrency, subtotal: line.subtotalMinor,
+        taxAmount: line.taxAmountMinor, total: line.totalMinor,
+      })),
     };
   }
 
   function shipmentView(record) {
+    const rate = Number(record.fxRateScaled) > 0 && Number(record.fxScale) > 0
+      ? Number(record.fxRateScaled) / Number(record.fxScale)
+      : Number(state.latestRate || 155);
+    const items = (record.lines || []).map(line => ({
+      code: line.productCode,
+      brand: line.brand,
+      model: line.modelNumber,
+      salePrice: Number(line.salePriceUsdMinor) || 0,
+      salePriceUsd: Number(line.salePriceUsdMinor) || 0,
+      convertedSalePriceJpy: Number(line.convertedSalePriceJpy) || 0,
+    }));
     return {
       _id: record.id, id: record.slipNumber, date: record.shipmentDate, destination: record.buyerCode,
       buyer: record.buyerCode, status: statusLabel[record.status] || record.status, carrier: record.carrier,
       trackingNo: record.trackingNumber, address: record.recipientAddress, recipient: record.recipientName,
       note: record.notes, apiManaged: true,
-      items: (record.lines || []).map(line => ({ code: line.productCode, brand: line.brand, model: line.modelNumber })),
+      displayCurrency: record.displayCurrency === 'JPY' ? 'JPY' : 'USD',
+      inputCurrency: record.displayCurrency === 'JPY' ? 'JPY' : 'USD',
+      usdJpyRate: rate,
+      total: items.reduce((sum, item) => sum + item.salePriceUsd, 0),
+      totalJpy: items.reduce((sum, item) => sum + item.convertedSalePriceJpy, 0),
+      items,
+    };
+  }
+
+  function consignmentView(record) {
+    return {
+      _id: record.id,
+      id: record.slipNumber,
+      date: record.consignmentDate,
+      destination: record.consigneeCode,
+      consignee: record.consigneeCode,
+      consigneeName: record.consigneeName,
+      status: statusLabel[record.status] || record.status,
+      note: record.notes || '',
+      registeredAt: record.createdAt,
+      confirmedAt: record.confirmedAt,
+      revisions: [],
+      apiManaged: true,
+      items: (record.lines || []).map(line => ({
+        code: line.productCode,
+        brand: line.brand || '',
+        model: line.modelNumber || '',
+      })),
     };
   }
 
@@ -259,14 +385,14 @@
     state.user = me.user;
     if (typeof setSession === 'function') setSession(sessionPayload(me));
 
-    const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories'];
+    const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials'];
     const masterResults = {};
     await Promise.all(masterKeys.map(async key => { masterResults[key] = await optional(`/masters/${key}`); }));
-    const [products, partners, users, staff, purchases, market, boxes, requests, notifications, approvals, sales, shipments, returns, settings, company, rates, dashboard] = await Promise.all([
+    const [products, partners, users, staff, purchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, settings, company, rates, dashboard] = await Promise.all([
       optional('/products?page=1&pageSize=100&includeCancelled=true'), optional('/partners?includeInactive=true'),
       optional('/users?includeInactive=true'), optional('/purchase-staff'), optional('/purchases?limit=500'), optional('/market-prices?limit=1000'),
       optional('/boxes'), optional('/purchase-requests'), optional('/notifications?limit=500'), optional('/approvals'),
-      optional('/sales?limit=500'), optional('/shipments?limit=500'), optional('/returns?limit=500'),
+      optional('/sales?limit=500'), optional('/shipments?limit=500'), optional('/consignments?limit=500'), optional('/returns?limit=500'),
       optional('/settings'), optional('/company'), optional('/exchange-rates?limit=100'), optional('/dashboard?months=24'),
     ]);
     const latestRate = Number(rates?.items?.[0]?.rate || 155);
@@ -280,7 +406,10 @@
     await Promise.all((products?.items || []).filter(product => Number(product.imageCount) > 0).map(async product => {
       const files = await optional(`/products/${encodeURIComponent(product.id)}/files`);
       const item = APP_DATA.inventory.find(candidate => candidate._id === product.id);
-      if (item) item.images = (files?.items || []).map(file => file.url);
+      if (item) {
+        item.imageFiles = (files?.items || []).map(file => ({ ...file }));
+        item.images = item.imageFiles.map(file => file.url);
+      }
     }));
 
     const productByLine = new Map(APP_DATA.inventory.map(item => {
@@ -290,10 +419,12 @@
     const purchaseDetails = await withDetails('/purchases', purchases);
     const saleDetails = await withDetails('/sales', sales);
     const shipmentDetails = await withDetails('/shipments', shipments);
+    const consignmentDetails = await withDetails('/consignments', consignments);
     const returnDetails = await withDetails('/returns', returns);
     APP_DATA.purchaseSlips = purchaseDetails.map(record => purchaseView(record, productByLine, latestRate, users?.items || staff?.items || []));
     APP_DATA.sales = saleDetails.map(saleView);
     APP_DATA.shipments = shipmentDetails.map(shipmentView);
+    APP_DATA.consignments = consignmentDetails.map(consignmentView);
     const pendingApprovalTargetIds = new Set((approvals?.items || []).filter(item => item.status === 'pending').map(item => item.targetId));
     const inventoryByCode = new Map(APP_DATA.inventory.map(item => [item.code, item]));
     const returnViews = returnDetails.map(record => {
@@ -330,10 +461,16 @@
       condition: record.conditionCode, purchasePrice: record.purchasePriceMinor, purchaseCurrency: record.purchaseCurrency,
       marketPrice: record.marketPriceMinor,
       marketPriceUsd: record.marketCurrency === 'JPY' ? Math.round(record.marketPriceMinor / latestRate) : record.marketPriceMinor,
+      marketPriceJpy: record.marketCurrency === 'USD' ? Math.round(record.marketPriceMinor * latestRate) : record.marketPriceMinor,
       marketCurrency: record.marketCurrency,
       accessories: String(record.accessoryCodes || '').split(',').map(value => value.trim()).filter(Boolean).map(code =>
         masterResults.accessories?.items?.find(item => item.code === code)?.name || code),
-      source: record.source, note: record.notes, apiManaged: true }));
+      source: record.source,
+      auctionCode: record.auctionCode || '',
+      auctionName: record.auctionName || (!record.source || /^(manual|csv|preview-seed)$/i.test(record.source)
+        ? ((APP_DATA.suppliers || []).find(item => item.code === record.supplierCode)?.name || '')
+        : record.source),
+      note: record.notes, apiManaged: true }));
     APP_DATA.boxes = (boxes?.items || []).map(record => ({ _id: record.id, no: Number(String(record.boxCode).replace(/\D/g, '')),
       code: record.boxCode, name: record.name, publicTo: record.buyerCodes || [], productCodes: record.productCodes || [],
       createdAt: record.updatedAt, active: record.isActive, apiManaged: true }));
@@ -538,7 +675,7 @@
 
   async function saveMasterRecord(key, current, values, mode) {
     const masterKinds = { brand: 'brands', material: 'materials', movement: 'movements',
-      condition: 'conditions', accessory: 'accessories' };
+      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials' };
     const kind = masterKinds[key];
     if (kind) {
       const result = mode === 'add'
@@ -586,7 +723,7 @@
 
   async function deactivateMasterRecord(key, current) {
     const masterKinds = { brand: 'brands', material: 'materials', movement: 'movements',
-      condition: 'conditions', accessory: 'accessories' };
+      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials' };
     const kind = masterKinds[key];
     if (kind) {
       await request(`/masters/${kind}/${encodeURIComponent(current.id)}`, {
@@ -615,6 +752,27 @@
     }
     await hydrateAdmin();
     return result;
+  }
+
+  /** Existing products keep their current files and receive the newly selected images. */
+  async function appendProductImages(item, files = []) {
+    if (!item?._id) throw new Error('画像を保存する商品が見つかりません。');
+    const additions = files.filter(Boolean);
+    if (additions.length === 0) return item;
+
+    const productPath = `/products/${encodeURIComponent(item._id)}/files`;
+    const current = await request(productPath);
+    if ((current.items || []).length + additions.length > 10) {
+      throw new Error(`商品画像は最大10枚です。追加できる画像は${Math.max(0, 10 - (current.items || []).length)}枚です。`);
+    }
+
+    for (const file of additions) {
+      const form = new FormData();
+      form.append('file', file, file.name || 'product-image');
+      await request(productPath, { method: 'POST', body: form });
+    }
+    await hydrateAdmin();
+    return APP_DATA.inventory.find(candidate => candidate._id === item._id) || item;
   }
 
   async function createApproval(input) {
@@ -657,28 +815,39 @@
     return { record, approval };
   }
 
+  async function saveConsignment(payload) {
+    const record = await request('/consignments', { method: 'POST', body: JSON.stringify(payload) });
+    await hydrateAdmin();
+    return record;
+  }
+
   async function savePurchaseSlip(slip, requireApproval) {
     const staffCode = APP_DATA.staffRecords?.find(item => item.name === slip.staff)?.code || slip.staff || '';
+    const purchaseCurrency = slip.purchaseTaxMode === 'overseas' ? 'USD' : 'JPY';
     const lines = (slip.lines || []).map(line => {
       const detail = line.productDetail || {};
+      const resolvedBrandCode = typeof getBrandCodeByName === 'function'
+        ? (getBrandCodeByName(detail.brand) || detail.brandCode || '')
+        : (detail.brandCode || '');
       const accessoryCodes = (detail.accessories || []).map(name =>
         APP_DATA.accessoryRecords?.find(item => item.name === name)?.code || name).filter(Boolean);
       return {
         quantity: 1,
         sku: line.sku || '',
-        brandCode: typeof getBrandCodeByName === 'function' ? getBrandCodeByName(detail.brand) : detail.brandCode || '',
+        brandCode: resolvedBrandCode,
         modelNumber: detail.model || '', referenceNumber: detail.ref || '', serialNumber: detail.serial || '',
         productType: 'watch', materialCode: detail.material || '', movementCode: detail.movement || '',
         conditionCode: detail.condition || '', accessoryCodes,
         beltText: detail.belt || '', dialText: detail.dial || '', braceletQuantity: detail.braceletQty || null,
-        unitCostMinor: Math.round(Number(line.purchasePrice) || 0), costCurrency: 'JPY',
+        unitCostMinor: Math.round(Number(line.purchasePrice) || 0), costCurrency: purchaseCurrency,
         baseSalePriceMinor: Math.round(Number(line.salePrice) || 0), baseSaleCurrency: 'USD',
-        notes: [detail.note || '', detail.belt ? `ベルト:${detail.belt}` : '', detail.dial ? `文字盤:${detail.dial}` : '',
-          detail.boxNo ? `BOX:${detail.boxNo}` : ''].filter(Boolean).join(' / '),
+        notes: [detail.note || '', detail.boxNo ? `BOX:${detail.boxNo}` : ''].filter(Boolean).join(' / '),
       };
     });
     const created = await request('/purchases', { method: 'POST', body: JSON.stringify({
-      supplierCode: slip.supplier, staffCode, purchaseDate: slip.date, notes: slip.note || '', lines,
+      supplierCode: slip.supplier, staffCode, purchaseDate: slip.date,
+      purchaseTaxMode: slip.purchaseTaxMode === 'overseas' ? 'overseas' : 'domestic',
+      notes: slip.note || '', lines,
     }) });
     let record = created;
     let approval = null;
@@ -690,6 +859,26 @@
     }
     await hydrateAdmin();
     return { record, approval };
+  }
+
+  async function issuePurchaseSlip(slip) {
+    const purchaseID = slip?._id || slip?.id;
+    if (!purchaseID) throw new Error('発行対象の仕入伝票が見つかりません。');
+    const record = await request(`/purchases/${encodeURIComponent(purchaseID)}/issue`, {
+      method: 'POST', body: '{}',
+    });
+    await hydrateAdmin();
+    return record;
+  }
+
+  async function issueSaleSlip(slip) {
+    const saleID = slip?._id || slip?.id;
+    if (!saleID) throw new Error('発行対象の売上伝票が見つかりません。');
+    const record = await request(`/sales/${encodeURIComponent(saleID)}/issue`, {
+      method: 'POST', body: '{}',
+    });
+    await hydrateAdmin();
+    return record;
   }
 
   async function saveBoxes(boxes = APP_DATA.boxes || []) {
@@ -721,17 +910,16 @@
   }
 
   async function updateMarketPrice(row, values) {
-    const staffCode = APP_DATA.staffRecords?.find(record => record.name === values.staff)?.code || values.staff || '';
     const accessoryCodes = (values.accessories || []).map(name =>
       APP_DATA.accessoryRecords?.find(record => record.name === name)?.code || name).filter(Boolean);
     const result = await request(`/market-prices/${encodeURIComponent(row.id)}`, { method: 'PATCH', body: JSON.stringify({
       importDate: values.importDate, brandCode: values.brandCode, modelNumber: values.model,
       referenceNumber: values.ref || '', sku: values.sku || '',
-      conditionCode: values.condition || '', purchasePriceMinor: Math.round(Number(values.purchasePrice) || 0),
-      purchaseCurrency: 'JPY', marketPriceMinor: Math.round(Number(values.marketPriceUsd) || 0), marketCurrency: 'USD',
-      supplierCode: values.supplier || '', staffCode, materialCode: values.material || '', movementCode: values.movement || '',
+      conditionCode: values.condition || '', purchasePriceMinor: 0,
+      purchaseCurrency: 'JPY', marketPriceMinor: Math.round(Number(values.marketPriceJpy) || 0), marketCurrency: 'JPY',
+      supplierCode: '', staffCode: '', materialCode: values.material || '', movementCode: values.movement || '',
       accessoryCodes,
-      source: row.source || 'manual', notes: row.note || '',
+      auctionCode: values.auctionCode || '', source: values.auctionCode || 'manual', notes: values.note || '',
     }) });
     await hydrateAdmin();
     return result;
@@ -801,6 +989,39 @@
     return result;
   }
 
+  async function updateProductImages(item, desiredImages = []) {
+    if (!item?._id) throw new Error('画像を保存する商品が見つかりません。');
+    const productPath = `/products/${encodeURIComponent(item._id)}/files`;
+    const current = await request(productPath);
+    const currentIDs = new Set((current.items || []).map(file => file.id));
+    const desiredExistingIDs = new Set(desiredImages.filter(image => image.id).map(image => image.id));
+
+    // Full 10-image sets must release removed slots before replacements upload.
+    for (const file of current.items || []) {
+      if (!desiredExistingIDs.has(file.id)) {
+        await request(`/product-files/${encodeURIComponent(file.id)}`, { method: 'DELETE' });
+      }
+    }
+
+    const orderedIDs = [];
+    for (const image of desiredImages) {
+      if (image.id && currentIDs.has(image.id)) {
+        orderedIDs.push(image.id);
+        continue;
+      }
+      if (!image.file) continue;
+      const form = new FormData();
+      form.append('file', image.file, image.file.name || image.originalName || 'product-image');
+      const uploaded = await request(productPath, { method: 'POST', body: form });
+      image.id = uploaded.id;
+      orderedIDs.push(uploaded.id);
+    }
+
+    await request(`${productPath}/order`, { method: 'PUT', body: JSON.stringify({ fileIds: orderedIDs }) });
+    await hydrateAdmin();
+    return APP_DATA.inventory.find(candidate => candidate._id === item._id) || null;
+  }
+
   async function savePartner(entry) {
     const roles = (entry.tradeTypes || []).map(roleType => ({
       roleType,
@@ -823,7 +1044,7 @@
     markNotificationRead, saveExchangeRate,
     changePassword, setUserActive, queuePasswordReset, saveCompany, saveDashboardSettings,
     getAdminAccessCode, rotateAdminAccessCode, verifyAdminAccessCode, createUser,
-    createGuestWithPartner, savePartner, saveMasterRecord, deactivateMasterRecord, createSingleProduct,
-    createApproval, decideApproval, saveSale, saveShipment, savePurchaseSlip, saveBoxes, importMarketCSV, saveReturn,
-    updateProduct, updateMarketPrice, updateShipmentTracking, updateReturnTracking, recordDocumentEvent };
+    createGuestWithPartner, savePartner, saveMasterRecord, deactivateMasterRecord, createSingleProduct, appendProductImages,
+    createApproval, decideApproval, saveSale, saveShipment, saveConsignment, savePurchaseSlip, issuePurchaseSlip, issueSaleSlip, saveBoxes, importMarketCSV, saveReturn,
+    updateProduct, updateProductImages, updateMarketPrice, updateShipmentTracking, updateReturnTracking, recordDocumentEvent };
 })();

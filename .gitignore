@@ -16,6 +16,7 @@ coverage.out
 *.test
 __pycache__/
 *.py[cod]
+/scripts/build_flow_review.py
 
 # Editor and operating-system files
 .vscode/

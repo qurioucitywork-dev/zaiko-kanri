@@ -1,6 +1,6 @@
 // =====================================================
 // 相場表
-// 在庫一覧と同じ商品項目を使い、取込日・仕入れ価格（JPY）・相場価格（USD）を管理する。
+// 在庫一覧と同じ商品項目を使い、オークション開催日・オークション名・落札価格（JPY）を管理する。
 // PostgreSQLの相場表データをREST API経由でAPP_DATAへ同期する。API未接続時のみ初期データを表示する。
 // =====================================================
 
@@ -9,6 +9,7 @@ const MARKET_ITEMS_PER_PAGE = 10;
 let _marketInitialized = false;
 let _marketEditingId = null;
 let _marketImportSequence = 0;
+let _marketPendingImport = null;
 
 const MARKET_PRICE_USD_SEED = [
   7900, 3350, 19500, 4800, 16500,
@@ -16,17 +17,15 @@ const MARKET_PRICE_USD_SEED = [
 ];
 
 const MARKET_COLUMN_KEYS = [
-  'importDate', 'brand', 'model', 'ref', 'supplier', 'staff',
-  'purchasePrice', 'marketPrice', 'sku', 'accessories', 'edit',
+  'importDate', 'brand', 'model', 'ref', 'auctionName',
+  'marketPrice', 'sku', 'accessories', 'note', 'edit',
 ];
 const MARKET_COLUMN_WIDTHS = {
-  importDate: 108, brand: 100, model: 120, ref: 100,
-  supplier: 96, staff: 86, purchasePrice: 132, marketPrice: 132,
-  sku: 86, accessories: 120, edit: 58,
+  importDate: 156, brand: 150, model: 160, ref: 150,
+  auctionName: 180, marketPrice: 158, sku: 130, accessories: 180,
+  note: 330, edit: 72,
 };
 const _marketVisibleColumns = new Set(MARKET_COLUMN_KEYS);
-let _marketPurchaseCurrency = 'JPY';
-let _marketPriceCurrency = 'USD';
 
 /** マスタ登録のUSドル円換算レートを返す */
 function getMarketUsdRate() {
@@ -35,59 +34,22 @@ function getMarketUsdRate() {
   return Number(globalThis.SALE_PRICE_JPY_PER_USD) || 155;
 }
 
-/** JPY基準の仕入れ価格を選択中の表示通貨で整形する */
-function formatMarketPurchasePrice(jpyAmount, currency = _marketPurchaseCurrency) {
-  const value = Number(jpyAmount) || 0;
-  if (currency === 'USD') return _marketFormatUSD(Math.round(value / getMarketUsdRate()));
-  return formatPrice(value);
+/** 落札価格はJPY固定で表示する */
+function formatMarketPrice(jpyAmount) {
+  return formatPrice(Number(jpyAmount) || 0);
 }
 
-/** USD基準の相場価格を選択中の表示通貨で整形する */
-function formatMarketPrice(usdAmount, currency = _marketPriceCurrency) {
-  const value = Number(usdAmount) || 0;
-  if (currency === 'JPY') return formatPrice(Math.round(value * getMarketUsdRate()));
-  return _marketFormatUSD(value);
+/** APIが日時を返した場合も、一覧ではオークション開催日の年月日だけを表示する。 */
+function _marketDisplayDate(value) {
+  const text = String(value || '').trim();
+  if (!text) return '—';
+  const match = text.match(/^\d{4}-\d{2}-\d{2}/u);
+  return match ? match[0] : text;
 }
 
-function _marketPriceClass(currency) {
-  return currency === 'USD' ? 'market-price-usd' : 'market-price-yen';
-}
-
-/** 相場表の価格ヘッダーと通貨ボタンを現在状態へ同期する */
-function _marketSyncPriceCurrencyUI() {
-  const rate = getMarketUsdRate();
-  const rateTitle = `マスタレート: 1 USD = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const purchaseHeading = document.getElementById('market-purchase-heading');
-  const marketHeading = document.getElementById('market-price-heading');
-  if (purchaseHeading) purchaseHeading.textContent = `仕入れ価格（${_marketPurchaseCurrency}）`;
-  if (marketHeading) marketHeading.textContent = `相場価格（${_marketPriceCurrency}）`;
-
-  [
-    ['market-purchase-jpy', _marketPurchaseCurrency === 'JPY'],
-    ['market-purchase-usd', _marketPurchaseCurrency === 'USD'],
-    ['market-price-jpy', _marketPriceCurrency === 'JPY'],
-    ['market-price-usd', _marketPriceCurrency === 'USD'],
-  ].forEach(([id, active]) => {
-    const button = document.getElementById(id);
-    if (!button) return;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-pressed', active ? 'true' : 'false');
-    button.title = rateTitle;
-  });
-
+function _marketSyncColumnPanelNote() {
   const note = document.getElementById('market-column-panel-note');
-  if (note) note.textContent = `チェックを外した項目は非表示になります / ${rateTitle}`;
-}
-
-/** 仕入れ価格または相場価格の表示通貨を切り替える（保存値は変更しない） */
-function marketSwitchPriceCurrency(priceType, currency) {
-  if (currency !== 'JPY' && currency !== 'USD') return;
-  if (priceType === 'purchase') _marketPurchaseCurrency = currency;
-  else if (priceType === 'market') _marketPriceCurrency = currency;
-  else return;
-
-  _marketSyncPriceCurrencyUI();
-  marketRenderTable();
+  if (note) note.textContent = 'チェックを外した項目は一覧から非表示になります / 落札価格はJPY固定です';
 }
 
 /** 表示項目設定をテーブル・チェックボックスへ反映する */
@@ -162,8 +124,50 @@ function _marketToday() {
   return local.toISOString().slice(0, 10);
 }
 
+function _marketAuctionRecord(value) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return null;
+  return (APP_DATA.auctionRecords || []).find(record =>
+    String(record.code || '').toUpperCase() === normalized.toUpperCase() || record.name === normalized) || null;
+}
+
+function _marketAuctionRecords() {
+  return (APP_DATA.auctionRecords || []).filter(record =>
+    String(record?.code || '').trim() && String(record?.name || '').trim());
+}
+
+function _marketPopulateAuctionEditSelect(selectedCode = '', selectedName = '') {
+  const select = document.getElementById('me-auctionCode');
+  if (!select) return;
+  const selected = _marketAuctionRecord(selectedCode) || _marketAuctionRecord(selectedName);
+  select.innerHTML = '<option value="">-- オークションを選択 --</option>' +
+    _marketAuctionRecords().map(record =>
+      `<option value="${_marketEscapeAttr(record.code)}">${_marketEscape(record.code)} — ${_marketEscape(record.name)}</option>`).join('');
+  select.value = selected?.code || '';
+}
+
 function _marketEnsureData() {
   if (Array.isArray(APP_DATA.marketPrices)) {
+    APP_DATA.marketPrices.forEach(row => {
+      if (!Number.isFinite(Number(row.marketPriceJpy))) {
+        if (row.marketCurrency === 'JPY' && Number.isFinite(Number(row.marketPrice))) {
+          row.marketPriceJpy = Number(row.marketPrice);
+        } else {
+          row.marketPriceJpy = Math.round((Number(row.marketPriceUsd) || 0) * getMarketUsdRate());
+        }
+      }
+      if (row.auctionName == null) {
+        const source = String(row.source || '').trim();
+        const genericSource = /^(manual|csv|preview-seed)$/i.test(source);
+        row.auctionName = !genericSource && source ? source : (getSupplierName(row.supplier) || '');
+      }
+      const auction = _marketAuctionRecord(row.auctionCode) || _marketAuctionRecord(row.auctionName);
+      if (auction) {
+        row.auctionCode = auction.code;
+        row.auctionName = auction.name;
+      }
+      if (row.note == null) row.note = row.notes || '';
+    });
     if (typeof synchronizeBrandCodesAcrossData === 'function') synchronizeBrandCodesAcrossData();
     return;
   }
@@ -178,12 +182,12 @@ function _marketEnsureData() {
     material: item.material || '',
     movement: item.movement || '',
     condition: item.condition || '',
-    supplier: item.supplier || '',
-    staff: item.staff || '',
-    purchasePrice: Number(item.purchasePrice) || 0,
-    marketPriceUsd: MARKET_PRICE_USD_SEED[index] || 0,
+    auctionCode: '',
+    auctionName: '',
+    marketPriceJpy: Math.round((MARKET_PRICE_USD_SEED[index] || 0) * getMarketUsdRate()),
     sku: item.sku || '',
     accessories: Array.isArray(item.accessories) ? [...item.accessories] : [],
+    note: '',
   }));
 }
 
@@ -194,7 +198,7 @@ function init_market() {
     marketResetFilters(false);
     _marketInitialized = true;
   }
-  _marketSyncPriceCurrencyUI();
+  _marketSyncColumnPanelNote();
   marketRenderTable();
 }
 
@@ -212,28 +216,13 @@ function _marketBuildFilterOptions() {
     brandSelect.value = brands.includes(current) ? current : '';
   }
 
-  const supplierSelect = document.getElementById('market-f-supplier');
-  if (supplierSelect) {
-    const current = supplierSelect.dataset.supplierRenameValue || supplierSelect.value;
-    delete supplierSelect.dataset.supplierRenameValue;
-    const supplierCodes = typeof getSupplierMasterRecords === 'function'
-      ? getSupplierMasterRecords(rows.map(row => row.supplier)).map(supplier => supplier.code)
-      : [...new Set(rows.map(row => row.supplier).filter(Boolean))];
-    supplierSelect.innerHTML = '<option value="">すべて</option>' +
-      supplierCodes.map(code => `<option value="${_marketEscapeAttr(code)}">${_marketEscape(getSupplierName(code))}</option>`).join('');
-    supplierSelect.value = supplierCodes.includes(current) ? current : '';
-  }
-
-  const staffSelect = document.getElementById('market-f-staff');
-  if (staffSelect) {
-    const current = staffSelect.dataset.staffRenameValue || staffSelect.value;
-    delete staffSelect.dataset.staffRenameValue;
-    const staff = typeof getStaffMasterNames === 'function'
-      ? getStaffMasterNames(rows.map(row => row.staff))
-      : [...new Set(rows.map(row => row.staff).filter(Boolean))].sort();
-    staffSelect.innerHTML = '<option value="">すべて</option>' +
-      staff.map(name => `<option value="${_marketEscapeAttr(name)}">${_marketEscape(name)}</option>`).join('');
-    staffSelect.value = staff.includes(current) ? current : '';
+  const auctionSelect = document.getElementById('market-f-auction');
+  if (auctionSelect) {
+    const current = _marketAuctionRecord(auctionSelect.value);
+    const auctions = _marketAuctionRecords();
+    auctionSelect.innerHTML = '<option value="">すべて</option>' +
+      auctions.map(record => `<option value="${_marketEscapeAttr(record.code)}">${_marketEscape(record.name)}</option>`).join('');
+    auctionSelect.value = current && auctions.some(record => record.code === current.code) ? current.code : '';
   }
 
   ['material', 'movement'].forEach(type => {
@@ -282,8 +271,7 @@ function _marketFilters() {
     brand: document.getElementById('market-f-brand')?.value || '',
     model: (document.getElementById('market-f-model')?.value || '').trim().toLowerCase(),
     ref: (document.getElementById('market-f-ref')?.value || '').trim().toLowerCase(),
-    supplier: document.getElementById('market-f-supplier')?.value || '',
-    staff: document.getElementById('market-f-staff')?.value || '',
+    auctionCode: document.getElementById('market-f-auction')?.value || '',
     material: document.getElementById('market-f-material')?.value || '',
     movement: document.getElementById('market-f-movement')?.value || '',
     condition: document.getElementById('market-f-condition')?.value || '',
@@ -300,8 +288,8 @@ function _marketFilteredRows() {
       if (f.brand && row.brand !== f.brand) return false;
       if (f.model && !(row.model || '').toLowerCase().includes(f.model)) return false;
       if (f.ref && !(row.ref || '').toLowerCase().includes(f.ref)) return false;
-      if (f.supplier && row.supplier !== f.supplier) return false;
-      if (f.staff && row.staff !== f.staff) return false;
+      const auction = _marketAuctionRecord(row.auctionCode) || _marketAuctionRecord(row.auctionName);
+      if (f.auctionCode && auction?.code !== f.auctionCode) return false;
       if (f.material && row.material !== f.material) return false;
       if (f.movement && row.movement !== f.movement) return false;
       if (f.condition && row.condition !== f.condition) return false;
@@ -331,7 +319,7 @@ function marketResetFilters(render = true) {
     const element = document.getElementById(id);
     if (element) element.value = '';
   });
-  ['market-f-brand', 'market-f-supplier', 'market-f-staff', 'market-f-material', 'market-f-movement', 'market-f-condition', 'market-f-accessory'].forEach(id => {
+  ['market-f-brand', 'market-f-auction', 'market-f-material', 'market-f-movement', 'market-f-condition', 'market-f-accessory'].forEach(id => {
     const element = document.getElementById(id);
     if (element) element.selectedIndex = 0;
   });
@@ -364,20 +352,21 @@ function marketRenderTable() {
   } else {
     tbody.innerHTML = pageRows.map(row => {
       const accessories = (row.accessories || []).length ? row.accessories.join('・') : '—';
+      const auctionName = (_marketAuctionRecord(row.auctionCode) || _marketAuctionRecord(row.auctionName))?.name
+        || row.auctionName || '—';
       return `
         <tr tabindex="0" aria-label="${_marketEscapeAttr(row.brand)} ${_marketEscapeAttr(row.model)}を編集"
           onclick="marketOpenEdit('${row.id}')"
           onkeydown="marketRowKeydown(event,'${row.id}')">
-          <td data-market-col="importDate"><span class="market-import-date"><i class="fa-regular fa-calendar"></i>${_marketEscape(row.importDate || '—')}</span></td>
+          <td data-market-col="importDate"><span class="market-import-date"><i class="fa-regular fa-calendar"></i>${_marketEscape(_marketDisplayDate(row.importDate))}</span></td>
           <td data-market-col="brand" style="font-weight:600;">${_marketEscape(row.brand || '—')}</td>
           <td data-market-col="model">${_marketEscape(row.model || '—')}</td>
           <td data-market-col="ref">${_marketEscape(row.ref || '—')}</td>
-          <td data-market-col="supplier">${_marketEscape(getSupplierName(row.supplier) || '—')}</td>
-          <td data-market-col="staff">${_marketEscape(row.staff || '—')}</td>
-          <td data-market-col="purchasePrice" class="${_marketPriceClass(_marketPurchaseCurrency)}">${formatMarketPurchasePrice(row.purchasePrice)}</td>
-          <td data-market-col="marketPrice" class="${_marketPriceClass(_marketPriceCurrency)}">${formatMarketPrice(row.marketPriceUsd)}</td>
+          <td data-market-col="auctionName">${_marketEscape(auctionName)}</td>
+          <td data-market-col="marketPrice" class="market-price-yen">${formatMarketPrice(row.marketPriceJpy)}</td>
           <td data-market-col="sku">${_marketEscape(row.sku || '—')}</td>
           <td data-market-col="accessories" class="acc-cell" title="${_marketEscapeAttr(accessories)}">${_marketEscape(accessories)}</td>
+          <td data-market-col="note" title="${_marketEscapeAttr(row.note || '')}">${_marketEscape(row.note || '—')}</td>
           <td data-market-col="edit">
             <button class="btn btn-primary btn-sm" type="button"
               style="white-space:nowrap;padding:3px 8px;"
@@ -426,12 +415,6 @@ function marketOpenEdit(id) {
   document.getElementById('marketEditId').value = id;
 
   _marketFillSelect('me-brand', [...new Set([...(APP_DATA.brands || []), row.brand].filter(Boolean))], row.brand);
-  if (typeof populateStaffMasterSelect === 'function') {
-    populateStaffMasterSelect('me-staff', { emptyLabel: '-- 選択 --', selected: row.staff, extraNames: [row.staff] });
-  } else {
-    _marketFillSelect('me-staff', [...new Set([...(APP_DATA.staff || []), row.staff].filter(Boolean))], row.staff, true);
-  }
-  _marketFillSupplierSelect(row.supplier);
   if (typeof populateProductSpecMasterSelect === 'function') {
     populateProductSpecMasterSelect('me-material', 'material', {
       emptyLabel: '-- 選択 --', selected: row.material, extraCodes: [row.material], labelMode: 'name',
@@ -450,12 +433,11 @@ function marketOpenEdit(id) {
   document.getElementById('me-ref').value = row.ref || '';
   document.getElementById('me-sku').value = row.sku || '';
   document.getElementById('me-importDate').value = row.importDate || _marketToday();
-  const purchasePriceInput = document.getElementById('me-purchasePrice');
-  const marketPriceInput = document.getElementById('me-marketPriceUsd');
-  purchasePriceInput.value = row.purchasePrice || '';
-  marketPriceInput.value = row.marketPriceUsd ?? '';
-  priceFormatHandler(purchasePriceInput);
-  decimalPriceFormatHandler(marketPriceInput);
+  const marketPriceInput = document.getElementById('me-marketPriceJpy');
+  marketPriceInput.value = row.marketPriceJpy ?? '';
+  priceFormatHandler(marketPriceInput);
+  _marketPopulateAuctionEditSelect(row.auctionCode || '', row.auctionName || '');
+  document.getElementById('me-note').value = row.note || '';
   _marketRenderAccessoryOptions(row.accessories || []);
   document.getElementById('marketEditError').classList.remove('show');
   modal.classList.remove('hidden');
@@ -467,27 +449,6 @@ function _marketFillSelect(id, values, selected, allowEmpty = false) {
   if (!element) return;
   element.innerHTML = (allowEmpty ? '<option value="">-- 選択 --</option>' : '') +
     values.map(value => `<option value="${_marketEscapeAttr(value)}">${_marketEscape(value)}</option>`).join('');
-  element.value = selected || '';
-}
-
-function _marketFillSupplierSelect(selected) {
-  const element = document.getElementById('me-supplier');
-  if (!element) return;
-  if (typeof populateSupplierMasterSelect === 'function') {
-    populateSupplierMasterSelect('me-supplier', {
-      emptyLabel: '-- 選択 --',
-      selected,
-      extraCodes: selected ? [selected] : [],
-      labelMode: 'name',
-    });
-    return;
-  }
-  const suppliers = [...(APP_DATA.suppliers || [])];
-  if (selected && !suppliers.some(supplier => supplier.code === selected)) {
-    suppliers.push({ code: selected, name: selected });
-  }
-  element.innerHTML = '<option value="">-- 選択 --</option>' + suppliers.map(supplier =>
-    `<option value="${_marketEscapeAttr(supplier.code)}">${_marketEscape(supplier.name)}</option>`).join('');
   element.value = selected || '';
 }
 
@@ -504,12 +465,13 @@ async function marketSaveEdit() {
   const brand = document.getElementById('me-brand').value.trim();
   const model = document.getElementById('me-model').value.trim();
   const importDate = document.getElementById('me-importDate').value;
-  const purchasePrice = _marketParseNumber(document.getElementById('me-purchasePrice').value);
-  const marketPriceUsd = _marketParseNumber(document.getElementById('me-marketPriceUsd').value, true);
+  const marketPriceJpy = _marketParseNumber(document.getElementById('me-marketPriceJpy').value);
+  const auctionCode = document.getElementById('me-auctionCode').value;
+  const auctionRecord = _marketAuctionRecord(auctionCode);
   const error = document.getElementById('marketEditError');
 
-  if (!brand || !model || !importDate || purchasePrice < 0 || marketPriceUsd < 0) {
-    error.textContent = 'ブランド・モデル名・取り込み日付を入力し、価格は0以上で指定してください。';
+  if (!brand || !model || !importDate || !auctionRecord || marketPriceJpy < 0) {
+    error.textContent = 'ブランド・モデル名・オークション開催日・オークション名を入力し、落札価格は0以上で指定してください。';
     error.classList.add('show');
     return;
   }
@@ -524,11 +486,11 @@ async function marketSaveEdit() {
     movement: document.getElementById('me-movement').value,
     condition: document.getElementById('me-condition').value,
     importDate,
-    purchasePrice,
-    marketPriceUsd,
-    supplier: document.getElementById('me-supplier').value,
-    staff: document.getElementById('me-staff').value,
+    marketPriceJpy,
+    auctionCode: auctionRecord.code,
+    auctionName: auctionRecord.name,
     accessories: _marketSelectedAccessories(),
+    note: document.getElementById('me-note').value.trim(),
   };
 
   const comparableKeys = Object.keys(nextValues);
@@ -570,40 +532,6 @@ async function marketHandleCSVImport(input) {
   if (!file) return;
   try {
     const text = await file.text();
-    if (window.ZaikoAPI) {
-      const rows = marketParseCSV(String(text || '').replace(/^\uFEFF/, ''))
-        .filter(row => row.some(cell => String(cell).trim() !== ''));
-      if (rows.length < 2) throw new Error('ヘッダー行と1件以上のデータ行が必要です');
-      const columns = _marketResolveColumns(rows[0].map(_marketNormalizeHeader));
-      if (columns.brand < 0 || columns.model < 0) throw new Error('「ブランド」と「モデル名」列が必要です');
-      const csvCell = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
-      const header = ['import_date','brand_code','model_number','reference_number','condition_code',
-        'purchase_price','purchase_currency','market_price','market_currency','source','notes'];
-      const normalizedRows = rows.slice(1).map(values => {
-        const value = key => columns[key] >= 0 ? String(values[columns[key]] ?? '').trim() : '';
-        const brandValue = value('brand');
-        const brandRecord = (APP_DATA.brandRecords || []).find(record => record.code === brandValue || record.name === brandValue);
-        if (!brandRecord || !value('model')) return null;
-        const conditionValue = value('condition');
-        const conditionRecord = (APP_DATA.conditions || []).find(record => record.code === conditionValue || record.name === conditionValue);
-        return [
-          _marketNormalizeDate(value('importDate')) || _marketToday(), brandRecord.code, value('model'), value('ref'),
-          conditionRecord?.code || '', Math.max(0, _marketParseNumber(value('purchasePrice'))), 'JPY',
-          Math.round(Math.max(0, _marketParseNumber(value('marketPriceUsd'), true))), 'USD', file.name, '',
-        ];
-      }).filter(Boolean);
-      if (normalizedRows.length === 0) throw new Error('マスタに一致するブランドを含むデータがありません');
-      const normalizedText = [header, ...normalizedRows].map(row => row.map(csvCell).join(',')).join('\r\n');
-      const normalizedFile = new File([normalizedText], file.name, { type: 'text/csv;charset=utf-8' });
-      const result = await window.ZaikoAPI.importMarketCSV(normalizedFile);
-      _marketBuildFilterOptions();
-      marketResetFilters(false);
-      marketRenderTable();
-      _marketShowImportSummary(file.name, Number(result.validRows) || normalizedRows.length, 0);
-      showToast('success', result.status === 'pending_approval' ? '承認申請を送信しました' : 'CSV取込完了',
-        result.status === 'pending_approval' ? `${normalizedRows.length}件を管理者の承認待ちにしました` : `${normalizedRows.length}件をDBへ取り込みました`);
-      return;
-    }
     marketImportCsvText(text, file.name);
   } catch (error) {
     showToast('error', 'CSV取込エラー', `ファイルを読み込めませんでした: ${error.message}`);
@@ -623,12 +551,12 @@ function marketImportCsvText(text, fileName = 'CSVファイル') {
 
   const headers = rows[0].map(_marketNormalizeHeader);
   const columns = _marketResolveColumns(headers);
-  if (columns.brand < 0 || columns.model < 0) {
-    showToast('error', 'CSV取込エラー', '「ブランド」と「モデル名」列が必要です');
+  if (columns.brand < 0 || columns.model < 0 || columns.auctionCode < 0) {
+    showToast('error', 'CSV取込エラー', '「ブランド」「モデル名」「オークションコード」列が必要です');
     return { imported: 0, skipped: rows.length - 1 };
   }
 
-  let imported = 0;
+  const stagedRows = [];
   let skipped = 0;
   const today = _marketToday();
 
@@ -636,43 +564,131 @@ function marketImportCsvText(text, fileName = 'CSVファイル') {
     const value = key => columns[key] >= 0 ? String(values[columns[key]] ?? '').trim() : '';
     const brand = value('brand');
     const model = value('model');
-    if (!brand || !model) {
+    const auction = _marketAuctionRecord(value('auctionCode'));
+    if (!brand || !model || !auction) {
       skipped += 1;
       return;
     }
 
-    APP_DATA.marketPrices.push({
-      id: _marketNextId(),
+    stagedRows.push({
       importDate: _marketNormalizeDate(value('importDate')) || today,
       brandCode: typeof getBrandCodeByName === 'function' ? getBrandCodeByName(brand) : '',
       brand,
       model,
       ref: value('ref'),
-      material: _marketResolveProductSpec('material', value('material')),
-      movement: _marketResolveProductSpec('movement', value('movement')),
-      condition: typeof resolveConditionCode === 'function' ? resolveConditionCode(value('condition')) : value('condition'),
-      supplier: _marketResolveSupplier(value('supplier')),
-      staff: value('staff'),
-      purchasePrice: Math.max(0, _marketParseNumber(value('purchasePrice'))),
-      marketPriceUsd: Math.max(0, _marketParseNumber(value('marketPriceUsd'), true)),
+      material: value('material'),
+      movement: value('movement'),
+      condition: value('condition'),
+      auctionCode: auction.code,
+      auctionName: auction.name,
+      marketPriceJpy: Math.max(0, _marketParseNumber(value('marketPriceJpy')))
+        || Math.round(Math.max(0, _marketParseNumber(value('marketPriceUsdLegacy'), true)) * getMarketUsdRate()),
       sku: value('sku'),
       accessories: _marketParseAccessories(value('accessories')),
+      note: value('note'),
       sourceFile: fileName,
     });
-    imported += 1;
   });
 
-  _marketBuildFilterOptions();
-  marketResetFilters(false);
-  marketRenderTable();
-  _marketShowImportSummary(fileName, imported, skipped);
-
-  if (imported > 0) {
-    showToast('success', 'CSV取込完了', `${imported}件を取り込みました${skipped ? `（${skipped}件スキップ）` : ''}`);
+  if (stagedRows.length > 0) {
+    _marketPendingImport = { fileName, rows: stagedRows, skipped };
+    _marketRenderCsvPreview();
+    document.getElementById('marketCsvPreviewModal')?.classList.remove('hidden');
+    showToast('success', 'CSVを明細へ読み込みました', `${stagedRows.length}件を確認してください。まだ登録は完了していません`);
   } else {
     showToast('warning', 'CSV取込結果', '取り込めるデータがありませんでした');
   }
-  return { imported, skipped };
+  return { imported: 0, staged: stagedRows.length, skipped };
+}
+
+function _marketRenderCsvPreview() {
+  const pending = _marketPendingImport;
+  const body = document.getElementById('marketCsvPreviewBody');
+  const summary = document.getElementById('marketCsvPreviewSummary');
+  if (!pending || !body) return;
+
+  if (summary) {
+    summary.innerHTML = `<i class="fa-solid fa-file-csv"></i><span><strong>${_marketEscape(pending.fileName)}</strong> から ${pending.rows.length}件を読み込みました${pending.skipped ? `（${pending.skipped}件スキップ）` : ''}</span>`;
+  }
+  body.innerHTML = pending.rows.map((row, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td>${_marketEscape(_marketDisplayDate(row.importDate))}</td>
+      <td>${_marketEscape(row.brand || '—')}</td>
+      <td>${_marketEscape(row.model || '—')}</td>
+      <td>${_marketEscape(row.ref || '—')}</td>
+      <td>${_marketEscape(row.auctionName || row.auctionCode || '—')}</td>
+      <td class="market-price-yen">${_marketEscape(formatMarketPrice(row.marketPriceJpy))}</td>
+      <td>${_marketEscape(row.sku || '—')}</td>
+      <td>${_marketEscape((row.accessories || []).join('・') || '—')}</td>
+      <td>${_marketEscape(row.note || '—')}</td>
+    </tr>
+  `).join('');
+}
+
+function marketCancelCSVImport() {
+  _marketPendingImport = null;
+  document.getElementById('marketCsvPreviewModal')?.classList.add('hidden');
+  const body = document.getElementById('marketCsvPreviewBody');
+  if (body) body.innerHTML = '';
+}
+
+function _marketPendingRowsToCSV(rows) {
+  const csvCell = value => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const header = ['import_date','brand_text','model_number','reference_number','condition_text',
+    'market_price','market_currency','auction_code','notes','sku','material_text','movement_text','accessory_text'];
+  const dataRows = rows.map(row => [
+    row.importDate, row.brand, row.model, row.ref, row.condition,
+    row.marketPriceJpy, 'JPY', row.auctionCode, row.note, row.sku,
+    row.material, row.movement, (row.accessories || []).join('・'),
+  ]);
+  return [header, ...dataRows].map(row => row.map(csvCell).join(',')).join('\r\n');
+}
+
+async function marketConfirmCSVImport() {
+  const pending = _marketPendingImport;
+  if (!pending?.rows?.length) {
+    showToast('warning', 'CSV取込', '確認中の明細がありません');
+    return { imported: 0, skipped: 0 };
+  }
+
+  const button = document.getElementById('marketCsvConfirmButton');
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 登録中';
+  }
+
+  try {
+    let approvalPending = false;
+    if (window.ZaikoAPI) {
+      const normalizedText = _marketPendingRowsToCSV(pending.rows);
+      const normalizedFile = new File([normalizedText], pending.fileName || 'market.csv', { type: 'text/csv;charset=utf-8' });
+      const result = await window.ZaikoAPI.importMarketCSV(normalizedFile);
+      approvalPending = result?.status === 'pending_approval';
+    } else {
+      pending.rows.forEach(row => APP_DATA.marketPrices.push({ ...row, id: _marketNextId() }));
+    }
+
+    const imported = pending.rows.length;
+    const skipped = pending.skipped;
+    const fileName = pending.fileName;
+    marketCancelCSVImport();
+    _marketBuildFilterOptions();
+    marketResetFilters(false);
+    marketRenderTable();
+    _marketShowImportSummary(fileName, imported, skipped);
+    showToast('success', approvalPending ? '承認申請を送信しました' : 'CSV取込完了',
+      approvalPending ? `${imported}件を管理者の承認待ちにしました` : `${imported}件を登録しました${skipped ? `（${skipped}件スキップ）` : ''}`);
+    return { imported, staged: 0, skipped, approvalPending };
+  } catch (error) {
+    showToast('error', 'CSV登録エラー', error?.message || '相場明細を登録できませんでした');
+    throw error;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = '<i class="fa-solid fa-check"></i> この内容で登録';
+    }
+  }
 }
 
 function marketParseCSV(text) {
@@ -714,19 +730,19 @@ function marketParseCSV(text) {
 
 function _marketResolveColumns(headers) {
   const aliases = {
-    importDate: ['取り込み日付', '取込日付', '取込日', 'importdate', 'import_date'],
+    importDate: ['オークション開催日', '開催日', '取り込み日付', '取込日付', '取込日', 'importdate', 'import_date'],
     brand: ['ブランド', 'brand'],
     model: ['モデル名', 'モデル', 'model'],
     ref: ['型番', 'ref', 'reference'],
     material: ['素材', 'material'],
     movement: ['駆動方式', 'ムーブメント', 'movement'],
     condition: ['コンディション', '状態', 'condition'],
-    supplier: ['仕入先', 'supplier'],
-    staff: ['担当者', '仕入担当者', 'staff'],
-    purchasePrice: ['仕入れ価格', '仕入価格', '仕入金額', 'purchaseprice', 'purchase_price'],
-    marketPriceUsd: ['相場価格', '相場価格usd', 'marketpriceusd', 'market_price_usd'],
+    auctionCode: ['オークションコード', 'auctioncode', 'auction_code'],
+    marketPriceJpy: ['落札価格jpy', '落札価格', '相場価格jpy', 'marketpricejpy', 'market_price_jpy'],
+    marketPriceUsdLegacy: ['相場価格usd', 'marketpriceusd', 'market_price_usd'],
     sku: ['sku'],
     accessories: ['付属品', 'accessories'],
+    note: ['備考', 'notes', 'note'],
   };
   return Object.fromEntries(Object.entries(aliases).map(([key, candidates]) => [
     key,
@@ -748,12 +764,6 @@ function _marketNormalizeDate(value) {
   const match = normalized.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (!match) return '';
   return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
-}
-
-function _marketResolveSupplier(value) {
-  if (!value) return '';
-  const supplier = (APP_DATA.suppliers || []).find(item => item.code === value || item.name === value);
-  return supplier ? supplier.code : value;
 }
 
 function _marketResolveProductSpec(type, value) {
@@ -807,12 +817,11 @@ function _marketShowImportSummary(fileName, imported, skipped) {
 function marketExportCSV() {
   const rows = _marketFilteredRows();
   const output = [
-    ['取り込み日付', 'ブランド', 'モデル名', '型番', '素材', '駆動方式', 'コンディション', '仕入先', '担当者', '仕入れ価格', '相場価格（USD）', 'SKU', '付属品'],
+    ['オークション開催日', 'ブランド', 'モデル名', '型番', '素材', '駆動方式', 'コンディション', 'オークションコード', '落札価格（JPY）', 'SKU', '付属品', '備考'],
     ...rows.map(row => [
       row.importDate, row.brand, row.model, row.ref || '',
       getProductSpecName('material', row.material), getProductSpecName('movement', row.movement), getConditionName(row.condition),
-      getSupplierName(row.supplier), row.staff || '', row.purchasePrice || 0,
-      row.marketPriceUsd || 0, row.sku || '', (row.accessories || []).join('・'),
+      row.auctionCode || '', row.marketPriceJpy || 0, row.sku || '', (row.accessories || []).join('・'), row.note || '',
     ]),
   ];
   const csv = output.map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -824,16 +833,23 @@ function marketExportCSV() {
 }
 
 function marketDownloadTemplate() {
+  const header = ['オークション開催日', 'ブランド', 'モデル名', '型番', '素材', '駆動方式', 'コンディション', 'オークションコード', '落札価格（JPY）', 'SKU', '付属品', '備考'];
+  const auction = (APP_DATA.auctionRecords || [])[0] || {};
+  const brand = (APP_DATA.brandRecords || [])[0] || {};
   const sample = [
-    ['取り込み日付', 'ブランド', 'モデル名', '型番', '素材', '駆動方式', 'コンディション', '仕入先', '担当者', '仕入れ価格', '相場価格（USD）', 'SKU', '付属品'],
-    [_marketToday(), 'ロレックス', 'サブマリーナ', '116610LN', 'ステンレスSS', '自動巻き', '極美品 (S)', '田中商事', '山本 太郎', '850000', '7900', '', 'BOX・GUARANTEE'],
+    _marketToday(), brand.name || 'ロレックス', 'サブマリーナ', '116610LN',
+    'ステンレス', '自動巻き', '美品', auction.code || '', 1200000,
+    `MARKET-SAMPLE-${_marketToday().replace(/-/g, '')}-001`, 'BOX・GUARANTEE',
+    '入力例：必要に応じて変更してください',
   ];
-  const csv = sample.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const rows = [header, sample];
+  const csv = rows.map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
   const anchor = document.createElement('a');
   anchor.href = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
   anchor.download = '相場表_取込テンプレート.csv';
   anchor.click();
-  showToast('info', 'テンプレート', 'CSV取込テンプレートをダウンロードしました');
+  showToast('info', 'テンプレート', '入力例1行付きの相場CSV取込テンプレートをダウンロードしました');
+  return { filename: anchor.download, rows };
 }
 
 function _marketEscape(value) {
