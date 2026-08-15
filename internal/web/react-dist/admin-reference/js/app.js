@@ -4604,7 +4604,7 @@ function renderSlipList(data) {
     });
   } else if (currentSlipTab === 'consignment') {
     data.forEach(record => {
-      totalAmt += Number(record.totalJpy) || getShippingSaleTotalJPY(record.items || [], record);
+      totalAmt += getConsignmentTotalJPY(record.items || [], record);
       totalItems += record.items?.length || 0;
       if ((record.revisions || []).length) revisedCount++;
     });
@@ -4863,7 +4863,7 @@ function buildSlipRow(row) {
       <td class="issued-at-cell">${formatIssuedAtStacked(row.issuedAt)}</td>
       <td>${getBuyerName(row.destination)}</td>
       <td style="text-align:center;">${row.items?.length || 0}点</td>
-      <td style="text-align:right;font-weight:bold;">${formatPrice(Number(row.totalJpy) || getShippingSaleTotalJPY(row.items || [], row))}</td>
+      <td style="text-align:right;font-weight:bold;">${formatPrice(getConsignmentTotalJPY(row.items || [], row))}</td>
       <td style="font-size:12px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${row.note || '—'}</td>
       <td style="text-align:center;">${statusBadge}</td>
       <td style="text-align:center;"><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();issueConsignmentSlipDocument('${row.id}',event)" ${canIssuePurchaseSlip() ? '' : 'disabled'}><i class="fa-solid fa-file-arrow-down"></i> 発行</button></td>
@@ -5872,6 +5872,18 @@ function getShippingSaleTotalJPY(items, record) {
   return (items || []).reduce((total, item) => total + getShippingLineJPY(item, record), 0);
 }
 
+/**
+ * 委託伝票は常にJPY固定。旧データのtotalJpyにはUSD額が入っている場合があるため、
+ * 合計値は登録時スナップショットを持つ各明細から必ず再集計する。
+ */
+function getConsignmentLineJPY(item, record) {
+  return getShippingLineJPY(item, { ...record, displayCurrency: 'JPY', inputCurrency: 'JPY' });
+}
+
+function getConsignmentTotalJPY(items, record) {
+  return (items || []).reduce((total, item) => total + getConsignmentLineJPY(item, record), 0);
+}
+
 function formatShippingRecordAmount(amountUSD, record, item = null) {
   return getShippingRecordCurrency(record) === 'JPY'
     ? formatPrice(item ? getShippingLineJPY(item, record) : getShippingSaleTotalJPY(record?.items || [], record))
@@ -5951,7 +5963,16 @@ function buildShipmentRecordTemplateHTML(slip, documentOptions = {}) {
 
 /** 保存済み委託伝票を、出荷伝票と同じ雛形・項目構成で帳票化する。 */
 function buildConsignmentRecordTemplateHTML(slip) {
-  return buildShipmentRecordTemplateHTML({ ...slip, displayCurrency: 'JPY', inputCurrency: 'JPY' }, {
+  const fixedJPYSlip = {
+    ...slip,
+    displayCurrency: 'JPY',
+    inputCurrency: 'JPY',
+    items: (slip.items || []).map(item => ({
+      ...item,
+      convertedSalePriceJpy: getConsignmentLineJPY(item, slip),
+    })),
+  };
+  return buildShipmentRecordTemplateHTML(fixedJPYSlip, {
     title: '委託伝票',
     transactionDateLabel: '委託日',
     counterpartyLabel: '委託先',
@@ -6704,7 +6725,7 @@ function buildSlipDetailBody(type, rec) {
         ${buyer?.address ? metaRow('<i class="fa-solid fa-location-dot"></i> 住所', buyer.address) : ''}
         ${buyer?.contact ? metaRow('<i class="fa-solid fa-phone"></i> 連絡先', buyer.contact) : ''}
         ${metaRow('<i class="fa-solid fa-boxes-stacked"></i> 商品ステータス', '<span class="badge badge-consigned">● 委託中</span>')}
-        ${metaRow('<i class="fa-solid fa-yen-sign"></i> 合計金額（JPY）', `<span class="slip-detail-price">${formatPrice(Number(rec.totalJpy) || getShippingSaleTotalJPY(rec.items || [], rec))}</span>`)}
+        ${metaRow('<i class="fa-solid fa-yen-sign"></i> 合計金額（JPY）', `<span class="slip-detail-price">${formatPrice(getConsignmentTotalJPY(rec.items || [], rec))}</span>`)}
         ${metaRow('<i class="fa-solid fa-arrow-right-arrow-left"></i> 委託登録時固定レート', `1 USD = ¥${getShippingRecordRate(rec).toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}
         ${rec.note ? metaRow('<i class="fa-solid fa-note-sticky"></i> 備考', rec.note) : ''}
       </div>`;
@@ -6718,7 +6739,7 @@ function buildSlipDetailBody(type, rec) {
             <td><code style="font-size:11px;">${item.code || '—'}</code></td>
             <td>${item.brand || '—'}</td>
             <td>${item.model || '—'}</td>
-            <td style="text-align:right;font-weight:bold;">${formatPrice(getShippingLineJPY(item, rec))}</td>
+            <td style="text-align:right;font-weight:bold;">${formatPrice(getConsignmentLineJPY(item, rec))}</td>
             <td><span class="badge badge-consigned">委託中</span></td>
           </tr>`).join('')}</tbody>
         </table>

@@ -184,6 +184,16 @@ func consignmentPDF(record persistence.ConsignmentSlipRecord) reportpdf.Document
 	var total int64
 	for _, item := range record.Lines {
 		value := item.ConvertedSalePriceJPY
+		// Older records may predate the persisted JPY snapshot. Preserve the
+		// registration-time rate from the slip and reconstruct the JPY amount
+		// without consulting the current master rate.
+		if value <= 0 && item.SalePriceUSDMinor > 0 && record.FXRateScaled > 0 && record.FXScale > 0 {
+			converted := item.SalePriceUSDMinor * record.FXRateScaled / record.FXScale
+			if item.SalePriceUSDMinor*record.FXRateScaled%record.FXScale != 0 {
+				converted++
+			}
+			value = ((converted + 999) / 1000) * 1000
+		}
 		total += value
 		lines = append(lines, reportpdf.Line{Number: item.LineNumber, Description: strings.TrimSpace(item.Brand + " / " + item.ModelNumber),
 			Amount: amount("JPY", value), Tax: "対象外", ProductCode: item.ProductCode})
