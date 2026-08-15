@@ -137,6 +137,14 @@ func TestAdminAccessCodeIsSharedRotatableAndDoesNotElevateWorker(t *testing.T) {
 	if me.Code != http.StatusOK || !strings.Contains(me.Body.String(), `"role":"worker"`) {
 		t.Fatalf("verification must not elevate worker session: status=%d body=%s", me.Code, me.Body.String())
 	}
+	workerIssue := requestWithSession(http.MethodPost, "/api/v1/purchases/pur_example/issue", `{}`, workerCSRF, workerCookies)
+	if workerIssue.Code != http.StatusForbidden || !strings.Contains(workerIssue.Body.String(), `"code":"admin_required"`) {
+		t.Fatalf("worker purchase issue status=%d body=%s, want admin-only 403", workerIssue.Code, workerIssue.Body.String())
+	}
+	workerSaleIssue := requestWithSession(http.MethodPost, "/api/v1/sales/sale_example/issue", `{}`, workerCSRF, workerCookies)
+	if workerSaleIssue.Code != http.StatusForbidden || !strings.Contains(workerSaleIssue.Body.String(), `"code":"admin_required"`) {
+		t.Fatalf("worker sales issue status=%d body=%s, want admin-only 403", workerSaleIssue.Code, workerSaleIssue.Body.String())
+	}
 }
 
 func TestRESTCSVExportCreatesDocumentHistory(t *testing.T) {

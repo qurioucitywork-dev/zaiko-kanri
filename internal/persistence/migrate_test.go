@@ -23,6 +23,33 @@ func TestMigrationCatalogIsOrderedAndChecksummed(t *testing.T) {
 	}
 }
 
+func TestBeltAndDialMasterMigrationCreatesStableCatalogs(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000032_belt_dial_masters" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("belt and dial master migration 000032 is missing")
+	}
+	for _, fragment := range []string{"CREATE TABLE IF NOT EXISTS belt_materials", "CREATE TABLE IF NOT EXISTS dials", "UNIQUE (organization_id, code)"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("belt/dial master migration is missing %q", fragment)
+		}
+	}
+	for _, kind := range []string{"belt-materials", "dials"} {
+		if _, ok := masterTable(kind); !ok {
+			t.Fatalf("master kind %q is not registered", kind)
+		}
+	}
+}
+
 func TestPlatformMigrationContainsCriticalTables(t *testing.T) {
 	migrations, err := migrationCatalog()
 	if err != nil {
@@ -114,6 +141,236 @@ func TestUniquePurchaseItemsMigrationSplitsBulkLines(t *testing.T) {
 	} {
 		if !strings.Contains(sql, fragment) {
 			t.Fatalf("unique purchase items migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchaseTaxModeMigrationFixesTaxSnapshot(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000019_purchase_tax_mode" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase tax mode migration 000019 is missing")
+	}
+	for _, fragment := range []string{"purchase_tax_mode", "tax_rate_basis_points", "domestic", "overseas"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase tax mode migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchaseIssueMigrationPersistsTimestampAndIssuer(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000021_purchase_issue_audit" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase issue migration 000021 is missing")
+	}
+	for _, fragment := range []string{"issued_at", "issued_by", "idx_purchase_slips_issued_at"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase issue migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchaseDateFXSnapshotMigrationUsesHistoricalRate(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000022_purchase_date_fx_snapshot" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase date FX snapshot migration 000022 is missing")
+	}
+	for _, fragment := range []string{
+		"snapshot.observed_at < slip.purchase_date + INTERVAL '1 day'",
+		"converted_total_jpy",
+		"fx_rate_snapshot_id",
+		"fx_rate_scaled",
+		"fx_scale",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase date FX snapshot migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchaseIssueFXSnapshotMigrationUsesIssuanceRate(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000024_purchase_issue_fx_snapshot" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase issue FX snapshot migration 000024 is missing")
+	}
+	for _, fragment := range []string{
+		"snapshot.observed_at <= slip.issued_at",
+		"issue_fx_rate_snapshot_id",
+		"issue_fx_rate_scaled",
+		"issue_fx_scale",
+		"idx_purchase_slips_issue_fx_rate",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase issue FX snapshot migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchaseRegistrationFXSnapshotMigrationUsesRegistrationTime(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000029_purchase_registration_fx_snapshot" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase registration FX snapshot migration 000029 is missing")
+	}
+	for _, fragment := range []string{
+		"snapshot.observed_at <= slip.created_at",
+		"slip.purchase_tax_mode = 'overseas'",
+		"converted_total_jpy",
+		"fx_rate_snapshot_id",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase registration FX snapshot migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestSalesIssueMigrationPersistsTimestampAndIssuer(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000025_sales_issue_audit" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("sales issue migration 000025 is missing")
+	}
+	for _, fragment := range []string{"issued_at", "issued_by", "idx_sales_slips_issued_at"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("sales issue migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestSalesTaxMigrationSeparatesUSDOutOfScopeFromJPYExemption(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000026_sales_tax_out_of_scope" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("sales tax migration 000026 is missing")
+	}
+	for _, fragment := range []string{
+		"'out_of_scope'",
+		"WHERE display_currency = 'USD'",
+		"tax_rate_basis_points = 0",
+		"sales_slips_tax_mode_chk",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("sales tax migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestSalesOutOfScopeTotalsMigrationRemovesLegacyUSDTax(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000027_sales_out_of_scope_totals" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("sales out-of-scope totals migration 000027 is missing")
+	}
+	for _, fragment := range []string{
+		"UPDATE sales_lines AS line",
+		"tax_amount_minor = 0",
+		"total_minor = line.subtotal_minor",
+		"slip.display_currency = 'USD'",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("sales out-of-scope totals migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestShipmentJPYThousandRoundingMigrationRepairsExistingLines(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000028_shipment_jpy_thousand_rounding" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("shipment JPY rounding migration 000028 is missing")
+	}
+	for _, fragment := range []string{
+		"UPDATE shipment_lines AS line",
+		"/ 1000",
+		")::bigint * 1000",
+		"shipment.fx_rate_scaled",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("shipment JPY rounding migration is missing %q", fragment)
 		}
 	}
 }

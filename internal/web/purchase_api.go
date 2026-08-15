@@ -75,9 +75,9 @@ func (s *Server) apiPurchaseCreate(w http.ResponseWriter, r *http.Request) {
 		line.ConditionCode = strings.ToUpper(strings.TrimSpace(line.ConditionCode))
 		line.CostCurrency = strings.ToUpper(strings.TrimSpace(line.CostCurrency))
 		line.BaseSaleCurrency = strings.ToUpper(strings.TrimSpace(line.BaseSaleCurrency))
-		if line.Quantity < 1 || line.Quantity > 100 || line.BrandCode == "" || line.UnitCostMinor < 0 ||
+		if line.Quantity < 1 || line.Quantity > 100 || line.UnitCostMinor < 0 ||
 			line.BaseSalePriceMinor < 0 || !validCurrency(line.CostCurrency) || !validCurrency(line.BaseSaleCurrency) {
-			writeAPIError(w, http.StatusBadRequest, "invalid_purchase_line", "明細の数量・マスタコード・金額・通貨を確認してください。")
+			writeAPIError(w, http.StatusBadRequest, "invalid_purchase_line", "明細の数量・金額・通貨を確認してください。入力済みのマスタコードは有効な値を指定してください。")
 			return
 		}
 	}
@@ -118,6 +118,30 @@ func (s *Server) apiPurchaseConfirm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, record)
 }
 
+func (s *Server) apiPurchaseIssue(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	if user.Role != database.RoleAdmin {
+		writeAPIError(w, http.StatusForbidden, "admin_required", "仕入伝票を発行できるのは管理者のみです。")
+		return
+	}
+	if s.repository.Driver() != "postgres" {
+		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "仕入APIはPostgreSQLモードで利用してください。")
+		return
+	}
+	record, err := s.repository.IssuePurchase(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
+	if err != nil {
+		writePurchaseError(w, err)
+		return
+	}
+	after, _ := json.Marshal(record)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
+		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "purchase_slip", TargetID: record.ID,
+		Action: "purchase.issued", AfterJSON: string(after), Result: "success", RequestID: requestID(r.Context()),
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	writeJSON(w, http.StatusOK, record)
+}
+
 func writePurchaseError(w http.ResponseWriter, err error) {
 	status, code, message := http.StatusInternalServerError, "purchase_failed", "仕入伝票を処理できませんでした。"
 	switch {
@@ -133,6 +157,8 @@ func writePurchaseError(w http.ResponseWriter, err error) {
 		status, code, message = http.StatusBadRequest, "quantity_serial_conflict", "数量が2以上の明細にはシリアル番号を指定できません。"
 	case errors.Is(err, persistence.ErrPurchaseQuantity):
 		status, code, message = http.StatusBadRequest, "invalid_purchase_quantity", "商品は1点ごとに明細を分けて登録してください。"
+	case errors.Is(err, persistence.ErrPurchaseTaxMode):
+		status, code, message = http.StatusBadRequest, "invalid_purchase_tax_mode", "仕入区分は国内仕入または海外仕入を指定してください。"
 	case errors.Is(err, persistence.ErrPurchaseNotFound):
 		status, code, message = http.StatusNotFound, "purchase_not_found", "仕入伝票が見つかりません。"
 	case errors.Is(err, persistence.ErrPurchaseState):

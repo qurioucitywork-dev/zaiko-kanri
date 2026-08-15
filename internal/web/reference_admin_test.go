@@ -12,25 +12,26 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":               "aac705bf08dffc8b3f126f9c5cb99e018ac15c18127da181ec8d6f4cc997fdd4",
+		"app.html":               "8df299505f1878bdfe8a90495be678ad2f59aaf26a106e66a521461ccf391007",
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
-		"css/market-table.css":   "976ee6e103fdb492cec7ec93f79f52d924f47faa8c1a6464c0e8ff839f8c0b0a",
-		"css/style.css":          "ecc4c6d3d3af5cfbcaf4e26c05c1cba0a83e92c9e1bae9d39f34d3315af7d29c",
+		"css/market-table.css":   "7fd79f92a5b5a3a42556f862ada62ae8adb79d24e6baa158b1cd668439f3c97e",
+		"css/style.css":          "51cbd322f5938eeb3d532f315928f54914aa0a8cf878fbf175dbbde5ba9890d9",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
-		"js/api_bridge.js":       "fa60cfed51729cc5f3b4b0670bd96e1fba1a9ab115910c784bb016af09957a82",
-		"js/app.js":              "91a996c46b3bbfdeda3bf6a6ce8424398f167b790b1d1cefe95bff9f1f969a13",
-		"js/approval.js":         "3df4953ce3eb574f6f83719b66be065201abbbe5e52becd918e82774c16b508e",
-		"js/auth.js":             "fcda27236b7d98f3823b63effbd773be73fa8cc76c0e5c631f38a4b6e1b5000d",
+		"js/api_bridge.js":       "471144d6ee0e9565f783b2fb65802935905d211a8acc651c8bca234d4b56dab7",
+		"js/app.js":              "53934814c796542ce14a99da772507789e4e79290492bf32462a00a1932a03c6",
+		"js/approval.js":         "23b78eb379f3b380ed9c9d2a4b563a3e0d0abbf199bd31941d7dac539bd5b0a0",
+		"js/auth.js":             "a9f0cc7a928b801342241f4740c055f4f34eb208ac6ed61e25ef82191ad97c50",
 		"js/box.js":              "4d2e41d7ea036881d4e2566a90e8663c8ccf1b2bb656f4817d12c1d6447140d7",
-		"js/data.js":             "59d45a413f5f841665500a405a0a67963421b11c867c0b39a71cc68e7454c5bd",
+		"js/data.js":             "4fb3bf6c708542c1fab86d1be871247a09551ab0f0f9ad0c2d2a4757cc873a31",
 		"js/guest.js":            "174dc03d5c978e514e5a674b9967ecf6b2d0caf2d0cc8b8fdbd7305687aa2401",
 		"js/guest_shared.js":     "da6589099b995f457d44e2b6eeb05ac07d8ad1c7bef937f4230dd8afd2ca38e4",
 		"js/login_info.js":       "2fe90eac8cc8f1718828e95d34b2ea4f180cc5eea474348ef0d0c4796d38baad",
-		"js/market_table.js":     "47fbff9ee0c8f774b7f50e6be981fe05bcce2965185c69122f96ebad18a41ef3",
+		"js/market_table.js":     "e7e899605f42b05c8e06c63e90c83a8aeab6318d8f8a06e88077c219b5dc8374",
 		"js/notify.js":           "b18e2604d9c637729a339e7b0d2a9b6bb0fac85f5f106c24d9e772263e16e878",
-		"js/purchase_entry.js":   "5ce9eb4fd8abab62124743054c96992c4fb2b645477075610b20705f1e174efd",
-		"js/stocktake.js":        "4e4e401fb8bd06a2b169aa425ad4e90138221901fe9e7d892c4bcc2175705e72",
+		"js/purchase_entry.js":   "4d44be2041849dfaf96c3875da1edb72fe34d728954f94eaf5e1033f4c075ff0",
+		"js/stocktake.js":        "b07ad147b3ab5c37422f897431059b6543859b61bbc4337305f5a4c9277fa98b",
+		"js/consignment.js":      "b0bd2d508f357910c8362c78f590de714146b29c5d7dfd05c68579b0492343ad",
 		"js/qrcode-generator.js": "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
 		"js/jsQR.js":             "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
 		"js/qr_inventory.js":     "fec7d97629f2fbb2f5ea18b5c836eedcb4cd1d357d0b579619800216fe158020",
@@ -55,7 +56,7 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 	html := string(content)
 	pages := []string{
 		"dashboard", "market", "inventory", "purchase-entry", "purchase", "sales",
-		"sales-list", "shipping", "returns", "master", "box", "performance",
+		"sales-list", "shipping", "consignment", "returns", "master", "box", "performance",
 		"stocktake", "approval", "purchase-list", "client", "company", "password",
 	}
 	for _, page := range pages {
@@ -65,15 +66,15 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 	}
 	scripts := []string{
 		"qrcode-generator.js", "jsQR.js", "data.js", "guest_shared.js", "login_info.js", "auth.js", "api_bridge.js", "approval.js", "notify.js", "box.js", "market_table.js", "qr_inventory.js", "app.js",
-		"stocktake.js", "purchase_entry.js",
+		"consignment.js", "stocktake.js", "purchase_entry.js",
 	}
 	for _, script := range scripts {
 		if !strings.Contains(html, `src="js/`+script) {
 			t.Errorf("reference admin is missing script %q", script)
 		}
 	}
-	if got := strings.Count(html, `class="modal-overlay`); got != 45 {
-		t.Errorf("reference admin modal count=%d, want 45", got)
+	if got := strings.Count(html, `class="modal-overlay`); got != 46 {
+		t.Errorf("reference admin modal count=%d, want 46", got)
 	}
 
 	guestContent, err := reactAssets.ReadFile("react-dist/admin-reference/guest.html")

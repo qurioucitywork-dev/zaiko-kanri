@@ -115,3 +115,56 @@ func (s *Server) apiProductFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 }
+
+func (s *Server) apiProductFileDelete(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	record, err := s.repository.DeleteProductFile(r.Context(), user.OrganizationID, r.PathValue("id"))
+	if err != nil {
+		if errors.Is(err, persistence.ErrProductUnavailable) {
+			writeAPIError(w, http.StatusNotFound, "file_not_found", "画像が見つかりません。")
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, "file_delete_failed", "画像を削除できませんでした。")
+		return
+	}
+	storageResult := "success"
+	if err := s.objects.Delete(r.Context(), record.ObjectKey); err != nil {
+		// The metadata has already been removed so the application remains
+		// consistent. An orphaned object can be cleaned up operationally.
+		storageResult = "metadata_deleted_storage_cleanup_failed"
+		s.log.Warn("delete product image object", "error", err, "file_id", record.ID, "request_id", requestID(r.Context()))
+	}
+	before, _ := json.Marshal(record)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: user.OrganizationID, ActorUserID: user.ID,
+		TargetType: "product_file", TargetID: record.ID, Action: "product_file.deleted", BeforeJSON: string(before),
+		Result: storageResult, RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent()})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) apiProductFilesReorder(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		FileIDs []string `json:"fileIds"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "画像の並び順を確認してください。")
+		return
+	}
+	user, _ := currentUser(r.Context())
+	productID := r.PathValue("id")
+	records, err := s.repository.ReorderProductFiles(r.Context(), user.OrganizationID, productID, input.FileIDs)
+	if err != nil {
+		if errors.Is(err, persistence.ErrProductFileOrder) {
+			writeAPIError(w, http.StatusConflict, "stale_file_order", "画像構成が更新されています。画面を再読み込みしてください。")
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, "file_order_failed", "画像の並び順を保存できませんでした。")
+		return
+	}
+	after, _ := json.Marshal(records)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: user.OrganizationID, ActorUserID: user.ID,
+		TargetType: "product", TargetID: productID, Action: "product_files.reordered", AfterJSON: string(after),
+		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent()})
+	writeJSON(w, http.StatusOK, map[string]any{"items": records, "total": len(records)})
+}

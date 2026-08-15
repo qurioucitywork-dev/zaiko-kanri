@@ -50,6 +50,12 @@ type SaleLineRecord struct {
 	TaxAmountMinor    int64  `json:"taxAmountMinor"`
 	TotalMinor        int64  `json:"totalMinor"`
 	ConvertedTotalJPY int64  `json:"convertedTotalJpy"`
+	FXRateSnapshotID  string `json:"fxRateSnapshotId"`
+	FXRateScaled      int64  `json:"fxRateScaled"`
+	FXScale           int64  `json:"fxScale"`
+	ReferenceNumber   string `json:"referenceNumber"`
+	SerialNumber      string `json:"serialNumber"`
+	Accessories       string `json:"accessories"`
 }
 
 type SaleSlipRecord struct {
@@ -67,7 +73,12 @@ type SaleSlipRecord struct {
 	TaxAmountMinor     int64            `json:"taxAmountMinor"`
 	TotalMinor         int64            `json:"totalMinor"`
 	ConvertedTotalJPY  int64            `json:"convertedTotalJpy"`
+	FXRateSnapshotID   string           `json:"fxRateSnapshotId"`
+	FXRateScaled       int64            `json:"fxRateScaled"`
+	FXScale            int64            `json:"fxScale"`
 	ConfirmedAt        *time.Time       `json:"confirmedAt,omitempty"`
+	IssuedAt           *time.Time       `json:"issuedAt,omitempty"`
+	IssuedBy           string           `json:"issuedBy,omitempty"`
 	CreatedAt          time.Time        `json:"createdAt"`
 	UpdatedAt          time.Time        `json:"updatedAt"`
 	Lines              []SaleLineRecord `gorm:"-" json:"lines,omitempty"`
@@ -112,6 +123,9 @@ func convertCurrency(amount int64, from, to string, rate fxSnapshot) (int64, err
 	return 0, ErrExchangeRate
 }
 
+// purchaseCostSnapshot fixes the latest master USD/JPY rate in the same
+// transaction that registers the purchase. The persisted line snapshot is the
+// accounting source of truth and issuance or reissuance must never replace it.
 func purchaseCostSnapshot(tx *gorm.DB, organizationID string, unitAmount int64, quantity int, currency string) (int64, any, any, any, error) {
 	total := unitAmount * int64(quantity)
 	if currency == "JPY" {
@@ -147,10 +161,13 @@ func productBelongsToBuyer(tx *gorm.DB, organizationID, productID, buyerRoleID s
 		SELECT 1 FROM shipment_lines l JOIN shipment_slips s ON s.id=l.shipment_slip_id
 			WHERE s.organization_id=? AND l.product_id=? AND s.buyer_role_id=? AND s.status IN ('draft','confirmed')
 		UNION ALL
+		SELECT 1 FROM consignment_lines l JOIN consignment_slips c ON c.id=l.consignment_slip_id
+			WHERE c.organization_id=? AND l.product_id=? AND c.consignee_role_id=? AND c.status='confirmed'
+		UNION ALL
 		SELECT 1 FROM sales_lines l JOIN sales_slips s ON s.id=l.sales_slip_id
 			WHERE s.organization_id=? AND l.product_id=? AND s.buyer_role_id=? AND s.status IN ('draft','pending_approval','confirmed')
 	) linked`, organizationID, productID, buyerRoleID, organizationID, productID, buyerRoleID,
-		organizationID, productID, buyerRoleID).Scan(&count).Error
+		organizationID, productID, buyerRoleID, organizationID, productID, buyerRoleID).Scan(&count).Error
 	return count > 0, err
 }
 
@@ -173,6 +190,14 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 			return err
 		}
 		now := time.Now().UTC()
+		// USD建ての売上は国外取引として税対象外で固定する。入力側が
+		// 課税を送信しても、DBには対象外（税額0）として保存する。
+		taxMode := input.TaxMode
+		taxRateBasisPoints := input.TaxRateBasisPoints
+		if input.DisplayCurrency == "USD" {
+			taxMode = "out_of_scope"
+			taxRateBasisPoints = 0
+		}
 		sequence, err := nextDocumentSequence(tx, input.OrganizationID, "sale", date.Year(), now)
 		if err != nil {
 			return err
@@ -186,7 +211,7 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 			id,organization_id,slip_number,buyer_role_id,sale_date,display_currency,tax_mode,
 			tax_rate_basis_points,status,notes,created_by,created_at,updated_at
 		) VALUES(?,?,?,?,?,?,?,?,'draft',?,?,?,?)`, saleID, input.OrganizationID, slipNumber, buyerRoleID,
-			date, input.DisplayCurrency, input.TaxMode, input.TaxRateBasisPoints, strings.TrimSpace(input.Notes),
+			date, input.DisplayCurrency, taxMode, taxRateBasisPoints, strings.TrimSpace(input.Notes),
 			input.ActorUserID, now, now).Error; err != nil {
 			return err
 		}
@@ -207,7 +232,7 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 			if result.Error != nil {
 				return result.Error
 			}
-			if result.RowsAffected == 0 || !map[string]bool{"in_stock": true, "reserved": true, "shipped": true}[product.InventoryStatus] {
+			if result.RowsAffected == 0 || !map[string]bool{"in_stock": true, "reserved": true, "shipped": true, "consigned": true}[product.InventoryStatus] {
 				return ErrProductUnavailable
 			}
 			if product.InventoryStatus != "in_stock" {
@@ -230,8 +255,8 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 				return ErrSaleState
 			}
 			tax := int64(0)
-			if input.TaxMode == "taxable" {
-				tax = mulDivRound(price, int64(input.TaxRateBasisPoints), 10000)
+			if taxMode == "taxable" {
+				tax = mulDivRound(price, int64(taxRateBasisPoints), 10000)
 			}
 			total := price + tax
 			convertedJPY, err := convertCurrency(total, input.DisplayCurrency, "JPY", rate)
@@ -277,7 +302,9 @@ func (r *Repository) SaleSlips(ctx context.Context, organizationID string, limit
 			s.display_currency,s.tax_mode,s.tax_rate_basis_points,s.status,s.notes,
 			COALESCE(SUM(l.subtotal_minor),0) AS subtotal_minor,COALESCE(SUM(l.tax_amount_minor),0) AS tax_amount_minor,
 			COALESCE(SUM(l.total_minor),0) AS total_minor,COALESCE(SUM(l.converted_total_jpy),0) AS converted_total_jpy,
-			s.confirmed_at,s.created_at,s.updated_at`).
+			COALESCE(MAX(l.fx_rate_snapshot_id),'') AS fx_rate_snapshot_id,
+			COALESCE(MAX(l.fx_rate_scaled),0) AS fx_rate_scaled,COALESCE(MAX(l.fx_scale),0) AS fx_scale,
+			s.confirmed_at,s.issued_at,s.issued_by,s.created_at,s.updated_at`).
 		Joins("JOIN partner_roles br ON br.id=s.buyer_role_id").Joins("JOIN business_partners bp ON bp.id=br.partner_id").
 		Joins("LEFT JOIN sales_lines l ON l.sales_slip_id=s.id").Where("s.organization_id=?", organizationID).
 		Group("s.id,br.role_code,bp.legal_name").Order("s.sale_date DESC,s.slip_number DESC").Limit(limit).Scan(&records).Error
@@ -291,7 +318,9 @@ func (r *Repository) SaleSlip(ctx context.Context, organizationID, saleID string
 			s.display_currency,s.tax_mode,s.tax_rate_basis_points,s.status,s.notes,
 			COALESCE(SUM(l.subtotal_minor),0) AS subtotal_minor,COALESCE(SUM(l.tax_amount_minor),0) AS tax_amount_minor,
 			COALESCE(SUM(l.total_minor),0) AS total_minor,COALESCE(SUM(l.converted_total_jpy),0) AS converted_total_jpy,
-			s.confirmed_at,s.created_at,s.updated_at`).
+			COALESCE(MAX(l.fx_rate_snapshot_id),'') AS fx_rate_snapshot_id,
+			COALESCE(MAX(l.fx_rate_scaled),0) AS fx_rate_scaled,COALESCE(MAX(l.fx_scale),0) AS fx_scale,
+			s.confirmed_at,s.issued_at,s.issued_by,s.created_at,s.updated_at`).
 		Joins("JOIN partner_roles br ON br.id=s.buyer_role_id").Joins("JOIN business_partners bp ON bp.id=br.partner_id").
 		Joins("LEFT JOIN sales_lines l ON l.sales_slip_id=s.id").Where("s.organization_id=? AND s.id=?", organizationID, saleID).
 		Group("s.id,br.role_code,bp.legal_name").Take(&record)
@@ -302,13 +331,31 @@ func (r *Repository) SaleSlip(ctx context.Context, organizationID, saleID string
 		return SaleSlipRecord{}, result.Error
 	}
 	if err := r.db.WithContext(ctx).Table("sales_lines AS l").
-		Select(`l.id,l.line_number,l.product_id,p.product_code,p.brand,p.model_number,l.unit_price_minor,
-			l.sale_currency,l.subtotal_minor,l.tax_amount_minor,l.total_minor,l.converted_total_jpy`).
+		Select(`l.id,l.line_number,l.product_id,p.product_code,p.brand,p.model_number,p.reference_number,
+			p.serial_number,p.accessories,l.unit_price_minor,l.sale_currency,l.subtotal_minor,l.tax_amount_minor,
+			l.total_minor,l.converted_total_jpy,l.fx_rate_snapshot_id,l.fx_rate_scaled,l.fx_scale`).
 		Joins("JOIN products p ON p.id=l.product_id").Where("l.sales_slip_id=?", saleID).
 		Order("l.line_number").Scan(&record.Lines).Error; err != nil {
 		return SaleSlipRecord{}, err
 	}
 	return record, nil
+}
+
+// IssueSale records the exact time and administrator who issued the invoice.
+// The exchange-rate snapshot remains the one captured when the sale was registered.
+// Reissuing is allowed and replaces only the issue timestamp and issuer.
+func (r *Repository) IssueSale(ctx context.Context, organizationID, saleID, actorUserID string) (SaleSlipRecord, error) {
+	now := time.Now().UTC()
+	result := r.db.WithContext(ctx).Exec(`UPDATE sales_slips
+		SET issued_at=?,issued_by=?,updated_at=?
+		WHERE organization_id=? AND id=?`, now, actorUserID, now, organizationID, saleID)
+	if result.Error != nil {
+		return SaleSlipRecord{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return SaleSlipRecord{}, ErrSaleNotFound
+	}
+	return r.SaleSlip(ctx, organizationID, saleID)
 }
 
 func (r *Repository) ConfirmSale(ctx context.Context, organizationID, saleID, actorUserID string) (SaleSlipRecord, error) {
@@ -337,7 +384,7 @@ func (r *Repository) ConfirmSale(ctx context.Context, organizationID, saleID, ac
 			if err := tx.Raw(`SELECT inventory_status FROM products WHERE organization_id=? AND id=? FOR UPDATE`, organizationID, productID).Scan(&status).Error; err != nil {
 				return err
 			}
-			if !map[string]bool{"in_stock": true, "reserved": true, "shipped": true}[status] {
+			if !map[string]bool{"in_stock": true, "reserved": true, "shipped": true, "consigned": true}[status] {
 				return ErrProductConflict
 			}
 			if status != "in_stock" {

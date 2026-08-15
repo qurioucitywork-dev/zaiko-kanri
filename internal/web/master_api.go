@@ -17,6 +17,10 @@ var masterCodePatterns = map[string]*regexp.Regexp{
 	"movement": regexp.MustCompile(`^D[0-9]{2,}$`), "movements": regexp.MustCompile(`^D[0-9]{2,}$`),
 	"condition": regexp.MustCompile(`^C[0-9]{2,}$`), "conditions": regexp.MustCompile(`^C[0-9]{2,}$`),
 	"accessory": regexp.MustCompile(`^ACC-[0-9]{3,}$`), "accessories": regexp.MustCompile(`^ACC-[0-9]{3,}$`),
+	"auction": regexp.MustCompile(`^AUC-[0-9]{3,}$`), "auctions": regexp.MustCompile(`^AUC-[0-9]{3,}$`),
+	"belt": regexp.MustCompile(`^BLT-[0-9]{3,}$`), "belts": regexp.MustCompile(`^BLT-[0-9]{3,}$`),
+	"belt-material": regexp.MustCompile(`^BLT-[0-9]{3,}$`), "belt-materials": regexp.MustCompile(`^BLT-[0-9]{3,}$`),
+	"dial": regexp.MustCompile(`^DIA-[0-9]{3,}$`), "dials": regexp.MustCompile(`^DIA-[0-9]{3,}$`),
 }
 
 func (s *Server) apiMasterItems(w http.ResponseWriter, r *http.Request) {

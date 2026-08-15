@@ -3,8 +3,10 @@
 /.pnpm-store/
 /.data/
 /.tmp/
+/tmp/
 /bin/
 /.backups/
+/output/
 
 # Local configuration
 .env
@@ -12,6 +14,8 @@
 # Test and coverage output
 coverage.out
 *.test
+__pycache__/
+*.py[cod]
 
 # Editor and operating-system files
 .vscode/

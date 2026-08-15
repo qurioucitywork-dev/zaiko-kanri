@@ -48,6 +48,8 @@ type MarketPriceRecord struct {
 	StatusText         string     `json:"statusText,omitempty"`
 	BoxCode            string     `json:"boxCode,omitempty"`
 	AccessoryCodes     string     `json:"accessoryCodes,omitempty"`
+	AuctionCode        string     `json:"auctionCode,omitempty"`
+	AuctionName        string     `json:"auctionName,omitempty"`
 	Source             string     `json:"source"`
 	Notes              string     `json:"notes"`
 	IsActive           bool       `json:"isActive"`
@@ -77,22 +79,30 @@ type MarketPriceInput struct {
 	StatusText         string
 	BoxCode            string
 	AccessoryCodes     []string
+	AuctionCode        string
 	Source             string
 	Notes              string
 }
 
 func marketPriceQuery(db *gorm.DB) *gorm.DB {
 	return db.Table("market_price_records AS m").
-		Select(`m.id,m.import_date,m.brand_id,b.code AS brand_code,b.name AS brand_name,m.model_number,
-			m.reference_number,m.serial_number,m.sku,m.condition_id,c.code AS condition_code,c.name AS condition_name,
+		Select(`m.id,m.import_date,m.brand_id,COALESCE(b.code,'') AS brand_code,
+			COALESCE(NULLIF(m.brand_text,''),b.name,'') AS brand_name,m.model_number,
+			m.reference_number,m.serial_number,m.sku,m.condition_id,
 			m.purchase_price_minor,m.purchase_currency,m.market_price_minor,m.market_currency,
 			COALESCE(sr.role_code,'') AS supplier_code,COALESCE(sp.staff_code,'') AS staff_code,
-			COALESCE(su.display_name,'') AS staff_name,COALESCE(mt.code,'') AS material_code,
-			COALESCE(mv.code,'') AS movement_code,COALESCE(TO_CHAR(m.purchase_date,'YYYY-MM-DD'),'') AS purchase_date,
+			COALESCE(su.display_name,'') AS staff_name,
+			COALESCE(NULLIF(m.material_text,''),mt.code,'') AS material_code,
+			COALESCE(NULLIF(m.movement_text,''),mv.code,'') AS movement_code,
+			COALESCE(NULLIF(m.condition_text,''),c.code,'') AS condition_code,
+			COALESCE(NULLIF(m.condition_text,''),c.name,'') AS condition_name,
+			COALESCE(TO_CHAR(m.purchase_date,'YYYY-MM-DD'),'') AS purchase_date,
 			m.status_text,COALESCE(bx.box_code,'') AS box_code,
-			COALESCE((SELECT STRING_AGG(a.code,',' ORDER BY a.sort_order,a.code)
+			COALESCE(NULLIF(m.accessory_text,''),(SELECT STRING_AGG(a.code,',' ORDER BY a.sort_order,a.code)
 				FROM market_price_accessories ma JOIN accessories a ON a.id=ma.accessory_id
 				WHERE ma.market_price_record_id=m.id),'') AS accessory_codes,
+			COALESCE(ah.code,'') AS auction_code,
+			COALESCE(ah.name,CASE WHEN m.source !~* '^(manual|csv|preview-seed)$' THEN m.source ELSE '' END,'') AS auction_name,
 			m.source,m.notes,m.is_active,m.created_at,m.updated_at`).
 		Joins("LEFT JOIN brands b ON b.id=m.brand_id AND b.organization_id=m.organization_id").
 		Joins("LEFT JOIN product_conditions c ON c.id=m.condition_id AND c.organization_id=m.organization_id").
@@ -101,6 +111,7 @@ func marketPriceQuery(db *gorm.DB) *gorm.DB {
 		Joins("LEFT JOIN users su ON su.id=sp.user_id AND su.organization_id=m.organization_id").
 		Joins("LEFT JOIN materials mt ON mt.id=m.material_id AND mt.organization_id=m.organization_id").
 		Joins("LEFT JOIN movements mv ON mv.id=m.movement_id AND mv.organization_id=m.organization_id").
+		Joins("LEFT JOIN auction_houses ah ON ah.id=m.auction_house_id AND ah.organization_id=m.organization_id").
 		Joins("LEFT JOIN publication_boxes bx ON bx.id=m.box_id AND bx.organization_id=m.organization_id")
 }
 
@@ -138,7 +149,13 @@ func (r *Repository) CreateMarketPrice(ctx context.Context, input MarketPriceInp
 		if source == "" {
 			source = "manual"
 		}
-		var supplierRoleID, staffProfileID, materialID, movementID, boxID string
+		var supplierRoleID, staffProfileID, materialID, movementID, boxID, auctionHouseID string
+		if strings.TrimSpace(input.AuctionCode) != "" {
+			auctionHouseID, _, err = lookupCatalog(tx, "auction_houses", input.OrganizationID, input.AuctionCode, true)
+			if err != nil {
+				return err
+			}
+		}
 		if strings.TrimSpace(input.SupplierCode) != "" {
 			supplierRoleID, err = lookupSupplierRole(tx, input.OrganizationID, input.SupplierCode)
 			if err != nil {
@@ -180,14 +197,14 @@ func (r *Repository) CreateMarketPrice(ctx context.Context, input MarketPriceInp
 			INSERT INTO market_price_records(
 				id,organization_id,import_date,brand_id,brand_text,model_number,reference_number,serial_number,sku,condition_id,
 				purchase_price_minor,purchase_currency,market_price_minor,market_currency,supplier_role_id,purchase_staff_profile_id,
-				material_id,movement_id,purchase_date,status_text,box_id,source,notes,is_active,
+				material_id,movement_id,purchase_date,status_text,box_id,auction_house_id,source,notes,is_active,
 				created_by,updated_by,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,TRUE,?,?,?,?)`,
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,TRUE,?,?,?,?)`,
 			id, input.OrganizationID, date, brandID, brandName, strings.TrimSpace(input.ModelNumber),
 			strings.TrimSpace(input.ReferenceNumber), strings.TrimSpace(input.SerialNumber), strings.TrimSpace(input.SKU),
 			nullIfEmpty(conditionID), input.PurchasePriceMinor, input.PurchaseCurrency, input.MarketPriceMinor,
 			input.MarketCurrency, nullIfEmpty(supplierRoleID), nullIfEmpty(staffProfileID), nullIfEmpty(materialID),
-			nullIfEmpty(movementID), purchaseDate, strings.TrimSpace(input.StatusText), nullIfEmpty(boxID), source,
+			nullIfEmpty(movementID), purchaseDate, strings.TrimSpace(input.StatusText), nullIfEmpty(boxID), nullIfEmpty(auctionHouseID), source,
 			strings.TrimSpace(input.Notes), input.ActorUserID, input.ActorUserID, now, now).Error; err != nil {
 			return err
 		}
@@ -255,7 +272,13 @@ func (r *Repository) UpdateMarketPrice(ctx context.Context, organizationID, mark
 		if err != nil {
 			return err
 		}
-		var supplierRoleID, staffProfileID, boxID string
+		var supplierRoleID, staffProfileID, boxID, auctionHouseID string
+		if strings.TrimSpace(input.AuctionCode) != "" {
+			auctionHouseID, _, err = lookupCatalog(tx, "auction_houses", organizationID, input.AuctionCode, true)
+			if err != nil {
+				return err
+			}
+		}
 		if strings.TrimSpace(input.SupplierCode) != "" {
 			supplierRoleID, err = lookupSupplierRole(tx, organizationID, input.SupplierCode)
 			if err != nil {
@@ -289,12 +312,12 @@ func (r *Repository) UpdateMarketPrice(ctx context.Context, organizationID, mark
 		result := tx.Exec(`UPDATE market_price_records SET import_date=?,brand_id=?,brand_text=?,model_number=?,
 			reference_number=?,serial_number=?,sku=?,condition_id=?,purchase_price_minor=?,purchase_currency=?,
 			market_price_minor=?,market_currency=?,supplier_role_id=?,purchase_staff_profile_id=?,material_id=?,movement_id=?,
-			purchase_date=?,status_text=?,box_id=?,source=?,notes=?,updated_by=?,updated_at=?
+			purchase_date=?,status_text=?,box_id=?,auction_house_id=?,source=?,notes=?,updated_by=?,updated_at=?
 			WHERE organization_id=? AND id=? AND is_active`, date, brandID, brandName, strings.TrimSpace(input.ModelNumber),
 			strings.TrimSpace(input.ReferenceNumber), strings.TrimSpace(input.SerialNumber), strings.TrimSpace(input.SKU),
 			nullIfEmpty(conditionID), input.PurchasePriceMinor, input.PurchaseCurrency, input.MarketPriceMinor, input.MarketCurrency,
 			nullIfEmpty(supplierRoleID), nullIfEmpty(staffProfileID), nullIfEmpty(materialID), nullIfEmpty(movementID),
-			purchaseDate, strings.TrimSpace(input.StatusText), nullIfEmpty(boxID), strings.TrimSpace(input.Source), strings.TrimSpace(input.Notes),
+			purchaseDate, strings.TrimSpace(input.StatusText), nullIfEmpty(boxID), nullIfEmpty(auctionHouseID), strings.TrimSpace(input.Source), strings.TrimSpace(input.Notes),
 			actorUserID, now, organizationID, marketPriceID)
 		if result.Error != nil {
 			return result.Error
@@ -314,10 +337,15 @@ type MarketImportRowRecord struct {
 	ID                   string `json:"id"`
 	RowNumber            int    `json:"rowNumber"`
 	ImportDate           string `json:"importDate"`
-	BrandCode            string `json:"brandCode"`
+	BrandText            string `json:"brandText"`
 	ModelNumber          string `json:"modelNumber"`
 	ReferenceNumber      string `json:"referenceNumber"`
-	ConditionCode        string `json:"conditionCode"`
+	ConditionText        string `json:"conditionText"`
+	SKU                  string `json:"sku"`
+	MaterialText         string `json:"materialText"`
+	MovementText         string `json:"movementText"`
+	AccessoryText        string `json:"accessoryText"`
+	AuctionCode          string `json:"auctionCode"`
 	PurchasePriceMinor   int64  `json:"purchasePriceMinor"`
 	PurchaseCurrency     string `json:"purchaseCurrency"`
 	MarketPriceMinor     int64  `json:"marketPriceMinor"`
@@ -345,22 +373,45 @@ type MarketImportBatchRecord struct {
 }
 
 var marketHeaderAliases = map[string]string{
-	"import_date": "import_date", "取込日付": "import_date", "取り込み日付": "import_date",
-	"brand_code": "brand_code", "ブランドコード": "brand_code",
-	"model_number": "model_number", "モデル番号": "model_number", "型番": "model_number",
-	"reference_number": "reference_number", "リファレンス番号": "reference_number", "リファレンス": "reference_number",
-	"condition_code": "condition_code", "コンディションコード": "condition_code",
+	"import_date": "import_date", "取込日付": "import_date", "取り込み日付": "import_date", "オークション開催日": "import_date",
+	"brand_text": "brand_text", "brand": "brand_text", "ブランド": "brand_text", "ブランド名": "brand_text",
+	"model_number": "model_number", "モデル番号": "model_number", "モデル名": "model_number", "モデル": "model_number",
+	"reference_number": "reference_number", "リファレンス番号": "reference_number", "リファレンス": "reference_number", "型番": "reference_number",
+	"condition_text": "condition_text", "condition": "condition_text", "コンディション": "condition_text", "状態": "condition_text",
+	"sku": "sku", "SKU": "sku",
+	"material_text": "material_text", "material": "material_text", "素材": "material_text",
+	"movement_text": "movement_text", "movement": "movement_text", "駆動方式": "movement_text",
+	"accessory_text": "accessory_text", "accessories": "accessory_text", "付属品": "accessory_text",
+	"auction_code": "auction_code", "オークションコード": "auction_code",
 	"purchase_price": "purchase_price", "仕入価格": "purchase_price", "仕入れ価格": "purchase_price",
 	"purchase_currency": "purchase_currency", "仕入通貨": "purchase_currency",
-	"market_price": "market_price", "相場価格": "market_price",
+	"market_price": "market_price", "相場価格": "market_price", "落札価格": "market_price", "落札価格（JPY）": "market_price",
 	"market_currency": "market_currency", "相場通貨": "market_currency",
-	"source": "source", "取得元": "source", "出典": "source",
 	"notes": "notes", "備考": "notes",
 }
 
 var requiredMarketHeaders = []string{
-	"import_date", "brand_code", "model_number", "reference_number", "condition_code",
-	"purchase_price", "purchase_currency", "market_price", "market_currency",
+	"import_date", "brand_text", "model_number", "auction_code", "market_price",
+}
+
+func splitMarketCodes(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '，' || r == '・' || r == ';' || r == '；' || r == '|'
+	})
+	seen := make(map[string]struct{}, len(parts))
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		code := strings.ToUpper(strings.TrimSpace(part))
+		if code == "" {
+			continue
+		}
+		if _, exists := seen[code]; exists {
+			continue
+		}
+		seen[code] = struct{}{}
+		result = append(result, code)
+	}
+	return result
 }
 
 func normalizeMarketHeaders(values []string) (map[string]int, error) {
@@ -439,23 +490,31 @@ func (r *Repository) PreviewMarketCSV(ctx context.Context, organizationID, actor
 			}
 			row := MarketImportRowRecord{RowNumber: rowNumber}
 			var dateValue any
-			var brandID, conditionID string
+			var auctionHouseID string
 			if readErr != nil {
 				row.ErrorMessage = "CSV行を解析できません"
 			} else if len(values) != len(header) {
 				row.ErrorMessage = fmt.Sprintf("列数が不正です（%d列）", len(values))
 			} else {
 				row.ImportDate = csvValue(values, indexes, "import_date")
-				row.BrandCode = strings.ToUpper(csvValue(values, indexes, "brand_code"))
+				row.BrandText = csvValue(values, indexes, "brand_text")
 				row.ModelNumber = csvValue(values, indexes, "model_number")
 				row.ReferenceNumber = csvValue(values, indexes, "reference_number")
-				row.ConditionCode = strings.ToUpper(csvValue(values, indexes, "condition_code"))
+				row.ConditionText = csvValue(values, indexes, "condition_text")
+				row.SKU = csvValue(values, indexes, "sku")
+				row.MaterialText = csvValue(values, indexes, "material_text")
+				row.MovementText = csvValue(values, indexes, "movement_text")
+				row.AccessoryText = csvValue(values, indexes, "accessory_text")
+				row.AuctionCode = strings.ToUpper(csvValue(values, indexes, "auction_code"))
 				row.PurchaseCurrency = strings.ToUpper(csvValue(values, indexes, "purchase_currency"))
 				row.MarketCurrency = strings.ToUpper(csvValue(values, indexes, "market_currency"))
-				row.Source = csvValue(values, indexes, "source")
+				row.Source = row.AuctionCode
 				row.Notes = csvValue(values, indexes, "notes")
-				if row.Source == "" {
-					row.Source = "csv"
+				if row.PurchaseCurrency == "" {
+					row.PurchaseCurrency = "JPY"
+				}
+				if row.MarketCurrency == "" {
+					row.MarketCurrency = "JPY"
 				}
 				parsedDate, dateErr := time.Parse("2006-01-02", row.ImportDate)
 				purchaseAmount, purchaseErr := parseImportAmount(csvValue(values, indexes, "purchase_price"))
@@ -463,38 +522,37 @@ func (r *Repository) PreviewMarketCSV(ctx context.Context, organizationID, actor
 				row.PurchasePriceMinor, row.MarketPriceMinor = purchaseAmount, marketAmount
 				switch {
 				case dateErr != nil:
-					row.ErrorMessage = "取込日付はYYYY-MM-DDで指定してください"
+					row.ErrorMessage = "オークション開催日はYYYY-MM-DDで指定してください"
 				case purchaseErr != nil:
 					row.ErrorMessage = purchaseErr.Error()
 				case marketErr != nil:
 					row.ErrorMessage = marketErr.Error()
-				case row.BrandCode == "":
-					row.ErrorMessage = "ブランドコードは必須です"
+				case row.BrandText == "":
+					row.ErrorMessage = "ブランドは必須です"
+				case strings.TrimSpace(row.ModelNumber) == "":
+					row.ErrorMessage = "モデル名は必須です"
+				case row.AuctionCode == "":
+					row.ErrorMessage = "オークションコードは必須です"
 				case row.PurchaseCurrency != "JPY" && row.PurchaseCurrency != "USD":
 					row.ErrorMessage = "仕入通貨はJPYまたはUSDで指定してください"
 				case row.MarketCurrency != "JPY" && row.MarketCurrency != "USD":
 					row.ErrorMessage = "相場通貨はJPYまたはUSDで指定してください"
 				default:
 					dateValue = parsedDate
-					brandID, _, err = lookupCatalog(tx, "brands", organizationID, row.BrandCode, true)
+					auctionHouseID, _, err = lookupCatalog(tx, "auction_houses", organizationID, row.AuctionCode, true)
 					if err != nil {
-						row.ErrorMessage = "ブランドコードがマスタにありません"
-					} else if row.ConditionCode != "" {
-						conditionID, _, err = lookupCatalog(tx, "product_conditions", organizationID, row.ConditionCode, false)
-						if err != nil {
-							row.ErrorMessage = "コンディションコードがマスタにありません"
-						}
+						row.ErrorMessage = "オークションコードがマスタにありません"
 					}
 				}
 				if row.ErrorMessage == "" {
 					var duplicateID string
 					result := tx.Table("market_price_records").Select("id").Where(
-						"organization_id=? AND import_date=? AND brand_id=? AND reference_number=? AND COALESCE(condition_id,'')=? AND is_active",
-						organizationID, dateValue, brandID, row.ReferenceNumber, conditionID).Limit(1).Scan(&duplicateID)
+						"organization_id=? AND import_date=? AND UPPER(brand_text)=UPPER(?) AND reference_number=? AND condition_text=? AND COALESCE(auction_house_id,'')=? AND is_active",
+						organizationID, dateValue, row.BrandText, row.ReferenceNumber, row.ConditionText, auctionHouseID).Limit(1).Scan(&duplicateID)
 					if result.Error != nil {
 						return result.Error
 					}
-					key := strings.Join([]string{row.ImportDate, row.BrandCode, strings.ToUpper(row.ReferenceNumber), row.ConditionCode}, "\x00")
+					key := strings.Join([]string{row.ImportDate, strings.ToUpper(row.BrandText), strings.ToUpper(row.ReferenceNumber), row.ConditionText, row.AuctionCode}, "\x00")
 					if duplicateID != "" {
 						row.DuplicateCandidateID = duplicateID
 						row.ErrorMessage = "同じ日付・ブランド・リファレンス・コンディションの相場が登録済みです"
@@ -510,11 +568,11 @@ func (r *Repository) PreviewMarketCSV(ctx context.Context, organizationID, actor
 			rowID, _ := database.NewID("mir")
 			row.ID = rowID
 			if err := tx.Exec(`INSERT INTO market_import_rows(
-				id,batch_id,row_number,import_date,brand_code,model_number,reference_number,condition_code,
-				purchase_price_minor,purchase_currency,market_price_minor,market_currency,source,notes,
+				id,batch_id,row_number,import_date,brand_text,model_number,reference_number,condition_text,
+				sku,material_text,movement_text,accessory_text,auction_code,purchase_price_minor,purchase_currency,market_price_minor,market_currency,source,notes,
 				raw_json,is_valid,error_message,duplicate_candidate_id
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSONB),?,?,?)`, row.ID, batchID, row.RowNumber, dateValue,
-				row.BrandCode, row.ModelNumber, row.ReferenceNumber, row.ConditionCode, row.PurchasePriceMinor,
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSONB),?,?,?)`, row.ID, batchID, row.RowNumber, dateValue,
+				row.BrandText, row.ModelNumber, row.ReferenceNumber, row.ConditionText, row.SKU, row.MaterialText, row.MovementText, row.AccessoryText, row.AuctionCode, row.PurchasePriceMinor,
 				row.PurchaseCurrency, row.MarketPriceMinor, row.MarketCurrency, row.Source, row.Notes,
 				string(rawJSON), row.Valid, row.ErrorMessage, nullIfEmpty(row.DuplicateCandidateID)).Error; err != nil {
 				return err
@@ -560,9 +618,9 @@ func (r *Repository) MarketImportBatch(ctx context.Context, organizationID, batc
 		return MarketImportBatchRecord{}, result.Error
 	}
 	if err := r.db.WithContext(ctx).Table("market_import_rows").
-		Select(`id,row_number,COALESCE(TO_CHAR(import_date,'YYYY-MM-DD'),'') AS import_date,brand_code,
-			model_number,reference_number,condition_code,purchase_price_minor,purchase_currency,
-			market_price_minor,market_currency,source,notes,is_valid AS valid,
+		Select(`id,row_number,COALESCE(TO_CHAR(import_date,'YYYY-MM-DD'),'') AS import_date,brand_text,
+			model_number,reference_number,condition_text,sku,material_text,movement_text,accessory_text,auction_code,
+			purchase_price_minor,purchase_currency,market_price_minor,market_currency,source,notes,is_valid AS valid,
 			error_message,COALESCE(duplicate_candidate_id,'') AS duplicate_candidate_id`).
 		Where("batch_id=?", batchID).Order("row_number").Scan(&batch.Rows).Error; err != nil {
 		return MarketImportBatchRecord{}, err
@@ -632,34 +690,33 @@ func (r *Repository) CommitMarketImport(ctx context.Context, organizationID, bat
 			}
 		}
 		type row struct {
-			ImportDate, BrandCode, ModelNumber, ReferenceNumber, ConditionCode string
+			ImportDate, BrandText, ModelNumber, ReferenceNumber, ConditionText string
+			SKU, MaterialText, MovementText, AccessoryText, AuctionCode        string
 			PurchaseCurrency, MarketCurrency, Source, Notes                    string
 			PurchasePriceMinor, MarketPriceMinor                               int64
 		}
 		var rows []row
 		if err := tx.Table("market_import_rows").
-			Select("TO_CHAR(import_date,'YYYY-MM-DD') AS import_date,brand_code,model_number,reference_number,condition_code,purchase_price_minor,purchase_currency,market_price_minor,market_currency,source,notes").
+			Select("TO_CHAR(import_date,'YYYY-MM-DD') AS import_date,brand_text,model_number,reference_number,condition_text,sku,material_text,movement_text,accessory_text,auction_code,purchase_price_minor,purchase_currency,market_price_minor,market_currency,source,notes").
 			Where("batch_id=? AND is_valid", batchID).Order("row_number").Scan(&rows).Error; err != nil {
 			return err
 		}
 		now := time.Now().UTC()
 		for _, item := range rows {
-			brandID, brandName, err := lookupCatalog(tx, "brands", organizationID, item.BrandCode, true)
-			if err != nil {
-				return err
-			}
-			conditionID, _, err := lookupCatalog(tx, "product_conditions", organizationID, item.ConditionCode, false)
+			auctionHouseID, _, err := lookupCatalog(tx, "auction_houses", organizationID, item.AuctionCode, true)
 			if err != nil {
 				return err
 			}
 			id, _ := database.NewID("mkt")
 			if err := tx.Exec(`INSERT INTO market_price_records(
-				id,organization_id,import_date,brand_id,brand_text,model_number,reference_number,condition_id,
+				id,organization_id,import_date,brand_text,model_number,reference_number,sku,
+				condition_text,material_text,movement_text,accessory_text,auction_house_id,
 				purchase_price_minor,purchase_currency,market_price_minor,market_currency,source,notes,
 				import_batch_id,is_active,created_by,updated_by,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,TRUE,?,?,?,?)`, id, organizationID, item.ImportDate,
-				brandID, brandName, item.ModelNumber, item.ReferenceNumber, nullIfEmpty(conditionID), item.PurchasePriceMinor,
-				item.PurchaseCurrency, item.MarketPriceMinor, item.MarketCurrency, item.Source, item.Notes, batchID, actorUserID,
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,TRUE,?,?,?,?)`, id, organizationID, item.ImportDate,
+				item.BrandText, item.ModelNumber, item.ReferenceNumber, item.SKU, item.ConditionText, item.MaterialText, item.MovementText,
+				item.AccessoryText, auctionHouseID, item.PurchasePriceMinor, item.PurchaseCurrency,
+				item.MarketPriceMinor, item.MarketCurrency, item.AuctionCode, item.Notes, batchID, actorUserID,
 				actorUserID, now, now).Error; err != nil {
 				return err
 			}

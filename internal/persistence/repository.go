@@ -60,8 +60,15 @@ func (Product) TableName() string { return "products" }
 
 type productRow struct {
 	Product
-	SupplierName string `gorm:"column:supplier_name" json:"supplierName"`
-	ImageCount   int    `gorm:"column:image_count" json:"imageCount"`
+	SupplierName              string     `gorm:"column:supplier_name" json:"supplierName"`
+	ImageCount                int        `gorm:"column:image_count" json:"imageCount"`
+	FixedPurchaseCostJPYMinor int64      `gorm:"column:fixed_purchase_cost_jpy_minor" json:"fixedPurchaseCostJpyMinor"`
+	PurchaseSourceAmountMinor int64      `gorm:"column:purchase_source_amount_minor" json:"purchaseSourceAmountMinor"`
+	PurchaseSourceCurrency    string     `gorm:"column:purchase_source_currency" json:"purchaseSourceCurrency"`
+	PurchaseFXRateSnapshotID  string     `gorm:"column:purchase_fx_rate_snapshot_id" json:"purchaseFxRateSnapshotId"`
+	PurchaseFXRateScaled      int64      `gorm:"column:purchase_fx_rate_scaled" json:"purchaseFxRateScaled"`
+	PurchaseFXScale           int64      `gorm:"column:purchase_fx_scale" json:"purchaseFxScale"`
+	PurchaseFXRateObservedAt  *time.Time `gorm:"column:purchase_fx_rate_observed_at" json:"purchaseFxRateObservedAt,omitempty"`
 }
 
 type Dashboard struct {
@@ -420,9 +427,19 @@ func (r *Repository) Products(ctx context.Context, organizationID string, filter
 	if r.driver == "postgres" {
 		query = query.
 			Select(`p.*, bp.legal_name AS supplier_name,
+				COALESCE(psl.converted_total_jpy,
+					CASE WHEN p.cost_currency='JPY' THEN p.cost_amount_minor ELSE 0 END) AS fixed_purchase_cost_jpy_minor,
+				COALESCE(psl.unit_cost_minor,p.cost_amount_minor) AS purchase_source_amount_minor,
+				COALESCE(psl.cost_currency,p.cost_currency) AS purchase_source_currency,
+				COALESCE(psl.fx_rate_snapshot_id,'') AS purchase_fx_rate_snapshot_id,
+				COALESCE(psl.fx_rate_scaled,0) AS purchase_fx_rate_scaled,
+				COALESCE(psl.fx_scale,0) AS purchase_fx_scale,
+				fx.observed_at AS purchase_fx_rate_observed_at,
 				(SELECT COUNT(*) FROM product_files i WHERE i.organization_id = p.organization_id AND i.product_id = p.id) AS image_count`).
 			Joins("LEFT JOIN partner_roles pr ON pr.id = p.supplier_role_id AND pr.organization_id = p.organization_id").
-			Joins("LEFT JOIN business_partners bp ON bp.id = pr.partner_id AND bp.organization_id = p.organization_id")
+			Joins("LEFT JOIN business_partners bp ON bp.id = pr.partner_id AND bp.organization_id = p.organization_id").
+			Joins("LEFT JOIN purchase_slip_lines psl ON psl.id = p.purchase_slip_line_id").
+			Joins("LEFT JOIN exchange_rate_snapshots fx ON fx.id = psl.fx_rate_snapshot_id")
 	} else {
 		query = query.
 			Select(`p.*, s.name AS supplier_name,
@@ -436,6 +453,15 @@ func (r *Repository) Products(ctx context.Context, organizationID string, filter
 		Scan(&items).Error
 	if err != nil {
 		return ProductPage{}, err
+	}
+	for index := range items {
+		if items[index].FixedPurchaseCostJPYMinor == 0 && items[index].CostCurrency == "JPY" {
+			items[index].FixedPurchaseCostJPYMinor = items[index].CostAmountMinor
+		}
+		if items[index].PurchaseSourceCurrency == "" {
+			items[index].PurchaseSourceCurrency = items[index].CostCurrency
+			items[index].PurchaseSourceAmountMinor = items[index].CostAmountMinor
+		}
 	}
 	totalPages := int((total + int64(filter.PageSize) - 1) / int64(filter.PageSize))
 	if totalPages == 0 {

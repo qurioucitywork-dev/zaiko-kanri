@@ -58,11 +58,11 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 		setText(input.Notes, "notes")
 
 		if input.BrandCode != nil {
-			id, name, err := lookupCatalog(tx, "brands", organizationID, *input.BrandCode, true)
+			id, name, err := lookupCatalog(tx, "brands", organizationID, *input.BrandCode, false)
 			if err != nil {
 				return err
 			}
-			updates["brand_id"], updates["brand"] = id, name
+			updates["brand_id"], updates["brand"] = nullIfEmpty(id), name
 		}
 		for _, field := range []struct {
 			value  *string

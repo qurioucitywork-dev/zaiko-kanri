@@ -34,6 +34,9 @@ func masterTable(kind string) (string, bool) {
 		"movement": "movements", "movements": "movements",
 		"condition": "product_conditions", "conditions": "product_conditions",
 		"accessory": "accessories", "accessories": "accessories",
+		"auction": "auction_houses", "auctions": "auction_houses",
+		"belt": "belt_materials", "belts": "belt_materials", "belt-material": "belt_materials", "belt-materials": "belt_materials",
+		"dial": "dials", "dials": "dials",
 	}[strings.ToLower(strings.TrimSpace(kind))]
 	return table, ok
 }

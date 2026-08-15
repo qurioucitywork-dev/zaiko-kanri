@@ -31,6 +31,7 @@ type marketPricePayload struct {
 	StatusText         string   `json:"statusText"`
 	BoxCode            string   `json:"boxCode"`
 	AccessoryCodes     []string `json:"accessoryCodes"`
+	AuctionCode        string   `json:"auctionCode"`
 	Source             string   `json:"source"`
 	Notes              string   `json:"notes"`
 }
@@ -45,6 +46,7 @@ func normalizeMarketPricePayload(input *marketPricePayload) {
 	input.MaterialCode = strings.ToUpper(strings.TrimSpace(input.MaterialCode))
 	input.MovementCode = strings.ToUpper(strings.TrimSpace(input.MovementCode))
 	input.BoxCode = strings.ToUpper(strings.TrimSpace(input.BoxCode))
+	input.AuctionCode = strings.ToUpper(strings.TrimSpace(input.AuctionCode))
 }
 
 func marketPriceInput(user database.User, input marketPricePayload) persistence.MarketPriceInput {
@@ -56,7 +58,8 @@ func marketPriceInput(user database.User, input marketPricePayload) persistence.
 		MarketPriceMinor: input.MarketPriceMinor, MarketCurrency: input.MarketCurrency,
 		SupplierCode: input.SupplierCode, StaffCode: input.StaffCode, MaterialCode: input.MaterialCode,
 		MovementCode: input.MovementCode, PurchaseDate: input.PurchaseDate, StatusText: input.StatusText,
-		BoxCode: input.BoxCode, AccessoryCodes: input.AccessoryCodes, Source: input.Source, Notes: input.Notes,
+		BoxCode: input.BoxCode, AccessoryCodes: input.AccessoryCodes, AuctionCode: input.AuctionCode,
+		Source: input.Source, Notes: input.Notes,
 	}
 }
 

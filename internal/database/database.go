@@ -19,7 +19,7 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-//go:embed migrations/000001_phase1.up.sql migrations/000002_inventory.up.sql migrations/000003_market.up.sql migrations/000004_sales_shipments.up.sql migrations/000005_requests_reservations.up.sql migrations/000006_approvals.up.sql migrations/000007_document_operations.up.sql
+//go:embed migrations/000001_phase1.up.sql migrations/000002_inventory.up.sql migrations/000003_market.up.sql migrations/000004_sales_shipments.up.sql migrations/000005_requests_reservations.up.sql migrations/000006_approvals.up.sql migrations/000007_document_operations.up.sql migrations/000008_product_files.up.sql
 var schemaFS embed.FS
 
 const (
@@ -120,6 +120,7 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"000005_requests_reservations", "migrations/000005_requests_reservations.up.sql"},
 		{"000006_approvals", "migrations/000006_approvals.up.sql"},
 		{"000007_document_operations", "migrations/000007_document_operations.up.sql"},
+		{"000008_product_files", "migrations/000008_product_files.up.sql"},
 	} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=?`, migration.version).Scan(&count); err != nil {

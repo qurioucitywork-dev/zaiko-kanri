@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -26,17 +27,20 @@ type ShipmentCreateInput struct {
 	RecipientAddress string   `json:"recipientAddress"`
 	Carrier          string   `json:"carrier"`
 	TrackingNumber   string   `json:"trackingNumber"`
+	DisplayCurrency  string   `json:"displayCurrency"`
 	Notes            string   `json:"notes"`
 	ProductCodes     []string `json:"productCodes"`
 }
 
 type ShipmentLineRecord struct {
-	ID          string `json:"id"`
-	LineNumber  int    `json:"lineNumber"`
-	ProductID   string `json:"productId"`
-	ProductCode string `json:"productCode"`
-	Brand       string `json:"brand"`
-	ModelNumber string `json:"modelNumber"`
+	ID                    string `json:"id"`
+	LineNumber            int    `json:"lineNumber"`
+	ProductID             string `json:"productId"`
+	ProductCode           string `json:"productCode"`
+	Brand                 string `json:"brand"`
+	ModelNumber           string `json:"modelNumber"`
+	SalePriceUSDMinor     int64  `json:"salePriceUsdMinor"`
+	ConvertedSalePriceJPY int64  `json:"convertedSalePriceJpy"`
 }
 
 type ShipmentSlipRecord struct {
@@ -50,6 +54,10 @@ type ShipmentSlipRecord struct {
 	RecipientAddress string               `json:"recipientAddress"`
 	Carrier          string               `json:"carrier"`
 	TrackingNumber   string               `json:"trackingNumber"`
+	DisplayCurrency  string               `json:"displayCurrency"`
+	FXRateSnapshotID string               `json:"fxRateSnapshotId,omitempty"`
+	FXRateScaled     int64                `json:"fxRateScaled"`
+	FXScale          int64                `json:"fxScale"`
 	Status           string               `json:"status"`
 	Notes            string               `json:"notes"`
 	ConfirmedAt      *time.Time           `json:"confirmedAt,omitempty"`
@@ -79,9 +87,20 @@ func (r *Repository) CreateShipment(ctx context.Context, input ShipmentCreateInp
 	if len(productCodes) == 0 || len(productCodes) > 100 {
 		return ShipmentSlipRecord{}, ErrShipmentState
 	}
+	input.DisplayCurrency = strings.ToUpper(strings.TrimSpace(input.DisplayCurrency))
+	if input.DisplayCurrency == "" {
+		input.DisplayCurrency = "USD"
+	}
+	if input.DisplayCurrency != "USD" && input.DisplayCurrency != "JPY" {
+		return ShipmentSlipRecord{}, ErrShipmentState
+	}
 	var shipmentID string
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		buyerRoleID, err := lookupBuyerRole(tx, input.OrganizationID, input.BuyerCode)
+		if err != nil {
+			return err
+		}
+		rate, err := latestFX(tx, input.OrganizationID)
 		if err != nil {
 			return err
 		}
@@ -106,16 +125,21 @@ func (r *Repository) CreateShipment(ctx context.Context, input ShipmentCreateInp
 		slipNumber := fmt.Sprintf("SH-%04d-%04d", date.Year(), sequence)
 		if err := tx.Exec(`INSERT INTO shipment_slips(
 			id,organization_id,slip_number,buyer_role_id,sales_slip_id,shipment_date,recipient_name,
-			recipient_address,carrier,tracking_number,status,notes,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?)`, shipmentID, input.OrganizationID, slipNumber,
+			recipient_address,carrier,tracking_number,display_currency,fx_rate_snapshot_id,fx_rate_scaled,fx_scale,
+			status,notes,created_by,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?)`, shipmentID, input.OrganizationID, slipNumber,
 			buyerRoleID, nullIfEmpty(salesSlipID), date, strings.TrimSpace(input.RecipientName),
 			strings.TrimSpace(input.RecipientAddress), strings.TrimSpace(input.Carrier),
-			strings.TrimSpace(input.TrackingNumber), strings.TrimSpace(input.Notes), input.ActorUserID, now, now).Error; err != nil {
+			strings.TrimSpace(input.TrackingNumber), input.DisplayCurrency, rate.ID, rate.RateScaled, rate.Scale,
+			strings.TrimSpace(input.Notes), input.ActorUserID, now, now).Error; err != nil {
 			return err
 		}
 		for index, productCode := range productCodes {
-			var product struct{ ID, InventoryStatus string }
-			result := tx.Raw(`SELECT id,inventory_status FROM products
+			var product struct {
+				ID, InventoryStatus, BaseSaleCurrency string
+				BaseSalePriceMinor                    int64
+			}
+			result := tx.Raw(`SELECT id,inventory_status,base_sale_price_minor,base_sale_currency FROM products
 				WHERE organization_id=? AND product_code=? AND deleted_at IS NULL FOR UPDATE`,
 				input.OrganizationID, productCode).Scan(&product)
 			if result.Error != nil {
@@ -130,9 +154,17 @@ func (r *Repository) CreateShipment(ctx context.Context, input ShipmentCreateInp
 					return ErrProductConflict
 				}
 			}
+			salePriceUSD, err := convertCurrency(product.BaseSalePriceMinor, product.BaseSaleCurrency, "USD", rate)
+			if err != nil {
+				return err
+			}
+			convertedJPY := convertShipmentUSDToJPYRoundUpToThousand(
+				salePriceUSD, rate.RateScaled, rate.Scale,
+			)
 			lineID, _ := database.NewID("shl")
-			if err := tx.Exec(`INSERT INTO shipment_lines(id,shipment_slip_id,line_number,product_id,quantity,created_at)
-				VALUES(?,?,?,?,1,?)`, lineID, shipmentID, index+1, product.ID, now).Error; err != nil {
+			if err := tx.Exec(`INSERT INTO shipment_lines(
+				id,shipment_slip_id,line_number,product_id,quantity,sale_price_usd_minor,converted_sale_price_jpy,created_at
+			) VALUES(?,?,?,?,1,?,?,?)`, lineID, shipmentID, index+1, product.ID, salePriceUSD, convertedJPY, now).Error; err != nil {
 				return err
 			}
 			if product.InventoryStatus == "in_stock" {
@@ -156,6 +188,24 @@ func (r *Repository) CreateShipment(ctx context.Context, input ShipmentCreateInp
 	return r.ShipmentSlip(ctx, input.OrganizationID, shipmentID)
 }
 
+func convertShipmentUSDToJPYRoundUpToThousand(amountUSD, rateScaled, scale int64) int64 {
+	if amountUSD <= 0 || rateScaled <= 0 || scale <= 0 {
+		return 0
+	}
+	numerator := new(big.Int).Mul(big.NewInt(amountUSD), big.NewInt(rateScaled))
+	denominator := new(big.Int).Mul(big.NewInt(scale), big.NewInt(1000))
+	thousands, remainder := new(big.Int), new(big.Int)
+	thousands.QuoRem(numerator, denominator, remainder)
+	if remainder.Sign() > 0 {
+		thousands.Add(thousands, big.NewInt(1))
+	}
+	result := thousands.Mul(thousands, big.NewInt(1000))
+	if !result.IsInt64() {
+		return 0
+	}
+	return result.Int64()
+}
+
 func (r *Repository) ShipmentSlips(ctx context.Context, organizationID string, limit int) ([]ShipmentSlipRecord, error) {
 	if limit < 1 || limit > 500 {
 		limit = 100
@@ -164,7 +214,8 @@ func (r *Repository) ShipmentSlips(ctx context.Context, organizationID string, l
 	err := r.db.WithContext(ctx).Table("shipment_slips AS s").
 		Select(`s.id,s.slip_number,br.role_code AS buyer_code,bp.legal_name AS buyer_name,
 			COALESCE(sa.slip_number,'') AS sales_slip_number,s.shipment_date,s.recipient_name,s.recipient_address,
-			s.carrier,s.tracking_number,s.status,s.notes,s.confirmed_at,s.created_at,s.updated_at`).
+			s.carrier,s.tracking_number,s.display_currency,s.fx_rate_snapshot_id,s.fx_rate_scaled,s.fx_scale,
+			s.status,s.notes,s.confirmed_at,s.created_at,s.updated_at`).
 		Joins("JOIN partner_roles br ON br.id=s.buyer_role_id").Joins("JOIN business_partners bp ON bp.id=br.partner_id").
 		Joins("LEFT JOIN sales_slips sa ON sa.id=s.sales_slip_id").Where("s.organization_id=?", organizationID).
 		Order("s.shipment_date DESC,s.slip_number DESC").Limit(limit).Scan(&records).Error
@@ -176,7 +227,8 @@ func (r *Repository) ShipmentSlip(ctx context.Context, organizationID, shipmentI
 	result := r.db.WithContext(ctx).Table("shipment_slips AS s").
 		Select(`s.id,s.slip_number,br.role_code AS buyer_code,bp.legal_name AS buyer_name,
 			COALESCE(sa.slip_number,'') AS sales_slip_number,s.shipment_date,s.recipient_name,s.recipient_address,
-			s.carrier,s.tracking_number,s.status,s.notes,s.confirmed_at,s.created_at,s.updated_at`).
+			s.carrier,s.tracking_number,s.display_currency,s.fx_rate_snapshot_id,s.fx_rate_scaled,s.fx_scale,
+			s.status,s.notes,s.confirmed_at,s.created_at,s.updated_at`).
 		Joins("JOIN partner_roles br ON br.id=s.buyer_role_id").Joins("JOIN business_partners bp ON bp.id=br.partner_id").
 		Joins("LEFT JOIN sales_slips sa ON sa.id=s.sales_slip_id").Where("s.organization_id=? AND s.id=?", organizationID, shipmentID).Take(&record)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -186,7 +238,7 @@ func (r *Repository) ShipmentSlip(ctx context.Context, organizationID, shipmentI
 		return ShipmentSlipRecord{}, result.Error
 	}
 	if err := r.db.WithContext(ctx).Table("shipment_lines AS l").
-		Select("l.id,l.line_number,l.product_id,p.product_code,p.brand,p.model_number").
+		Select("l.id,l.line_number,l.product_id,p.product_code,p.brand,p.model_number,l.sale_price_usd_minor,l.converted_sale_price_jpy").
 		Joins("JOIN products p ON p.id=l.product_id").Where("l.shipment_slip_id=?", shipmentID).
 		Order("l.line_number").Scan(&record.Lines).Error; err != nil {
 		return ShipmentSlipRecord{}, err

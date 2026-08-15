@@ -54,7 +54,7 @@ func (s *Server) apiSaleCreate(w http.ResponseWriter, r *http.Request) {
 		input.TaxRateBasisPoints = 1000
 	}
 	if input.BuyerCode == "" || !validCurrency(input.DisplayCurrency) ||
-		(input.TaxMode != "taxable" && input.TaxMode != "tax_exempt") || len(input.Lines) == 0 || len(input.Lines) > 100 {
+		(input.TaxMode != "taxable" && input.TaxMode != "tax_exempt" && input.TaxMode != "out_of_scope") || len(input.Lines) == 0 || len(input.Lines) > 100 {
 		writeAPIError(w, http.StatusBadRequest, "invalid_sale", "販売先・通貨・税区分・明細を確認してください。")
 		return
 	}
@@ -85,6 +85,30 @@ func (s *Server) apiSaleConfirm(w http.ResponseWriter, r *http.Request) {
 		writeSaleError(w, err)
 		return
 	}
+	writeJSON(w, http.StatusOK, record)
+}
+
+func (s *Server) apiSaleIssue(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	if user.Role != database.RoleAdmin {
+		writeAPIError(w, http.StatusForbidden, "admin_required", "売上伝票を発行できるのは管理者のみです。")
+		return
+	}
+	if s.repository.Driver() != "postgres" {
+		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "売上APIはPostgreSQLモードで利用してください。")
+		return
+	}
+	record, err := s.repository.IssueSale(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
+	if err != nil {
+		writeSaleError(w, err)
+		return
+	}
+	after, _ := json.Marshal(record)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
+		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "sales_slip", TargetID: record.ID,
+		Action: "sale.issued", AfterJSON: string(after), Result: "success", RequestID: requestID(r.Context()),
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
 	writeJSON(w, http.StatusOK, record)
 }
 

@@ -53,6 +53,18 @@ func (r *Repository) SeedPreviewMasters(ctx context.Context) error {
 				{"ACC-001", "BOX"}, {"ACC-002", "CASE"}, {"ACC-003", "GUARANTEE"},
 				{"ACC-004", "BRACELET PARTS"}, {"ACC-005", "CERTIFICATE"}, {"ACC-006", "ARCHIVE"},
 			},
+			"auction_houses": {
+				{"AUC-001", "東京オークション"}, {"AUC-002", "ワーカーオークション"},
+				{"AUC-003", "APIオークション"}, {"AUC-004", "その他"},
+			},
+			"belt_materials": {
+				{"BLT-001", "ステンレス"}, {"BLT-002", "レザー"}, {"BLT-003", "ラバー"},
+				{"BLT-004", "チタン"}, {"BLT-005", "ナイロン"},
+			},
+			"dials": {
+				{"DIA-001", "ブラック"}, {"DIA-002", "ホワイト"}, {"DIA-003", "シルバー"},
+				{"DIA-004", "ブルー"}, {"DIA-005", "グリーン"},
+			},
 		}
 		for table, items := range catalogs {
 			for index, item := range items {
@@ -181,6 +193,7 @@ func (r *Repository) SeedPreviewMasters(ctx context.Context) error {
 func seedCatalogItem(tx *gorm.DB, table, organizationID, actorID string, item catalogSeed, sortOrder int) error {
 	allowed := map[string]bool{
 		"brands": true, "materials": true, "movements": true, "product_conditions": true, "accessories": true,
+		"auction_houses": true, "belt_materials": true, "dials": true,
 	}
 	if !allowed[table] {
 		return fmt.Errorf("unsupported catalog table %q", table)
