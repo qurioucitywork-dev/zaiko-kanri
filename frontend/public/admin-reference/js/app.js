@@ -4604,6 +4604,7 @@ function renderSlipList(data) {
     });
   } else if (currentSlipTab === 'consignment') {
     data.forEach(record => {
+      totalAmt += Number(record.totalJpy) || getShippingSaleTotalJPY(record.items || [], record);
       totalItems += record.items?.length || 0;
       if ((record.revisions || []).length) revisedCount++;
     });
@@ -4616,14 +4617,14 @@ function renderSlipList(data) {
   if (summaryTotalLabel) {
     summaryTotalLabel.textContent = currentSlipTab === 'purchase'
       ? '合計金額（仕入登録時レート換算・JPY）'
-      : (currentSlipTab === 'consignment' ? '金額計上' : '合計金額');
+      : (currentSlipTab === 'consignment' ? '合計金額（委託登録時固定・JPY）' : '合計金額');
     summaryTotalLabel.title = currentSlipTab === 'purchase'
       ? '海外仕入は仕入登録時に固定保存したUSD/JPYレートで円換算します。発行・再発行では変更されません。'
       : '';
   }
   document.getElementById('slipSummaryTotal').textContent = currentSlipTab === 'purchase'
     ? formatPrice(purchaseTotalJPY)
-    : (currentSlipTab === 'consignment' ? 'なし' : (summaryUsesUSD ? formatSalePrice(totalAmt) : formatPrice(totalAmt)));
+    : (currentSlipTab === 'consignment' ? formatPrice(totalAmt) : (summaryUsesUSD ? formatSalePrice(totalAmt) : formatPrice(totalAmt)));
   document.getElementById('slipSummaryItems').textContent   = `${totalItems}点`;
   document.getElementById('slipSummaryRevised').textContent = `${revisedCount}件`;
 
@@ -4672,8 +4673,9 @@ function renderSlipList(data) {
     if (slBulkCtrl2) slBulkCtrl2.style.display = 'none';
   } else if (currentSlipTab === 'consignment') {
     head.innerHTML = `<tr>
-      <th>委託伝票番号</th><th>委託日</th><th>委託先</th>
-      <th style="text-align:center;">点数</th><th>備考</th><th style="text-align:center;">ステータス</th>
+      <th>委託伝票番号</th><th>委託日</th><th>発行日時</th><th>委託先</th>
+      <th style="text-align:center;">点数</th><th style="text-align:right;">合計金額（JPY）</th>
+      <th>備考</th><th style="text-align:center;">ステータス</th><th style="text-align:center;">発行</th>
     </tr>`;
     const slBulkCtrl = document.getElementById('slBulkControls');
     if (slBulkCtrl) slBulkCtrl.style.display = 'none';
@@ -4858,10 +4860,13 @@ function buildSlipRow(row) {
     return `<tr class="slip-list-row" onclick="openSlipDetail('consignment','${row.id}')">
       <td><code style="font-size:12px;font-weight:bold;">${row.id}</code></td>
       <td style="white-space:nowrap;">${row.date || '—'}</td>
+      <td style="white-space:nowrap;">${formatPurchaseIssuedAt(row.issuedAt)}</td>
       <td>${getBuyerName(row.destination)}</td>
       <td style="text-align:center;">${row.items?.length || 0}点</td>
+      <td style="text-align:right;font-weight:bold;">${formatPrice(Number(row.totalJpy) || getShippingSaleTotalJPY(row.items || [], row))}</td>
       <td style="font-size:12px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${row.note || '—'}</td>
       <td style="text-align:center;">${statusBadge}</td>
+      <td style="text-align:center;"><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();issueConsignmentSlipDocument('${row.id}',event)" ${canIssuePurchaseSlip() ? '' : 'disabled'}><i class="fa-solid fa-file-arrow-down"></i> 発行</button></td>
     </tr>`;
 
   // ──────────────────────────────────────
@@ -5623,6 +5628,34 @@ async function issuePurchaseSlipDocument(slipId, event) {
   }
 }
 
+async function issueConsignmentSlipDocument(slipId, event) {
+  event?.stopPropagation?.();
+  if (!canIssuePurchaseSlip()) {
+    showToast('warning', '発行できません', '委託伝票の発行は管理者のみ実行できます。');
+    return;
+  }
+  let slip = (APP_DATA.consignments || []).find(record => record.id === slipId);
+  if (!slip) return showToast('warning', '発行できません', '対象の委託伝票が見つかりません。');
+  const button = event?.currentTarget instanceof HTMLButtonElement ? event.currentTarget : null;
+  const original = button?.innerHTML || '';
+  if (button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 発行中'; }
+  try {
+    if (window.ZaikoAPI?.issueConsignmentSlip) {
+      await window.ZaikoAPI.issueConsignmentSlip(slip);
+      slip = (APP_DATA.consignments || []).find(record => record.id === slipId) || slip;
+    } else {
+      slip.issuedAt = new Date().toISOString();
+      slip.issuedBy = typeof currentUserId === 'function' ? (currentUserId() || 'preview-admin') : 'preview-admin';
+    }
+    if (typeof renderSlipList === 'function' && currentSlipTab === 'consignment') renderSlipList(APP_DATA.consignments || []);
+    _downloadTemplateDocument('委託伝票', `${slip.id}_委託伝票.html`, buildConsignmentRecordTemplateHTML(slip));
+  } catch (error) {
+    showToast('error', '発行できませんでした', error?.message || '委託伝票の発行処理に失敗しました。');
+  } finally {
+    if (button?.isConnected) { button.disabled = false; button.innerHTML = original; }
+  }
+}
+
 function getSalesRecordCurrency(slip) {
   return slip?.inputCurrency === 'JPY' || slip?.currency === 'JPY' ? 'JPY' : 'USD';
 }
@@ -5880,7 +5913,7 @@ function buildShipmentRecordTemplateHTML(slip, documentOptions = {}) {
 
 /** 保存済み委託伝票を、出荷伝票と同じ雛形・項目構成で帳票化する。 */
 function buildConsignmentRecordTemplateHTML(slip) {
-  return buildShipmentRecordTemplateHTML(slip, {
+  return buildShipmentRecordTemplateHTML({ ...slip, displayCurrency: 'JPY', inputCurrency: 'JPY' }, {
     title: '委託伝票',
     transactionDateLabel: '委託日',
     counterpartyLabel: '委託先',
@@ -6629,9 +6662,12 @@ function buildSlipDetailBody(type, rec) {
         ${metaRow('<i class="fa-solid fa-file-lines"></i> 委託伝票番号', `<code style="font-size:13px;">${rec.id}</code>`)}
         ${metaRow('<i class="fa-regular fa-calendar"></i> 委託日', rec.date || '—')}
         ${metaRow('<i class="fa-solid fa-handshake"></i> 委託先', `<b>${getBuyerName(rec.destination)}</b>`)}
+        ${metaRow('<i class="fa-solid fa-file-circle-check"></i> 発行日時', formatPurchaseIssuedAt(rec.issuedAt))}
         ${buyer?.address ? metaRow('<i class="fa-solid fa-location-dot"></i> 住所', buyer.address) : ''}
         ${buyer?.contact ? metaRow('<i class="fa-solid fa-phone"></i> 連絡先', buyer.contact) : ''}
         ${metaRow('<i class="fa-solid fa-boxes-stacked"></i> 商品ステータス', '<span class="badge badge-consigned">● 委託中</span>')}
+        ${metaRow('<i class="fa-solid fa-yen-sign"></i> 合計金額（JPY）', `<span class="slip-detail-price">${formatPrice(Number(rec.totalJpy) || getShippingSaleTotalJPY(rec.items || [], rec))}</span>`)}
+        ${metaRow('<i class="fa-solid fa-arrow-right-arrow-left"></i> 委託登録時固定レート', `1 USD = ¥${getShippingRecordRate(rec).toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}
         ${rec.note ? metaRow('<i class="fa-solid fa-note-sticky"></i> 備考', rec.note) : ''}
       </div>`;
     itemsHtml = `
@@ -6639,11 +6675,12 @@ function buildSlipDetailBody(type, rec) {
       <div class="appr-detail-content-title"><i class="fa-solid fa-list-check"></i> 委託商品（${(rec.items || []).length}点）</div>
       <div class="slip-detail-table-scroll">
         <table class="appr-items-table">
-          <thead><tr><th>商品管理番号</th><th>ブランド</th><th>モデル</th><th>在庫ステータス</th></tr></thead>
+          <thead><tr><th>商品管理番号</th><th>ブランド</th><th>モデル</th><th style="text-align:right;">委託時売価（JPY）</th><th>在庫ステータス</th></tr></thead>
           <tbody>${(rec.items || []).map(item => `<tr>
             <td><code style="font-size:11px;">${item.code || '—'}</code></td>
             <td>${item.brand || '—'}</td>
             <td>${item.model || '—'}</td>
+            <td style="text-align:right;font-weight:bold;">${formatPrice(getShippingLineJPY(item, rec))}</td>
             <td><span class="badge badge-consigned">委託中</span></td>
           </tr>`).join('')}</tbody>
         </table>

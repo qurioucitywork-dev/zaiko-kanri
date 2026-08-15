@@ -165,7 +165,14 @@ function _collectConsignmentItems() {
       unavailable.push(`${item?.code || code}（${item?.status || '未登録'}）`);
       return;
     }
-    items.push({ code: item.code, brand: item.brand || '', model: item.model || '' });
+    const salePriceUsd = Number(item.salePrice) || 0;
+    const rate = typeof getSalesUsdRate === 'function' ? getSalesUsdRate() : 155.25;
+    items.push({
+      code: item.code, brand: item.brand || '', model: item.model || '',
+      salePrice: salePriceUsd, salePriceUsd,
+      convertedSalePriceJpy: typeof convertShippingUSDToJPY === 'function'
+        ? convertShippingUSDToJPY(salePriceUsd, rate) : Math.ceil(salePriceUsd * rate / 1000) * 1000,
+    });
   });
   return { items, unavailable, duplicates };
 }
@@ -195,7 +202,9 @@ async function saveConsignment() {
   let record = {
     id: document.getElementById('co-id')?.value || _nextConsignmentNumber(),
     date, destination, consignee: destination, note, status: '処理済', items,
-    registeredAt: new Date().toISOString(), revisions: [],
+    registeredAt: new Date().toISOString(), revisions: [], displayCurrency: 'JPY', inputCurrency: 'JPY',
+    usdJpyRate: typeof getSalesUsdRate === 'function' ? getSalesUsdRate() : 155.25,
+    totalJpy: items.reduce((sum, item) => sum + (Number(item.convertedSalePriceJpy) || 0), 0),
   };
   try {
     if (window.ZaikoAPI?.saveConsignment) {
@@ -207,11 +216,18 @@ async function saveConsignment() {
       });
       record = {
         ...record, _id: saved.id, id: saved.slipNumber, date: saved.consignmentDate,
-        status: '処理済', apiManaged: true,
+        status: '処理済', apiManaged: true, displayCurrency: 'JPY', inputCurrency: 'JPY',
+        fxRateScaled: Number(saved.fxRateScaled) || 0, fxScale: Number(saved.fxScale) || 0,
+        usdJpyRate: Number(saved.fxRateScaled) > 0 && Number(saved.fxScale) > 0 ? Number(saved.fxRateScaled) / Number(saved.fxScale) : record.usdJpyRate,
+        issuedAt: saved.issuedAt || null, issuedBy: saved.issuedBy || '',
         items: (saved.lines || []).map(line => ({
           code: line.productCode, brand: line.brand || '', model: line.modelNumber || '',
+          salePrice: Number(line.salePriceUsdMinor) || 0,
+          salePriceUsd: Number(line.salePriceUsdMinor) || 0,
+          convertedSalePriceJpy: Number(line.convertedSalePriceJpy) || 0,
         })),
       };
+      record.totalJpy = record.items.reduce((sum, item) => sum + item.convertedSalePriceJpy, 0);
     } else {
       if (!Array.isArray(APP_DATA.consignments)) APP_DATA.consignments = [];
       APP_DATA.consignments.push(record);

@@ -353,6 +353,16 @@
   }
 
   function consignmentView(record) {
+    const rate = Number(record.fxRateScaled) > 0 && Number(record.fxScale) > 0
+      ? Number(record.fxRateScaled) / Number(record.fxScale) : 0;
+    const items = (record.lines || []).map(line => ({
+      code: line.productCode,
+      brand: line.brand || '',
+      model: line.modelNumber || '',
+      salePrice: Number(line.salePriceUsdMinor) || 0,
+      salePriceUsd: Number(line.salePriceUsdMinor) || 0,
+      convertedSalePriceJpy: Number(line.convertedSalePriceJpy) || 0,
+    }));
     return {
       _id: record.id,
       id: record.slipNumber,
@@ -364,13 +374,17 @@
       note: record.notes || '',
       registeredAt: record.createdAt,
       confirmedAt: record.confirmedAt,
+      issuedAt: record.issuedAt || null,
+      issuedBy: record.issuedBy || '',
+      displayCurrency: 'JPY',
+      inputCurrency: 'JPY',
+      fxRateScaled: Number(record.fxRateScaled) || 0,
+      fxScale: Number(record.fxScale) || 0,
+      usdJpyRate: rate,
+      totalJpy: items.reduce((sum, item) => sum + item.convertedSalePriceJpy, 0),
       revisions: [],
       apiManaged: true,
-      items: (record.lines || []).map(line => ({
-        code: line.productCode,
-        brand: line.brand || '',
-        model: line.modelNumber || '',
-      })),
+      items,
     };
   }
 
@@ -821,6 +835,16 @@
     return record;
   }
 
+  async function issueConsignmentSlip(slip) {
+    const consignmentID = slip?._id || slip?.id;
+    if (!consignmentID) throw new Error('発行対象の委託伝票が見つかりません。');
+    const record = await request(`/consignments/${encodeURIComponent(consignmentID)}/issue`, {
+      method: 'POST', body: '{}',
+    });
+    await hydrateAdmin();
+    return record;
+  }
+
   async function savePurchaseSlip(slip, requireApproval) {
     const staffCode = APP_DATA.staffRecords?.find(item => item.name === slip.staff)?.code || slip.staff || '';
     const purchaseCurrency = slip.purchaseTaxMode === 'overseas' ? 'USD' : 'JPY';
@@ -1045,6 +1069,6 @@
     changePassword, setUserActive, queuePasswordReset, saveCompany, saveDashboardSettings,
     getAdminAccessCode, rotateAdminAccessCode, verifyAdminAccessCode, createUser,
     createGuestWithPartner, savePartner, saveMasterRecord, deactivateMasterRecord, createSingleProduct, appendProductImages,
-    createApproval, decideApproval, saveSale, saveShipment, saveConsignment, savePurchaseSlip, issuePurchaseSlip, issueSaleSlip, saveBoxes, importMarketCSV, saveReturn,
+    createApproval, decideApproval, saveSale, saveShipment, saveConsignment, savePurchaseSlip, issuePurchaseSlip, issueSaleSlip, issueConsignmentSlip, saveBoxes, importMarketCSV, saveReturn,
     updateProduct, updateProductImages, updateMarketPrice, updateShipmentTracking, updateReturnTracking, recordDocumentEvent };
 })();

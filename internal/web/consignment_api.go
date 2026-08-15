@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/persistence"
 )
 
@@ -20,6 +21,32 @@ func (s *Server) apiConsignments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": records, "total": len(records)})
+}
+
+func (s *Server) apiConsignmentIssue(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	if user.Role != database.RoleAdmin {
+		writeAPIError(w, http.StatusForbidden, "admin_required", "委託伝票を発行できるのは管理者のみです。")
+		return
+	}
+	if s.repository.Driver() != "postgres" {
+		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "委託APIはPostgreSQLモードで利用してください。")
+		return
+	}
+	record, err := s.repository.IssueConsignment(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
+	if err != nil {
+		if errors.Is(err, persistence.ErrConsignmentNotFound) {
+			writeAPIError(w, http.StatusNotFound, "consignment_not_found", "委託伝票が見つかりません。")
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, "consignment_issue_failed", "委託伝票を発行できませんでした。")
+		return
+	}
+	after, _ := json.Marshal(record)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: user.OrganizationID, ActorUserID: user.ID,
+		TargetType: "consignment_slip", TargetID: record.ID, Action: "consignment.issued", AfterJSON: string(after),
+		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent()})
+	writeJSON(w, http.StatusOK, record)
 }
 
 func (s *Server) apiConsignment(w http.ResponseWriter, r *http.Request) {

@@ -374,3 +374,29 @@ func TestShipmentJPYThousandRoundingMigrationRepairsExistingLines(t *testing.T) 
 		}
 	}
 }
+
+func TestConsignmentFinancialSnapshotMigrationPersistsRegistrationAndIssueEvidence(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000033_consignment_financial_issue_snapshot" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("consignment financial snapshot migration 000033 is missing")
+	}
+	for _, fragment := range []string{
+		"display_currency", "fx_rate_snapshot_id", "fx_rate_scaled", "fx_scale",
+		"sale_price_usd_minor", "converted_sale_price_jpy", "issued_at", "issued_by",
+		"UPDATE consignment_lines", "candidate.observed_at <= c.created_at",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("consignment financial snapshot migration is missing %q", fragment)
+		}
+	}
+}

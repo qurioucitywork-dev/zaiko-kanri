@@ -142,6 +142,7 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/consignments", s.apiAuthenticated("shipment.read", http.HandlerFunc(s.apiConsignments)))
 	mux.Handle("GET /api/v1/consignments/{id}", s.apiAuthenticated("shipment.read", http.HandlerFunc(s.apiConsignment)))
 	mux.Handle("POST /api/v1/consignments", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiConsignmentCreate)))
+	mux.Handle("POST /api/v1/consignments/{id}/issue", s.apiAuthenticated("", http.HandlerFunc(s.apiConsignmentIssue)))
 	mux.Handle("GET /api/v1/returns", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiReturns)))
 	mux.Handle("GET /api/v1/returns/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiReturn)))
 	mux.Handle("POST /api/v1/returns", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiReturnCreate)))
