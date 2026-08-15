@@ -4812,7 +4812,7 @@ function buildSlipRow(row) {
     return `<tr class="slip-list-row${row.status === '承認待ち' ? ' slip-row-pending' : ''}" onclick="openSlipDetail('purchase','${row.id}')">
       <td><code style="font-size:12px;font-weight:bold;">${row.id}</code>${revBadge}</td>
       <td style="white-space:nowrap;">${row.date||'—'}</td>
-      <td style="white-space:nowrap;font-size:12px;">${formatPurchaseIssuedAt(row.issuedAt)}</td>
+      <td class="issued-at-cell">${formatIssuedAtStacked(row.issuedAt)}</td>
       <td>${getSupplierName(row.supplier)}</td>
       <td style="font-size:12px;">${row.staff||'—'}</td>
       <td style="text-align:center;">${lineCount}点</td>
@@ -4860,7 +4860,7 @@ function buildSlipRow(row) {
     return `<tr class="slip-list-row" onclick="openSlipDetail('consignment','${row.id}')">
       <td><code style="font-size:12px;font-weight:bold;">${row.id}</code></td>
       <td style="white-space:nowrap;">${row.date || '—'}</td>
-      <td style="white-space:nowrap;">${formatPurchaseIssuedAt(row.issuedAt)}</td>
+      <td class="issued-at-cell">${formatIssuedAtStacked(row.issuedAt)}</td>
       <td>${getBuyerName(row.destination)}</td>
       <td style="text-align:center;">${row.items?.length || 0}点</td>
       <td style="text-align:right;font-weight:bold;">${formatPrice(Number(row.totalJpy) || getShippingSaleTotalJPY(row.items || [], row))}</td>
@@ -4968,7 +4968,7 @@ function buildSlipRow(row) {
       </td>
       <td><code style="font-size:12px;font-weight:bold;">${row.id}</code>${revBadge}</td>
       <td style="white-space:nowrap;">${row.date||'—'}</td>
-      <td style="white-space:nowrap;font-size:12px;">${formatSalesIssuedAt(row.issuedAt)}</td>
+      <td class="issued-at-cell">${formatIssuedAtStacked(row.issuedAt)}</td>
       <td>${getBuyerName(row.buyer)}</td>
       <td style="text-align:center;">${row.items?.length||0}点</td>
       <td style="text-align:right;font-weight:bold;color:var(--primary);">${formatSalesSlipListAmount(row)}</td>
@@ -5578,6 +5578,18 @@ function formatPurchaseIssuedAt(value) {
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
   }).format(date);
+}
+
+/** 一覧表では長い発行日時を日付・時刻の2段に分け、狭い幅でも見切れさせない。 */
+function formatIssuedAtStacked(value) {
+  if (!value) return '<span class="issued-at-stack issued-at-empty">未発行</span>';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return `<span class="issued-at-stack">${_escHtml(String(value))}</span>`;
+  const parts = new Intl.DateTimeFormat('ja-JP', {
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(date).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+  return `<span class="issued-at-stack"><span>${parts.year}/${parts.month}/${parts.day}</span><span>${parts.hour}:${parts.minute}:${parts.second}</span></span>`;
 }
 
 function canIssuePurchaseSlip() {
