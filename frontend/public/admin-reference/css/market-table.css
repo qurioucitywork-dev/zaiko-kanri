@@ -64,22 +64,38 @@
 .market-table {
   table-layout: fixed;
   width: 100%;
-  min-width: 1280px;
+  min-width: 1730px;
 }
 
 .market-table th,
 .market-table td {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.45;
   vertical-align: middle;
+}
+
+#market-result-area .data-table-wrapper {
+  overflow-x: auto;
+  scrollbar-gutter: stable both-edges;
+}
+
+.market-table th[data-market-col="importDate"],
+.market-table td[data-market-col="importDate"],
+.market-table th[data-market-col="marketPrice"],
+.market-table td[data-market-col="marketPrice"],
+.market-table th[data-market-col="edit"],
+.market-table td[data-market-col="edit"] {
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .market-table .market-col-hidden {
   display: none !important;
 }
 
-.market-table td[data-market-col="purchasePrice"],
 .market-table td[data-market-col="marketPrice"] {
   font-variant-numeric: tabular-nums;
 }
@@ -98,34 +114,20 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  white-space: nowrap;
   color: #1e3a5f;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 
 .market-import-date i { color: #64748b; }
 
-.market-price-yen,
-.market-price-usd {
+.market-price-yen {
   font-variant-numeric: tabular-nums;
   font-weight: 700;
 }
 
 .market-price-yen { color: var(--primary); }
-.market-price-usd { color: #047857; }
-
-.market-price-usd::before {
-  content: 'USD';
-  display: inline-block;
-  margin-right: 5px;
-  padding: 1px 5px;
-  border-radius: 4px;
-  background: #d1fae5;
-  color: #047857;
-  font-size: 9px;
-  font-weight: 800;
-  vertical-align: 1px;
-}
 
 .market-import-summary {
   display: none;
@@ -142,10 +144,75 @@
 
 .market-import-summary.show { display: flex; }
 
+.market-csv-preview-modal {
+  width: min(1180px, 96vw);
+  max-width: 1180px;
+  max-height: 92vh;
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+.market-csv-preview-body {
+  max-height: 72vh;
+  overflow-y: auto;
+  padding: 18px 20px;
+}
+
+.market-csv-preview-guide {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 11px 13px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e3a5f;
+  font-size: 13px;
+}
+
+.market-csv-preview-table-wrap {
+  max-height: 48vh;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.market-csv-preview-table {
+  min-width: 1280px;
+}
+
+.market-csv-preview-table th,
+.market-csv-preview-table td {
+  padding: 10px 12px;
+  vertical-align: middle;
+}
+
+.market-csv-preview-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.market-csv-preview-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.market-csv-preview-footer {
+  justify-content: space-between;
+}
+
 .market-edit-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 16px;
+}
+
+.market-edit-full-width {
+  grid-column: 1 / -1;
 }
 
 .market-edit-section {
@@ -175,7 +242,7 @@
   left: 11px;
   top: 50%;
   transform: translateY(-50%);
-  color: #047857;
+  color: var(--primary);
   font-weight: 800;
   pointer-events: none;
 }
@@ -213,6 +280,11 @@
   #marketEditModal { padding: 8px; }
   #marketEditModal .modal { max-height: 96vh !important; }
   #marketEditModal .modal-body { padding: 16px !important; }
+  #marketCsvPreviewModal { padding: 8px; }
+  .market-csv-preview-modal { width: 100%; max-height: 96vh; }
+  .market-csv-preview-body { padding: 14px; }
+  .market-csv-preview-footer { gap: 8px; }
+  .market-csv-preview-footer .btn { flex: 1; }
 
   #market-result-area .card-actions {
     width: 100%;

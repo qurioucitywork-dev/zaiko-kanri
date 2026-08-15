@@ -21,6 +21,12 @@ const APP_DATA = {
     { code: "BRD-009", name: "グランドセイコー" },
     { code: "BRD-010", name: "その他" },
   ],
+  auctionRecords: [
+    { code: "AUC-001", name: "東京オークション" },
+    { code: "AUC-002", name: "ワーカーオークション" },
+    { code: "AUC-003", name: "APIオークション" },
+    { code: "AUC-004", name: "その他" },
+  ],
   // 名称配列は既存画面との互換用。固定IDは brandRecords を正とする。
   brands: ["ロレックス", "オメガ", "パテック・フィリップ", "カルティエ", "IWC", "ブライトリング", "タグ・ホイヤー", "セイコー", "グランドセイコー", "その他"],
   suppliers: [
@@ -51,6 +57,20 @@ const APP_DATA = {
     { code: "D03", name: "クオーツ" },
     { code: "D04", name: "電波" },
     { code: "D05", name: "スマート" },
+  ],
+  beltMaterialRecords: [
+    { code: "BLT-001", name: "ステンレス" },
+    { code: "BLT-002", name: "レザー" },
+    { code: "BLT-003", name: "ラバー" },
+    { code: "BLT-004", name: "チタン" },
+    { code: "BLT-005", name: "ナイロン" },
+  ],
+  dialRecords: [
+    { code: "DIA-001", name: "ブラック" },
+    { code: "DIA-002", name: "ホワイト" },
+    { code: "DIA-003", name: "シルバー" },
+    { code: "DIA-004", name: "ブルー" },
+    { code: "DIA-005", name: "グリーン" },
   ],
   accessories: ["BOX", "CASE", "GUARANTEE", "BRACELET PARTS", "CERTIFICATE", "ARCHIVE"],
   conditions: [
@@ -376,6 +396,9 @@ const APP_DATA = {
       revisions: []
     },
   ],
+
+  // 委託伝票（API接続時はDBデータで置き換える）
+  consignments: [],
 
   // 購入リクエスト（ゲスト）
   purchaseRequests: [
@@ -1540,6 +1563,7 @@ function getStatusBadge(status) {
     '取置中': '<span class="badge badge-pending">● 取置中</span>',
     '売上済': '<span class="badge badge-sold">● 売上済</span>',
     '出荷済': '<span class="badge badge-shipped">● 出荷済</span>',
+    '委託中': '<span class="badge badge-consigned">● 委託中</span>',
     '保留': '<span class="badge badge-pending">● 保留</span>',
   };
   return map[status] || `<span class="badge">${status}</span>`;

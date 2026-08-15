@@ -805,24 +805,35 @@ function buildShippingDetail(detail) {
   const destName = getBuyerName(detail.destination);
   const buyer = APP_DATA.buyers.find(b => b.code === detail.destination);
   const items = Array.isArray(detail.items) ? detail.items : [];
+  const displayCurrency = detail.displayCurrency === 'JPY' || detail.inputCurrency === 'JPY' ? 'JPY' : 'USD';
+  const rate = Number(detail.usdJpyRate) > 0 ? Number(detail.usdJpyRate)
+    : (typeof getSalesUsdRate === 'function' ? getSalesUsdRate() : 155);
 
   // itemsが文字列コード配列の場合と詳細オブジェクト配列の両対応
   const itemRows = items.map(it => {
     if (typeof it === 'string') {
       const inv = APP_DATA.inventory.find(i => i.code === it);
-      return { code: it, brand: inv?.brand || '—', model: inv?.model || '—', price: inv?.purchasePrice || 0 };
+      const salePriceUSD = Number(inv?.salePrice) || 0;
+      return { code: it, brand: inv?.brand || '—', model: inv?.model || '—', salePriceUSD,
+        displayPrice: displayCurrency === 'JPY' && typeof convertShippingUSDToJPY === 'function'
+          ? convertShippingUSDToJPY(salePriceUSD, rate) : salePriceUSD };
     }
     return {
       code: it.code || '—',
       brand: it.brand || '—',
       model: it.model || '—',
-      price: typeof getShippingPurchasePrice === 'function'
-        ? getShippingPurchasePrice(it)
-        : (Number(it.purchasePrice) || Number(it.wholesale) || 0),
+      salePriceUSD: typeof getShippingSalePriceUSD === 'function'
+        ? getShippingSalePriceUSD(it)
+        : (Number(it.salePriceUsd) || Number(it.salePrice) || 0),
+      displayPrice: displayCurrency === 'JPY'
+        ? (Number(it.convertedSalePriceJpy) || (typeof convertShippingUSDToJPY === 'function'
+          ? convertShippingUSDToJPY(Number(it.salePriceUsd) || Number(it.salePrice) || 0, rate) : 0))
+        : (Number(it.salePriceUsd) || Number(it.salePrice) || 0),
     };
   });
 
-  const totalPrice = itemRows.reduce((s, i) => s + (i.price || 0), 0);
+  const totalPrice = itemRows.reduce((s, i) => s + (i.displayPrice || 0), 0);
+  const formatAmount = amount => displayCurrency === 'JPY' ? formatPrice(amount) : formatSalePrice(amount);
 
   return `
     <div class="appr-content-card">
@@ -844,8 +855,8 @@ function buildShippingDetail(detail) {
           <span class="appr-content-val"><code>${detail.shipId || '—'}</code></span>
         </div>
         <div class="appr-content-item">
-          <span class="appr-content-label">合計仕入金額（JPY）</span>
-          <span class="appr-content-val appr-price">${formatPrice(totalPrice)}</span>
+          <span class="appr-content-label">合計金額（${displayCurrency}）</span>
+          <span class="appr-content-val appr-price">${formatAmount(totalPrice)}</span>
         </div>
       </div>
 
@@ -858,7 +869,7 @@ function buildShippingDetail(detail) {
               <th>商品コード</th>
               <th>ブランド</th>
               <th>モデル</th>
-              <th>仕入金額（JPY）</th>
+              <th>売価（${displayCurrency}）</th>
             </tr>
           </thead>
           <tbody>
@@ -867,12 +878,12 @@ function buildShippingDetail(detail) {
                 <td><code style="font-size:11px;">${it.code}</code></td>
                 <td>${it.brand}</td>
                 <td>${it.model}</td>
-                <td style="text-align:right;font-weight:bold;">${formatPrice(it.price)}</td>
+                <td style="text-align:right;font-weight:bold;">${formatAmount(it.displayPrice)}</td>
               </tr>
             `).join('')}
             <tr class="appr-items-total">
               <td colspan="3" style="text-align:right;">合計</td>
-              <td style="text-align:right;">${formatPrice(totalPrice)}</td>
+              <td style="text-align:right;">${formatAmount(totalPrice)}</td>
             </tr>
           </tbody>
         </table>

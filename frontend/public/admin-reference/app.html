@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>在庫管理ツール — 管理画面</title>
-<link rel="stylesheet" href="css/style.css?v=20260803-management-number">
+<link rel="stylesheet" href="css/style.css?v=20260815-gallery-layout">
 <link rel="stylesheet" href="css/market-table.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -64,7 +64,7 @@
 
 /* ===== 売上・出荷 伝票ライン ===== */
 .slip-line {
-  display: grid; grid-template-columns: 140px 1fr 1fr 120px auto;
+  display: grid; grid-template-columns: 140px 1fr 1fr 180px auto;
   gap: 8px; align-items: center; padding: 8px 0;
   border-bottom: 1px solid var(--border);
 }
@@ -1458,7 +1458,7 @@
           <div class="form-group">
             <label class="form-label">ステータス</label>
             <select class="form-control" id="ie-status">
-              <option>在庫中</option><option>売上済</option><option>出荷済</option>
+              <option>在庫中</option><option>委託中</option><option>売上済</option><option>出荷済</option>
               <option>取置中</option><option>修理中</option><option>廃棄</option>
             </select>
           </div>
@@ -1525,6 +1525,26 @@
           </div>
         </div>
       </div>
+      <!-- セクション：商品画像 -->
+      <div class="item-edit-section item-edit-image-section">
+        <div class="item-edit-section-title item-edit-image-heading">
+          <span><i class="fa-solid fa-images"></i> 商品画像</span>
+          <span class="item-edit-image-count" id="ie-image-count">0 / 10枚</span>
+        </div>
+        <div class="item-edit-image-toolbar">
+          <div>
+            <strong>登録画像を編集</strong>
+            <p>JPEG・PNG・WebP（1枚10MB以下、最大10枚）。矢印で表示順を変更できます。</p>
+          </div>
+          <button type="button" class="btn btn-outline item-edit-image-add" onclick="openItemEditImagePicker()">
+            <i class="fa-solid fa-plus"></i> 画像を追加
+          </button>
+          <input type="file" id="ie-image-input" accept="image/jpeg,image/png,image/webp" multiple hidden
+            onchange="handleItemEditImageFiles(this.files);this.value=''">
+        </div>
+        <div class="item-edit-image-grid" id="ie-image-grid" aria-live="polite"></div>
+        <p class="item-edit-image-help"><i class="fa-solid fa-circle-info"></i> 削除や並び替えは「確定する」を押すまで保存されません。</p>
+      </div>
       <!-- セクション：付属品 -->
       <div class="item-edit-section">
         <div class="item-edit-section-title"><i class="fa-solid fa-box-open"></i> 付属品</div>
@@ -1578,7 +1598,7 @@
 </div>
 
 <div class="modal-overlay hidden" id="slipDetailOverlay">
-  <div class="modal" style="max-width:720px;border-radius:12px;overflow:hidden;">
+  <div class="modal slip-detail-modal" style="border-radius:12px;overflow:hidden;">
     <div class="modal-header" style="border-bottom:none;padding-bottom:10px;">
       <span id="slipDetailIcon" style="font-size:18px;color:var(--primary);"></span>
       <h3 id="slipDetailTitle" style="font-size:16px;">伝票詳細</h3>
@@ -1856,6 +1876,9 @@
         <a class="nav-item" data-page="shipping" onclick="navigateTo('shipping')">
           <span class="nav-icon"><i class="fa-solid fa-truck"></i></span> 出荷登録
         </a>
+        <a class="nav-item" data-page="consignment" onclick="navigateTo('consignment')">
+          <span class="nav-icon"><i class="fa-solid fa-handshake"></i></span> 委託伝票登録
+        </a>
         <a class="nav-item" data-page="returns" onclick="navigateTo('returns')">
           <span class="nav-icon"><i class="fa-solid fa-rotate-left"></i></span> 返品/持ち帰り
         </a>
@@ -2074,9 +2097,8 @@
         <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
         <div>
           <strong>相場データの管理</strong><br>
-          仕入れ価格と相場価格は、表の見出しから日本円・米ドルを切り替えられます。行をクリックすると各項目を編集できます。
-          <span class="market-guide-unit">仕入れ価格 JPY</span>
-          <span class="market-guide-unit">相場価格 USD</span>
+          オークション開催日・オークション名・落札価格を管理します。行をクリックすると備考を含む各項目を編集できます。
+          <span class="market-guide-unit">落札価格 JPY</span>
         </div>
       </div>
 
@@ -2095,11 +2117,11 @@
         <div class="card-body" style="padding-top:8px;">
           <div class="market-filter-grid">
             <div class="form-group inv-filter-item">
-              <label class="inv-filter-label" for="market-f-import-from"><i class="fa-solid fa-calendar-day"></i> 取り込み日付</label>
+              <label class="inv-filter-label" for="market-f-import-from"><i class="fa-solid fa-calendar-day"></i> オークション開催日</label>
               <div class="market-date-range">
-                <input type="date" class="form-control inv-filter-input" id="market-f-import-from" aria-label="取り込み日付 開始">
+                <input type="date" class="form-control inv-filter-input" id="market-f-import-from" aria-label="オークション開催日 開始">
                 <span style="color:var(--text-muted);">〜</span>
-                <input type="date" class="form-control inv-filter-input" id="market-f-import-to" aria-label="取り込み日付 終了">
+                <input type="date" class="form-control inv-filter-input" id="market-f-import-to" aria-label="オークション開催日 終了">
               </div>
             </div>
             <div class="form-group inv-filter-item">
@@ -2115,12 +2137,8 @@
               <input type="text" class="form-control inv-filter-input" id="market-f-ref" placeholder="例：116610LN" onkeydown="marketFilterKeydown(event)">
             </div>
             <div class="form-group inv-filter-item">
-              <label class="inv-filter-label" for="market-f-supplier"><i class="fa-solid fa-industry"></i> 仕入先</label>
-              <select class="form-control inv-filter-input" id="market-f-supplier"><option value="">すべて</option></select>
-            </div>
-            <div class="form-group inv-filter-item">
-              <label class="inv-filter-label" for="market-f-staff"><i class="fa-solid fa-user"></i> 担当者</label>
-              <select class="form-control inv-filter-input" id="market-f-staff"><option value="">すべて</option></select>
+              <label class="inv-filter-label" for="market-f-auction"><i class="fa-solid fa-gavel"></i> オークション名</label>
+              <select class="form-control inv-filter-input" id="market-f-auction"><option value="">すべて</option></select>
             </div>
             <div class="form-group inv-filter-item">
               <label class="inv-filter-label" for="market-f-material"><i class="fa-solid fa-gem"></i> 素材</label>
@@ -2154,7 +2172,7 @@
                 aria-controls="market-column-panel">
                 <i class="fa-solid fa-table-columns"></i>
                 <span>表示項目</span>
-                <span class="inv-column-count" id="market-column-count">11/11</span>
+                <span class="inv-column-count" id="market-column-count">10/10</span>
               </button>
               <div class="inv-column-panel" id="market-column-panel" role="group" aria-label="相場表の表示項目">
                 <div class="inv-column-panel-header">
@@ -2162,23 +2180,22 @@
                   <button type="button" onclick="marketShowAllColumns()">すべて表示</button>
                 </div>
                 <div class="inv-column-list">
-                  <label><input type="checkbox" value="importDate" checked onchange="marketColumnVisibilityChanged(this)">取り込み日付</label>
+                  <label><input type="checkbox" value="importDate" checked onchange="marketColumnVisibilityChanged(this)">オークション開催日</label>
                   <label><input type="checkbox" value="brand" checked onchange="marketColumnVisibilityChanged(this)">ブランド</label>
                   <label><input type="checkbox" value="model" checked onchange="marketColumnVisibilityChanged(this)">モデル名</label>
                   <label><input type="checkbox" value="ref" checked onchange="marketColumnVisibilityChanged(this)">型番</label>
-                  <label><input type="checkbox" value="supplier" checked onchange="marketColumnVisibilityChanged(this)">仕入先</label>
-                  <label><input type="checkbox" value="staff" checked onchange="marketColumnVisibilityChanged(this)">担当者</label>
-                  <label><input type="checkbox" value="purchasePrice" checked onchange="marketColumnVisibilityChanged(this)">仕入れ価格</label>
-                  <label><input type="checkbox" value="marketPrice" checked onchange="marketColumnVisibilityChanged(this)">相場価格</label>
+                  <label><input type="checkbox" value="auctionName" checked onchange="marketColumnVisibilityChanged(this)">オークション名</label>
+                  <label><input type="checkbox" value="marketPrice" checked onchange="marketColumnVisibilityChanged(this)">落札価格（JPY）</label>
                   <label><input type="checkbox" value="sku" checked onchange="marketColumnVisibilityChanged(this)">SKU</label>
                   <label><input type="checkbox" value="accessories" checked onchange="marketColumnVisibilityChanged(this)">付属品</label>
+                  <label><input type="checkbox" value="note" checked onchange="marketColumnVisibilityChanged(this)">備考</label>
                   <label><input type="checkbox" value="edit" checked onchange="marketColumnVisibilityChanged(this)">編集</label>
                 </div>
                 <div class="inv-column-panel-note" id="market-column-panel-note">チェックを外した項目は一覧から非表示になります</div>
               </div>
             </div>
             <button class="btn btn-outline btn-sm" type="button" onclick="marketDownloadTemplate()" title="CSV取込テンプレートをダウンロード">
-              <i class="fa-solid fa-file-arrow-down"></i> CSV形式
+              <i class="fa-solid fa-file-arrow-down"></i> CSVテンプレート
             </button>
             <button class="btn btn-outline btn-sm" type="button" onclick="marketExportCSV()">
               <i class="fa-solid fa-file-export"></i> CSV出力
@@ -2192,42 +2209,16 @@
         <div class="data-table-wrapper" tabindex="0" aria-label="相場表。横にスクロールできます">
           <table class="data-table market-table" id="marketTable">
             <colgroup>
-              <col data-market-col="importDate" style="width:108px;"><col data-market-col="brand" style="width:100px;"><col data-market-col="model" style="width:120px;">
-              <col data-market-col="ref" style="width:100px;"><col data-market-col="supplier" style="width:96px;">
-              <col data-market-col="staff" style="width:86px;"><col data-market-col="purchasePrice" style="width:132px;"><col data-market-col="marketPrice" style="width:132px;">
-              <col data-market-col="sku" style="width:86px;"><col data-market-col="accessories" style="width:120px;"><col data-market-col="edit" style="width:58px;">
+              <col data-market-col="importDate" style="width:156px;"><col data-market-col="brand" style="width:150px;"><col data-market-col="model" style="width:160px;">
+              <col data-market-col="ref" style="width:150px;"><col data-market-col="auctionName" style="width:180px;"><col data-market-col="marketPrice" style="width:158px;">
+              <col data-market-col="sku" style="width:130px;"><col data-market-col="accessories" style="width:180px;"><col data-market-col="note" style="width:330px;"><col data-market-col="edit" style="width:72px;">
             </colgroup>
             <thead>
               <tr>
-                <th data-market-col="importDate">取り込み日付</th><th data-market-col="brand">ブランド</th><th data-market-col="model">モデル名</th><th data-market-col="ref">型番</th>
-                <th data-market-col="supplier">仕入先</th><th data-market-col="staff">担当者</th>
-                <th data-market-col="purchasePrice">
-                  <div class="inv-price-column-head">
-                    <span id="market-purchase-heading">仕入れ価格（JPY）</span>
-                    <div class="inv-price-currency-switch" role="group" aria-label="仕入れ価格の表示通貨">
-                      <button type="button" id="market-purchase-jpy" class="inv-price-currency-btn active"
-                        aria-label="仕入れ価格を円で表示" aria-pressed="true"
-                        onclick="marketSwitchPriceCurrency('purchase','JPY')">¥</button>
-                      <button type="button" id="market-purchase-usd" class="inv-price-currency-btn"
-                        aria-label="仕入れ価格をUSDで表示" aria-pressed="false"
-                        onclick="marketSwitchPriceCurrency('purchase','USD')">$</button>
-                    </div>
-                  </div>
-                </th>
-                <th data-market-col="marketPrice">
-                  <div class="inv-price-column-head">
-                    <span id="market-price-heading">相場価格（USD）</span>
-                    <div class="inv-price-currency-switch" role="group" aria-label="相場価格の表示通貨">
-                      <button type="button" id="market-price-jpy" class="inv-price-currency-btn"
-                        aria-label="相場価格を円で表示" aria-pressed="false"
-                        onclick="marketSwitchPriceCurrency('market','JPY')">¥</button>
-                      <button type="button" id="market-price-usd" class="inv-price-currency-btn active"
-                        aria-label="相場価格をUSDで表示" aria-pressed="true"
-                        onclick="marketSwitchPriceCurrency('market','USD')">$</button>
-                    </div>
-                  </div>
-                </th>
-                <th data-market-col="sku">SKU</th><th data-market-col="accessories">付属品</th><th data-market-col="edit">編集</th>
+                <th data-market-col="importDate">オークション開催日</th><th data-market-col="brand">ブランド</th><th data-market-col="model">モデル名</th><th data-market-col="ref">型番</th>
+                <th data-market-col="auctionName">オークション名</th>
+                <th data-market-col="marketPrice"><span id="market-price-heading">落札価格（JPY）</span></th>
+                <th data-market-col="sku">SKU</th><th data-market-col="accessories">付属品</th><th data-market-col="note">備考</th><th data-market-col="edit">編集</th>
               </tr>
             </thead>
             <tbody id="marketTableBody"></tbody>
@@ -2325,6 +2316,7 @@
                 <option value="在庫中">在庫中</option>
                 <option value="取置中">取置中</option>
                 <option value="売上済">売上済</option>
+                <option value="委託中">委託中</option>
                 <option value="出荷済">出荷済</option>
                 <option value="仕入返品">仕入返品</option>
                 <option value="保留">保留</option>
@@ -2523,9 +2515,16 @@
           <h3><i class="fa-solid fa-file-invoice"></i> 仕入伝票</h3>
           <div class="card-actions">
             <button class="btn btn-outline btn-sm" onclick="pePrintPreview()"><i class="fa-solid fa-print"></i> 印刷</button>
+            <button class="btn btn-outline btn-sm" type="button" onclick="peDownloadCSVTemplate()"
+              title="仕入伝票CSVの空テンプレートをダウンロード" aria-label="仕入伝票CSVテンプレートをダウンロード">
+              <i class="fa-solid fa-file-arrow-down"></i> CSVテンプレート
+            </button>
             <button class="btn btn-outline btn-sm" onclick="peExportCSV()"><i class="fa-solid fa-file-export"></i> CSV出力</button>
-            <button class="btn btn-outline btn-sm" onclick="peImportCSV()"><i class="fa-solid fa-file-import"></i> CSV取込</button>
-            <input type="file" id="pe-csv-file-input" accept=".csv" style="display:none" onchange="peHandleCSVImport(this)">
+            <button class="btn btn-outline btn-sm" id="pe-csv-import-button" onclick="peImportCSV()"
+              title="CSVの内容を仕入明細へ読み込んで確認" aria-label="仕入CSVを明細へ読み込む">
+              <i class="fa-solid fa-file-import"></i> CSV取込
+            </button>
+            <input type="file" id="pe-csv-file-input" accept=".csv,text/csv" style="display:none" onchange="peHandleCSVImport(this)">
           </div>
         </div>
         <div class="card-body">
@@ -2550,6 +2549,23 @@
                 <option value="">-- 選択 --</option>
               </select>
             </div>
+          </div>
+          <div class="pe-tax-mode-panel" aria-labelledby="pe-tax-mode-label">
+            <div class="pe-tax-mode-copy">
+              <strong id="pe-tax-mode-label"><i class="fa-solid fa-receipt"></i> 仕入区分・税区分</strong>
+              <span id="pe-tax-mode-description">国内仕入：各明細に消費税（10%）を計算します</span>
+            </div>
+            <div class="pe-tax-mode-switch" role="radiogroup" aria-label="国内仕入または海外仕入">
+              <button type="button" id="pe-tax-domestic" class="pe-tax-mode-btn active" role="radio"
+                aria-checked="true" onclick="peSetPurchaseTaxMode('domestic')">
+                <i class="fa-solid fa-building"></i> 国内仕入
+              </button>
+              <button type="button" id="pe-tax-overseas" class="pe-tax-mode-btn" role="radio"
+                aria-checked="false" onclick="peSetPurchaseTaxMode('overseas')">
+                <i class="fa-solid fa-earth-asia"></i> 海外仕入
+              </button>
+            </div>
+            <span class="pe-tax-mode-badge" id="pe-tax-mode-badge">消費税（10%）</span>
           </div>
         </div>
       </div>
@@ -2580,7 +2596,8 @@
                 <th style="width:40px;text-align:center;">No.</th>
                 <th style="width:140px;">商品コード</th>
                 <th style="min-width:160px;">SKU <span class="required">*</span></th>
-                <th style="width:140px;text-align:right;">仕入金額（円）</th>
+                <th id="pe-purchase-price-heading" style="width:140px;text-align:right;">仕入金額（円）</th>
+                <th style="width:150px;text-align:right;">税区分 / 税額</th>
                 <th style="width:140px;text-align:right;">売価（USD）</th>
                 <th style="width:80px;text-align:center;">商品登録</th>
                 <th style="width:48px;text-align:center;">削除</th>
@@ -2597,7 +2614,9 @@
         <!-- 合計行 -->
         <div class="card-footer" style="display:flex;justify-content:flex-end;gap:24px;padding:12px 16px;border-top:1px solid var(--border);background:var(--bg);" id="pe-totals-row">
           <span style="font-size:13px;color:var(--text-muted);">明細 <strong id="pe-line-count">0</strong> 件</span>
-          <span style="font-size:13px;">仕入合計: <strong id="pe-total-purchase" style="color:var(--primary);">¥0</strong></span>
+          <span style="font-size:13px;"><span id="pe-subtotal-caption">仕入小計（JPY）:</span> <strong id="pe-subtotal-purchase" style="color:var(--primary);">¥0</strong></span>
+          <span style="font-size:13px;" id="pe-total-tax-wrap">消費税（10%）: <strong id="pe-total-tax" style="color:#c2410c;">¥0</strong></span>
+          <span style="font-size:13px;"><span id="pe-total-purchase-caption">仕入合計（JPY）:</span> <strong id="pe-total-purchase" style="color:var(--primary);">¥0</strong></span>
           <span style="font-size:13px;">売価合計（USD）: <strong id="pe-total-sale" style="color:var(--success);">$0</strong></span>
         </div>
       </div>
@@ -2605,7 +2624,9 @@
       <!-- 登録・リセットボタン -->
       <div style="display:flex;gap:10px;justify-content:flex-end;">
         <button class="btn btn-outline" onclick="peReset()"><i class="fa-solid fa-rotate"></i> リセット</button>
-        <button class="btn btn-primary btn-lg" onclick="peSave()"><i class="fa-solid fa-floppy-disk"></i> 仕入登録する</button>
+        <button class="btn btn-primary btn-lg" id="pe-save-button" onclick="peSave()">
+          <i class="fa-solid fa-floppy-disk"></i> 仕入登録する
+        </button>
       </div>
 
       <!-- 登録済み一覧 -->
@@ -2620,12 +2641,15 @@
               <tr>
                 <th>伝票番号</th>
                 <th>仕入日</th>
+                <th>発行日時</th>
                 <th>仕入先</th>
                 <th>担当者</th>
+                <th>仕入区分</th>
                 <th style="text-align:right;">明細件数</th>
                 <th style="text-align:right;">仕入合計</th>
                 <th style="text-align:right;">売価合計（USD）</th>
                 <th style="text-align:center;">操作</th>
+                <th style="text-align:center;">発行</th>
               </tr>
             </thead>
             <tbody id="pe-list-tbody"></tbody>
@@ -2832,7 +2856,7 @@
             <div class="card-body">
               <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;" id="imageGrid">
               </div>
-              <p style="font-size:11px;color:var(--text-muted);margin-top:10px;text-align:center;">クリックして画像を追加</p>
+              <p id="pu-image-help" aria-live="polite" style="font-size:11px;color:var(--text-muted);margin-top:10px;text-align:center;">クリックして画像を追加</p>
             </div>
           </div>
 
@@ -2863,14 +2887,14 @@
           <div class="form-row cols-3 mb-20" style="max-width:700px;">
             <div class="form-group">
               <div class="sl-id-header">
-                <label class="form-label" for="sl-id">出荷伝票番号</label>
+                <label class="form-label" for="sl-id">参照伝票番号</label>
                 <button class="btn-no-ship" onclick="setNewSalesId()" type="button">
-                  <i class="fa-solid fa-plus-circle"></i> 出荷なし（新規発番）
+                  <i class="fa-solid fa-plus-circle"></i> 参照なし（新規発番）
                 </button>
               </div>
               <div class="sl-id-wrap">
                 <input class="form-control" id="sl-id"
-                  placeholder="SH-2026-0001 または空欄"
+                  placeholder="SH-2026-0001 / CO-2026-0001 / 空欄"
                   oninput="onSalesIdInput(this.value)"
                   autocomplete="off">
                 <span class="sl-id-status" id="slIdStatus"></span>
@@ -3010,6 +3034,10 @@
             <span class="slip-tab-count" id="sltab-count-shipping" style="display:none;"
               onclick="event.stopPropagation();switchSlipTabPending('shipping')" title="承認タスクのある伝票を表示">0</span>
           </button>
+          <button class="slip-type-tab" id="sltab-consignment" onclick="switchSlipTab('consignment')">
+            <i class="fa-solid fa-handshake"></i> 委託伝票
+            <span class="slip-tab-count" id="sltab-count-consignment" style="display:none;">0</span>
+          </button>
           <button class="slip-type-tab" id="sltab-sales" onclick="switchSlipTab('sales')">
             <i class="fa-solid fa-yen-sign"></i> 売上伝票
             <span class="slip-tab-count" id="sltab-count-sales" style="display:none;"
@@ -3066,7 +3094,7 @@
             <span class="s-val" id="slipSummaryCount">0件</span>
           </div>
           <div class="sales-summary-item">
-            <span class="s-label">合計金額</span>
+            <span class="s-label" id="slipSummaryTotalLabel">合計金額</span>
             <span class="s-val" id="slipSummaryTotal">¥0</span>
           </div>
           <div class="sales-summary-item">
@@ -3157,20 +3185,36 @@
             </div>
           </div>
 
-          <div style="margin-bottom:8px;" class="section-heading">明細行</div>
-          <div style="display:grid;grid-template-columns:140px 1fr 1fr 140px 40px;gap:8px;padding:6px 0;border-bottom:2px solid var(--primary);">
-            <div style="font-size:11px;font-weight:bold;color:var(--text-muted);">商品コード</div>
+          <div style="margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;" class="section-heading">
+            <span>明細行</span>
+            <button type="button" class="btn btn-outline btn-sm" onclick="openBarcodeScanner('shipping')"
+              style="min-height:44px;" aria-label="出荷商品の管理番号をQRコードから連続して読み取る">
+              <i class="fa-solid fa-qrcode"></i> QR連続読取
+            </button>
+          </div>
+          <div class="shipping-line-header" style="display:grid;grid-template-columns:140px 1fr 1fr 180px 40px;gap:8px;padding:6px 0;border-bottom:2px solid var(--primary);align-items:end;">
+            <div style="font-size:11px;font-weight:bold;color:var(--text-muted);">商品管理番号</div>
             <div style="font-size:11px;font-weight:bold;color:var(--text-muted);">ブランド</div>
             <div style="font-size:11px;font-weight:bold;color:var(--text-muted);">モデル名</div>
-            <div style="font-size:11px;font-weight:bold;color:var(--text-muted);">仕入金額（JPY・税抜）</div>
+            <div>
+              <div style="font-size:11px;font-weight:bold;color:var(--text-muted);" id="sh-price-heading">売価（USD）</div>
+              <div class="sl-currency-switch" role="group" aria-label="出荷金額の表示通貨" style="margin-top:5px;">
+                <button type="button" id="sh-currency-usd" class="sl-currency-btn active" aria-pressed="true" onclick="switchShippingEntryCurrency('USD')">$</button>
+                <button type="button" id="sh-currency-jpy" class="sl-currency-btn" aria-pressed="false" onclick="switchShippingEntryCurrency('JPY')">¥</button>
+              </div>
+              <small class="sl-price-rate" id="sh-price-rate">登録時レート：1 USD = ¥155.00</small>
+            </div>
             <div></div>
           </div>
           <div id="shippingLines"></div>
+          <div id="shippingScanHint" style="font-size:11px;color:var(--text-muted);margin-top:8px;" aria-live="polite">
+            QRは連続して読み取れます。手入力では管理番号が確定すると次の空行を自動追加します。
+          </div>
           <button class="add-row-btn" onclick="addShippingLine()">＋ 明細行を追加</button>
 
           <div class="slip-total-row">
-            <span class="slip-total-label">合計仕入金額（JPY・税抜）</span>
-            <span class="slip-total-val" id="shippingTotalDisplay">¥0</span>
+            <span class="slip-total-label" id="shippingTotalLabel">合計金額（USD）</span>
+            <span class="slip-total-val" id="shippingTotalDisplay">$0</span>
           </div>
         </div>
       </div>
@@ -3178,6 +3222,65 @@
       <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px;">
         <button class="btn btn-outline" onclick="resetShippingForm()"><i class="fa-solid fa-rotate"></i> リセット</button>
         <button class="btn btn-primary btn-lg" onclick="saveShipping()"><i class="fa-solid fa-floppy-disk"></i> 出荷を確定する</button>
+      </div>
+    </div>
+
+    <!-- ===== 委託伝票登録 ===== -->
+    <div class="page-panel page-content hidden" id="page-consignment">
+      <div class="card mb-20">
+        <div class="card-header">
+          <h3><i class="fa-solid fa-handshake"></i> 委託伝票</h3>
+        </div>
+        <div class="card-body">
+          <div class="form-row cols-4 mb-20 consignment-meta-grid">
+            <div class="form-group">
+              <label class="form-label" for="co-id">伝票番号 <span class="auto-tag">自動</span></label>
+              <input class="form-control auto-filled" id="co-id" readonly>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="co-date">委託日 <span class="required">*</span></label>
+              <input type="date" class="form-control" id="co-date">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="co-dest">委託先 <span class="required">*</span></label>
+              <select class="form-control" id="co-dest">
+                <option value="">-- 選択 --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="co-note">備考</label>
+              <input class="form-control" id="co-note" placeholder="">
+            </div>
+          </div>
+
+          <div class="section-heading consignment-line-heading">
+            <span>明細行</span>
+            <button type="button" class="btn btn-outline btn-sm" onclick="openBarcodeScanner('consignment')"
+              aria-label="委託商品の管理番号をQRコードから連続して読み取る">
+              <i class="fa-solid fa-qrcode"></i> QR連続読取
+            </button>
+          </div>
+          <div class="consignment-line-header">
+            <div>商品管理番号</div>
+            <div>ブランド</div>
+            <div>モデル名</div>
+            <div></div>
+          </div>
+          <div id="consignmentLines"></div>
+          <div class="consignment-scan-hint" aria-live="polite">
+            QRは連続して読み取れます。手入力では管理番号が確定すると次の空行を自動追加します。
+          </div>
+          <button class="add-row-btn" type="button" onclick="addConsignmentLine()">＋ 明細行を追加</button>
+        </div>
+      </div>
+
+      <div class="consignment-actions">
+        <button class="btn btn-outline" type="button" onclick="resetConsignmentForm(true)">
+          <i class="fa-solid fa-rotate"></i> リセット
+        </button>
+        <button class="btn btn-primary btn-lg" type="button" onclick="saveConsignment()">
+          <i class="fa-solid fa-floppy-disk"></i> 委託を確定する
+        </button>
       </div>
     </div>
 
@@ -3614,7 +3717,7 @@
             </div>
             <div class="stk-input-stats">
               <div class="stk-stat-pill"><i class="fa-solid fa-box-archive"></i> 在庫中 <b id="stkDoneInStock">0</b> / <span id="stkTotalInStock">0</span></div>
-              <div class="stk-stat-pill"><i class="fa-solid fa-truck"></i> 出荷済 <b id="stkDoneShipped">0</b> / <span id="stkTotalShipped">0</span></div>
+              <div class="stk-stat-pill"><i class="fa-solid fa-truck"></i> 出荷済・委託中 <b id="stkDoneShipped">0</b> / <span id="stkTotalShipped">0</span></div>
             </div>
           </div>
         </div>
@@ -3630,7 +3733,7 @@
               <span class="stk-tab-count" id="stkTabCountInStock">0</span>
             </button>
             <button class="stk-tab" id="stkTabShipped" onclick="stkSwitchTab('shipped',this)">
-              <i class="fa-solid fa-truck"></i> 出荷済
+              <i class="fa-solid fa-truck"></i> 出荷済・委託中
               <span class="stk-tab-count" id="stkTabCountShipped">0</span>
             </button>
           </div>
@@ -3689,9 +3792,9 @@
                 <span class="stk-summary-val stk-val-done" id="sumInStockDone">¥0</span>
               </div>
             </div>
-            <!-- 出荷済 -->
+            <!-- 出荷済・委託中 -->
             <div class="stk-summary-group">
-              <div class="stk-summary-group-label"><i class="fa-solid fa-truck"></i> 出荷済</div>
+              <div class="stk-summary-group-label"><i class="fa-solid fa-truck"></i> 出荷済・委託中</div>
               <div class="stk-summary-row">
                 <span class="stk-summary-label">リスト合計金額</span>
                 <span class="stk-summary-val" id="sumShippedTotal">¥0</span>
@@ -3705,7 +3808,7 @@
             <div class="stk-summary-group stk-summary-group-total">
               <div class="stk-summary-group-label"><i class="fa-solid fa-sigma"></i> 総合計</div>
               <div class="stk-summary-row">
-                <span class="stk-summary-label">システム合計（在庫中・取置中＋出荷済）</span>
+                <span class="stk-summary-label">システム合計（在庫中・取置中＋出荷済・委託中）</span>
                 <span class="stk-summary-val stk-val-system" id="sumGrandTotal">¥0</span>
               </div>
               <div class="stk-summary-row">
@@ -4435,7 +4538,7 @@
           <input class="form-control auto-filled" id="pep-supplier-label" readonly>
         </div>
         <div class="form-group">
-          <label class="form-label">仕入金額（円）</label>
+          <label class="form-label" id="pep-purchase-price-label">仕入金額（円）</label>
           <input type="text" inputmode="numeric" class="form-control auto-filled" id="pep-purchase-price" readonly>
         </div>
         <div class="form-group">
@@ -4590,6 +4693,38 @@
   </div>
 </div>
 
+<!-- ===== 相場表 CSV取込明細確認モーダル ===== -->
+<div class="modal-overlay hidden" id="marketCsvPreviewModal" style="z-index:11000;" onclick="if(event.target===this) marketCancelCSVImport()">
+  <div class="modal market-csv-preview-modal" role="dialog" aria-modal="true" aria-labelledby="marketCsvPreviewTitle">
+    <div class="modal-header" style="background:linear-gradient(135deg,#1e3a5f,#2563eb);color:#fff;border-bottom:none;">
+      <span style="font-size:18px;"><i class="fa-solid fa-file-csv"></i></span>
+      <h3 style="font-size:16px;color:#fff;" id="marketCsvPreviewTitle">相場CSV取込明細の確認</h3>
+      <button class="modal-close" type="button" style="color:#fff;opacity:.85;" onclick="marketCancelCSVImport()" aria-label="閉じる">
+        <i class="fa-solid fa-xmark"></i>
+      </button>
+    </div>
+    <div class="modal-body market-csv-preview-body">
+      <div class="market-csv-preview-guide" id="marketCsvPreviewSummary" role="status" aria-live="polite"></div>
+      <div class="data-table-wrapper market-csv-preview-table-wrap" tabindex="0" aria-label="CSVから読み込んだ相場明細。横にスクロールできます">
+        <table class="data-table market-csv-preview-table">
+          <thead>
+            <tr>
+              <th>No.</th><th>開催日</th><th>ブランド</th><th>モデル名</th><th>型番</th>
+              <th>オークション名</th><th>落札価格（JPY）</th><th>SKU</th><th>付属品</th><th>備考</th>
+            </tr>
+          </thead>
+          <tbody id="marketCsvPreviewBody"></tbody>
+        </table>
+      </div>
+      <p class="market-csv-preview-note"><i class="fa-solid fa-circle-info"></i> この画面ではまだ登録されていません。内容を確認して「この内容で登録」を押してください。</p>
+    </div>
+    <div class="modal-footer market-csv-preview-footer">
+      <button class="btn btn-outline" type="button" onclick="marketCancelCSVImport()"><i class="fa-solid fa-xmark"></i> キャンセル</button>
+      <button class="btn btn-primary" id="marketCsvConfirmButton" type="button" onclick="marketConfirmCSVImport()"><i class="fa-solid fa-check"></i> この内容で登録</button>
+    </div>
+  </div>
+</div>
+
 <!-- ===== 相場表 編集モーダル ===== -->
 <div class="modal-overlay hidden" id="marketEditModal" style="z-index:10900;" onclick="if(event.target===this) marketCloseEdit()">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="marketEditTitle" style="max-width:780px;border-radius:14px;overflow:hidden;">
@@ -4639,44 +4774,42 @@
       </section>
 
       <section class="market-edit-section" aria-labelledby="market-edit-price-title">
-        <div class="market-edit-section-title" id="market-edit-price-title"><i class="fa-solid fa-coins"></i> 価格・日付</div>
+        <div class="market-edit-section-title" id="market-edit-price-title"><i class="fa-solid fa-coins"></i> オークション情報</div>
         <div class="market-edit-grid">
           <div class="form-group">
-            <label class="form-label" for="me-importDate">取り込み日付 <span class="required">*</span></label>
+            <label class="form-label" for="me-importDate">オークション開催日 <span class="required">*</span></label>
             <input type="date" class="form-control" id="me-importDate" required>
           </div>
           <div class="form-group">
-            <label class="form-label" for="me-purchasePrice">仕入れ価格（円）</label>
-            <input type="text" class="form-control" id="me-purchasePrice" inputmode="numeric"
-              oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)">
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="me-marketPriceUsd">相場価格（USD）</label>
+            <label class="form-label" for="me-marketPriceJpy">落札価格（JPY）</label>
             <div class="market-currency-field">
-              <span class="market-currency-prefix" aria-hidden="true">$</span>
-              <input type="text" class="form-control" id="me-marketPriceUsd" inputmode="decimal"
-                oninput="decimalPriceFormatHandler(this)" onblur="decimalPriceFormatHandler(this)" aria-describedby="market-usd-help">
+              <span class="market-currency-prefix" aria-hidden="true">¥</span>
+              <input type="text" class="form-control" id="me-marketPriceJpy" inputmode="numeric"
+              oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)">
             </div>
-            <small id="market-usd-help" style="display:block;margin-top:4px;color:var(--text-muted);">米ドルで入力してください</small>
+            <small style="display:block;margin-top:4px;color:var(--text-muted);">日本円で入力してください</small>
           </div>
         </div>
       </section>
 
       <section class="market-edit-section" aria-labelledby="market-edit-source-title">
-        <div class="market-edit-section-title" id="market-edit-source-title"><i class="fa-solid fa-industry"></i> 仕入・付属情報</div>
+        <div class="market-edit-section-title" id="market-edit-source-title"><i class="fa-solid fa-gavel"></i> 開催元・付属情報</div>
         <div class="market-edit-grid">
           <div class="form-group">
-            <label class="form-label" for="me-supplier">仕入先</label>
-            <select class="form-control" id="me-supplier"></select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="me-staff">担当者</label>
-            <select class="form-control" id="me-staff"></select>
+            <label class="form-label" for="me-auctionCode">オークション名 <span class="required">*</span></label>
+            <select class="form-control" id="me-auctionCode" required>
+              <option value="">-- オークションを選択 --</option>
+            </select>
+            <small style="display:block;margin-top:4px;color:var(--text-muted);">マスタ登録のオークションコードと連動します</small>
           </div>
           <div class="form-group">
             <label class="form-label" for="me-accessories">付属品</label>
             <div class="checkbox-group" id="me-accessories" aria-label="付属品を選択"></div>
             <small style="display:block;margin-top:4px;color:var(--text-muted);">付属品マスタと共通の項目から複数選択できます</small>
+          </div>
+          <div class="form-group market-edit-full-width">
+            <label class="form-label" for="me-note">備考</label>
+            <textarea class="form-control" id="me-note" rows="3" placeholder="備考を入力"></textarea>
           </div>
         </div>
       </section>
@@ -4776,14 +4909,15 @@
 <script src="js/guest_shared.js?v=20260803-workflow-consistency"></script>
 <script src="js/login_info.js?v=20260803-workflow-consistency"></script>
 <script src="js/auth.js?v=20260803-workflow-consistency"></script>
-<script src="js/api_bridge.js?v=20260803-return-linkage"></script>
+<script src="js/api_bridge.js?v=20260815-sales-consignment-link"></script>
 <script src="js/approval.js?v=20260803-workflow-consistency"></script>
 <script src="js/notify.js?v=20260803-workflow-consistency"></script>
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
 <script src="js/market_table.js?v=20260803-workflow-consistency"></script>
 <script src="js/qr_inventory.js?v=20260804-stocktake-qr"></script>
-  <script src="js/app.js?v=20260804-stocktake-qr"></script>
+  <script src="js/app.js?v=20260816-consignment-document"></script>
+<script src="js/consignment.js?v=20260815-consignment"></script>
 <script src="js/stocktake.js?v=20260803-workflow-consistency"></script>
-<script src="js/purchase_entry.js?v=20260803-workflow-consistency"></script>
+<script src="js/purchase_entry.js?v=20260815-purchase-issue"></script>
 <script src="https://www.genspark.ai/sandbox_inspect.js"></script></body>
 </html>

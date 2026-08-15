@@ -19,6 +19,7 @@ const scriptNames = [
   "market_table.js",
   "qr_inventory.js",
   "app.js",
+  "consignment.js",
   "stocktake.js",
   "purchase_entry.js",
 ];
@@ -28,6 +29,32 @@ const guestHtmlSource = await readFile(path.join(referenceRoot, "guest.html"), "
 const guestCssSource = await readFile(path.join(referenceRoot, "css", "guest.css"), "utf8");
 const marketCssSource = await readFile(path.join(referenceRoot, "css", "market-table.css"), "utf8");
 const apiBridgeSource = await readFile(path.join(referenceRoot, "js", "api_bridge.js"), "utf8");
+const staticAppSource = await readFile(path.join(referenceRoot, "js", "app.js"), "utf8");
+assert.match(apiBridgeSource, /const currentProduct = productByLine\.get\(line\.id\)/u,
+  "API purchase slips must resolve current product details through the stable purchase-line link");
+assert.match(apiBridgeSource, /brandCode: resolvedBrandCode/u,
+  "purchase API payloads must support an empty brand while preserving a supplied stable brand code");
+assert.match(apiBridgeSource, /product\.fixedPurchaseCostJpyMinor/u,
+  "inventory hydration must use the persisted purchase-date JPY snapshot");
+assert.equal(
+  /product\.costCurrency === 'USD'\s*\?\s*Math\.round\(product\.costAmountMinor \* rate\)/u.test(apiBridgeSource),
+  false,
+  "inventory hydration must not recalculate overseas costs with the latest master rate",
+);
+assert.match(apiBridgeSource, /request\(`\/sales\/\$\{encodeURIComponent\(saleID\)\}\/issue`/u,
+  "sales issue must persist its timestamp through the REST API");
+assert.match(staticAppSource, /function issueSaleSlipDocument\(slipId, event\)/u,
+  "sales invoices must expose the administrator issue workflow");
+assert.match(staticAppSource, /売上登録時固定レート/u,
+  "saved sales invoices must display the registration-time exchange rate");
+assert.match(staticAppSource, /inputCurrency === 'USD' \? 'out_of_scope'/u,
+  "USD sales invoices must be rendered as tax out of scope");
+assert.match(staticAppSource, /accessories\.length \? `付属品:/u,
+  "sales invoice descriptions must include product accessories");
+assert.match(apiBridgeSource, /async function appendProductImages\(item, files = \[\]\)/u,
+  "product registration must append selected images to an existing managed product");
+assert.match(staticAppSource, /async function _puSaveMatchedProductImages\(existingItem\)/u,
+  "the product registration save action must persist staged images for an existing management number");
 const reactEntrySource = await readFile(path.join(frontendRoot, "src", "App.jsx"), "utf8");
 const reactMainSource = await readFile(path.join(frontendRoot, "src", "main.jsx"), "utf8");
 assert.equal(reactEntrySource.includes("<iframe"), false, "the canonical React entry must not frame the reference UI");
@@ -47,6 +74,8 @@ assert.match(marketCssSource, /\.market-date-range\s*\{[\s\S]*?grid-template-col
   "market date range must allow both date inputs to shrink inside their grid cell");
 assert.match(marketCssSource, /\.market-date-range \.inv-filter-input\s*\{[\s\S]*?min-width:\s*0/u,
   "market date inputs must not overlap the adjacent brand filter");
+assert.match(marketCssSource, /\.market-table th,[\s\S]*?overflow-wrap:\s*anywhere[\s\S]*?text-overflow:\s*clip[\s\S]*?white-space:\s*normal/u,
+  "market table text columns must show complete values instead of ellipsis truncation");
 
 let html = await readFile(path.join(referenceRoot, "app.html"), "utf8");
 html = html.replace(/<link\b[^>]*>/gi, "");
@@ -293,7 +322,7 @@ document.getElementById("medit-invoice").value = "T9999999999";
 window.saveMasterEdit();
 assert.equal(window.eval("APP_DATA.suppliers.some(supplier => supplier.code === 'S999')"), true, "supplier master additions must update APP_DATA");
 assert.equal(window.eval("APP_DATA.clientCompanies.some(company => company.supplierCode === 'S999' && company.invoice === 'T9999999999')"), true, "supplier additions must create the linked client company with invoice data");
-for (const selectId of ["market-f-supplier", "inv-f-supplier", "pu-supplier", "pe-supplier"]) {
+for (const selectId of ["inv-f-supplier", "pu-supplier", "pe-supplier"]) {
   assert.ok([...document.getElementById(selectId).options].some(option => option.value === "S999"), `${selectId} must use the shared supplier master`);
 }
 assert.match(window.localStorage.getItem("inv_supplier_master_v1"), /Codex Test Supplier/u, "supplier master changes must persist locally");
@@ -314,7 +343,6 @@ document.getElementById("medit-code").value = "S101";
 window.saveMasterEdit();
 assert.equal(window.eval("APP_DATA.inventory.some(item => item.supplier === 'S001')"), false, "supplier code edits must update inventory references");
 assert.equal(window.eval("APP_DATA.inventory.some(item => item.supplier === 'S101')"), true);
-assert.equal(window.eval("APP_DATA.marketPrices.some(item => item.supplier === 'S101')"), true, "supplier code edits must update market table references");
 const supplierCountBeforeBlockedDelete = window.eval("APP_DATA.suppliers.length");
 window.showDeleteMasterModal("supplier", supplierS001Index);
 window.confirmMasterDelete();
@@ -328,7 +356,6 @@ window.showDeleteMasterModal("supplier", temporarySupplierIndex);
 window.confirmMasterDelete();
 assert.equal(window.eval("APP_DATA.suppliers.length"), initialSupplierCount, "unused suppliers must be removable from the shared master");
 assert.equal(window.eval("APP_DATA.clientCompanies.some(company => company.supplierCode === 'S998')"), false, "removing an unused supplier must remove its automatic client-company link");
-assert.equal([...document.getElementById("market-f-supplier").options].some(option => option.value === "S998"), false, "deleted suppliers must disappear from search options");
 window.localStorage.removeItem("inv_supplier_master_v1");
 window.eval("APP_DATA.supplierAliases = {};");
 
@@ -352,7 +379,7 @@ assert.equal(document.getElementById("medit-code").value, "STF-006", "the next s
 document.getElementById("medit-name").value = "共通担当者テスト";
 window.saveMasterEdit();
 assert.equal(window.eval("APP_DATA.users.some(user => user.staffCode === 'STF-006' && user.name === '共通担当者テスト')"), true, "adding purchase staff must create the matching worker account");
-for (const selectId of ["market-f-staff", "inv-f-staff", "pu-staff", "pe-staff"]) {
+for (const selectId of ["inv-f-staff", "pu-staff", "pe-staff"]) {
   assert.equal([...document.getElementById(selectId).options].some(option => option.value === "共通担当者テスト"), true, `${selectId} must use the shared purchase staff master`);
 }
 const temporaryStaffIndex = window.eval("APP_DATA.staffRecords.findIndex(record => record.code === 'STF-006')");
@@ -373,6 +400,8 @@ assert.equal(window.eval("APP_DATA.users.some(user => user.staffCode === 'STF-00
 
 const initialMaterialCount = window.eval("APP_DATA.materials.length");
 const initialMovementCount = window.eval("APP_DATA.movements.length");
+const initialBeltMaterialCount = window.eval("APP_DATA.beltMaterialRecords.length");
+const initialDialCount = window.eval("APP_DATA.dialRecords.length");
 window.switchMasterTab("material");
 assert.match(document.getElementById("masterContentArea").textContent, /共通素材マスタ/u);
 window.showAddMasterModal("material");
@@ -393,6 +422,21 @@ for (const selectId of ["market-f-movement", "inv-f-movement", "pu-movement", "p
 }
 assert.match(window.localStorage.getItem("inv_product_spec_master_v1"), /共通素材テスト/u, "material master changes must persist locally");
 assert.match(window.localStorage.getItem("inv_product_spec_master_v1"), /共通駆動テスト/u, "movement master changes must persist locally");
+window.switchMasterTab("belt");
+assert.match(document.getElementById("masterContentArea").textContent, /共通ベルト素材マスタ/u);
+window.showAddMasterModal("belt");
+assert.equal(document.getElementById("medit-code").value, "BLT-006");
+document.getElementById("medit-name").value = "セラミック";
+window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.beltMaterialRecords.at(-1).code"), "BLT-006");
+window.switchMasterTab("dial");
+assert.match(document.getElementById("masterContentArea").textContent, /共通文字盤マスタ/u);
+window.showAddMasterModal("dial");
+assert.equal(document.getElementById("medit-code").value, "DIA-006");
+document.getElementById("medit-name").value = "シャンパン";
+window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.dialRecords.at(-1).code"), "DIA-006");
+window.eval(`APP_DATA.beltMaterialRecords.splice(${initialBeltMaterialCount}); APP_DATA.dialRecords.splice(${initialDialCount});`);
 
 const specInventory = window.eval("APP_DATA.inventory");
 const originalMaterial = specInventory[0].material;
@@ -889,27 +933,36 @@ window.eval(`APP_DATA.purchaseSlips.splice(${dashboardPurchaseLength})`);
 window.eval(`APP_DATA.sales.splice(${dashboardSalesLength})`);
 window.init_dashboard();
 assert.equal(document.getElementById("salesTotalDisplay").textContent.trim(), "$0");
-assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), "¥0");
+assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), "$0");
 
 window.navigateTo("shipping");
 window.resetShippingForm();
 const shippingCodeInput = document.querySelector('#shippingLines [id^="sh-code-"]');
 const shippingLineId = shippingCodeInput.id.replace("sh-code-", "");
 const shippingPriceInput = document.getElementById(`sh-price-${shippingLineId}`);
-const shippingInventoryItem = inventory.find(item => item.status === "在庫中" && Number(item.purchasePrice) > 0);
-assert.ok(shippingInventoryItem, "shipping autofill test requires an in-stock item with a purchase price");
+const shippingInventoryItem = inventory.find(item => item.status === "在庫中" && Number(item.salePrice) > 0);
+assert.ok(shippingInventoryItem, "shipping autofill test requires an in-stock item with a sale price");
 shippingCodeInput.value = shippingInventoryItem.code;
 window.autoFillItem(shippingCodeInput, Number(shippingLineId), "shipping");
-const expectedPurchasePriceJpy = shippingInventoryItem.purchasePrice;
-assert.equal(window.getPriceValue(shippingPriceInput), expectedPurchasePriceJpy,
-  "shipping purchase amount must be filled from the inventory purchase price without currency conversion");
-assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), window.formatPrice(expectedPurchasePriceJpy),
-  "shipping total must update after purchase-price autofill");
+const expectedSalePriceUsd = shippingInventoryItem.salePrice;
+assert.equal(window.getShippingLinePriceUSD(shippingPriceInput), expectedSalePriceUsd,
+  "shipping amount must be filled from the inventory USD sale price");
+assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), window.formatSalePrice(expectedSalePriceUsd),
+  "shipping total must update after sale-price autofill");
+const shippingRate = window.getShippingFormRate();
+window.switchShippingEntryCurrency("JPY");
+const expectedSalePriceJpy = window.roundShippingJPYToThousand(expectedSalePriceUsd * shippingRate);
+assert.equal(window.getPriceValue(shippingPriceInput), expectedSalePriceJpy,
+  "each shipping line converted to JPY must be rounded up to the nearest 1,000 yen");
+assert.equal(window.roundShippingJPYToThousand(1552500), 1553000,
+  "a converted amount with a 1-999 yen remainder must round up to the next 1,000 yen");
+assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), window.formatPrice(expectedSalePriceJpy));
+window.switchShippingEntryCurrency("USD");
 shippingCodeInput.value = "";
 window.autoFillItem(shippingCodeInput, Number(shippingLineId), "shipping");
 assert.equal(window.getPriceValue(shippingPriceInput), 0,
-  "clearing the inventory code must also clear the linked purchase price");
-assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), "¥0");
+  "clearing the inventory code must also clear the linked sale price");
+assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), "$0");
 
 assert.equal(typeof window.persistGuestSnapshot, "function");
 assert.equal(typeof window.unpublishGuestProducts, "function");
@@ -1011,7 +1064,8 @@ assert.match(apiBridgeSource, /const sourceSale = saleDetails\.find/u,
 assert.match(appSource, /unpublishGuestProducts\(soldProductCodes\)/u, "confirmed sales must automatically unpublish sold products");
 assert.match(appSource, /unpublishGuestProducts\(shippedProductCodes\)/u, "confirmed shipments must automatically unpublish shipped products");
 assert.match(approvalSource, /unpublishGuestProducts\(soldProductCodes\)/u, "approved worker sales must automatically unpublish sold products");
-assert.match(appSource, /formatPrice\(totalPurchasePrice\)/u, "shipping print total must use JPY");
+assert.match(appSource, /getShippingSaleTotalUSD/u, "shipping totals must use the saved sale-price snapshot");
+assert.match(appSource, /roundShippingJPYToThousand/u, "shipping JPY conversion must round each product up to 1,000 yen");
 assert.match(appSource, /formatSalePrice\(total\)/u, "sales invoice total must use USD");
 assert.equal(appSource.includes("formatPrice(rec.total)"), false, "sales and shipping detail totals must not use JPY formatting");
 assert.equal(appSource.includes("r.guestName.includes"), false, "shipping must never locate a buyer by guest/company name");
@@ -1049,6 +1103,17 @@ assert.equal(document.getElementById("itemDetailModal").classList.contains("hidd
 assert.match(document.getElementById("itemDetailTitle").textContent, new RegExp(inventory[0].code));
 assert.match(document.getElementById("itemDetailBody").textContent, /\$5,484/u, "item detail purchase price must follow the selected USD display");
 assert.match(document.getElementById("itemDetailBody").textContent, /¥1,180,015/u, "item detail sale price must follow the selected JPY display");
+const itemDetailInfoPanel = document.getElementById("itemDetailInfoPanel");
+const itemGallery = itemDetailInfoPanel.querySelector(".item-gallery");
+assert.equal(itemDetailInfoPanel.lastElementChild, itemGallery, "product image gallery must be the final section of item information");
+assert.equal(itemGallery.querySelectorAll(".gallery-thumb-button").length, inventory[0].images.length,
+  "all product images must be rendered as accessible thumbnails");
+assert.equal(itemGallery.querySelector(".gallery-thumb-button.active")?.getAttribute("aria-pressed"), "true",
+  "the selected thumbnail must expose its active state");
+const secondGalleryButton = itemGallery.querySelectorAll(".gallery-thumb-button")[1];
+window.switchGalleryMain(secondGalleryButton.querySelector("img").src, secondGalleryButton);
+assert.equal(secondGalleryButton.classList.contains("active"), true, "thumbnail selection must update the active image");
+assert.equal(secondGalleryButton.getAttribute("aria-pressed"), "true", "thumbnail selection must update aria-pressed");
 assert.equal(typeof window.switchItemDetailTab, "function", "item detail must expose a tab switcher");
 assert.equal(typeof window.downloadInventoryProductTag, "function", "product tag must be downloadable");
 assert.equal(typeof window.printInventoryProductTag, "function", "product tag must be printable");
@@ -1172,19 +1237,38 @@ assert.deepEqual(
 window.toggleInventoryStatusSort();
 assert.equal(document.getElementById("inv-status-sort-th").getAttribute("aria-sort"), "none");
 
+const originalEditImages = [...(inventory[0].images || [])];
+const originalEditImageFiles = inventory[0].imageFiles;
+inventory[0].images = ["/api/v1/product-files/fil_edit_1", "/api/v1/product-files/fil_edit_2"];
+inventory[0].imageFiles = [
+  { id: "fil_edit_1", url: inventory[0].images[0], originalName: "front.jpg", sortOrder: 0 },
+  { id: "fil_edit_2", url: inventory[0].images[1], originalName: "back.jpg", sortOrder: 1 },
+];
 window.openItemEdit(inventory[0].code);
 assert.equal(document.getElementById("ie-salePrice").value, "7,613", "inventory edit must show the USD value with thousands separators");
 assert.match(document.querySelector('label[for="ie-salePrice"]')?.textContent || document.getElementById("ie-salePrice").previousElementSibling?.textContent || "", /USD/u);
+assert.equal(document.getElementById("ie-image-count").textContent, "2 / 10枚", "inventory edit must load the product's existing images");
+assert.equal(document.querySelectorAll("#ie-image-grid .item-edit-image-card").length, 2);
+window.moveItemEditImage(1, -1);
+assert.match(document.querySelector("#ie-image-grid .item-edit-image-preview").src, /fil_edit_2$/u, "image order controls must update the preview order");
+window.removeItemEditImage(1);
+assert.equal(document.getElementById("ie-image-count").textContent, "1 / 10枚", "image deletion must remain staged in the edit modal");
+window.handleItemEditImageFiles([new window.File(["image"], "replacement.webp", { type: "image/webp" })]);
+assert.equal(document.getElementById("ie-image-count").textContent, "2 / 10枚", "valid images must be addable from inventory edit");
+assert.match(document.getElementById("ie-image-grid").textContent, /replacement\.webp/u);
 const inventoryPurchasePriceInput = document.getElementById("ie-purchasePrice");
 inventoryPurchasePriceInput.value = "１２３４５６７";
 window.priceFormatHandler(inventoryPurchasePriceInput);
 assert.equal(inventoryPurchasePriceInput.value, "1,234,567", "integer money input must insert separators while typing");
 assert.equal(window.getPriceValue(inventoryPurchasePriceInput), 1234567, "formatted integer money must retain its numeric value");
-const marketDecimalPriceInput = document.getElementById("me-marketPriceUsd");
-marketDecimalPriceInput.value = "１２３４５６７．８９";
-window.decimalPriceFormatHandler(marketDecimalPriceInput);
-assert.equal(marketDecimalPriceInput.value, "1,234,567.89", "decimal money input must preserve decimals and insert separators");
-assert.equal(window.getDecimalPriceValue(marketDecimalPriceInput), 1234567.89, "formatted decimal money must retain its numeric value");
+window.closeItemEdit();
+inventory[0].images = originalEditImages;
+inventory[0].imageFiles = originalEditImageFiles;
+const marketWinningBidInput = document.getElementById("me-marketPriceJpy");
+marketWinningBidInput.value = "１２３４５６７";
+window.priceFormatHandler(marketWinningBidInput);
+assert.equal(marketWinningBidInput.value, "1,234,567", "JPY winning bid input must insert separators while typing");
+assert.equal(window.getPriceValue(marketWinningBidInput), 1234567, "formatted JPY winning bid must retain its numeric value");
 assert.equal(document.getElementById("pu-bracelet-qty").type, "number", "quantities must remain unformatted numeric inputs");
 
 const sales = window.eval("APP_DATA.sales");
@@ -1208,9 +1292,17 @@ assert.match(document.getElementById("pu-existing-banner").textContent, /管理�
 assert.match(document.getElementById("pu-existing-banner").textContent, /既に在庫登録済み/u);
 assert.match(document.getElementById("pu-existing-banner").textContent, new RegExp(inventory[0].status));
 assert.equal(document.querySelectorAll("#pu-existing-banner .pu-banner-actions button").length, 2);
-window.savePurchase();
+const existingImagesBeforeProductRegistration = [...(inventory[0].images || [])];
+window.eval("uploadedImages[0] = 'blob:product-registration-image'; uploadedImageFiles[0] = new File(['image'], 'registered.webp', { type: 'image/webp' }); renderImageGrid();");
+assert.match(document.querySelector('#page-purchase .btn-primary.btn-lg').textContent, /画像1枚を保存する/u,
+  "selecting an image for an existing management number must expose an explicit image save action");
+await window.savePurchase();
 assert.equal(inventory.length, inventoryCountBeforeExistingLookup, "an existing management number must not create another inventory product");
 assert.equal(purchaseSlips.length, purchaseSlipCountBeforeExistingLookup, "an existing management number must not issue another purchase slip");
+assert.equal(inventory[0].images.length, existingImagesBeforeProductRegistration.length + 1,
+  "the selected image must be appended to the existing product");
+assert.equal(document.getElementById("pu-code").value, "", "successful image save must clear the management number to prevent duplicate submission");
+inventory[0].images = existingImagesBeforeProductRegistration;
 
 const singlePurchaseCode = "20991230001";
 const inventoryCountBeforeSinglePurchase = inventory.length;
@@ -1292,6 +1384,18 @@ purchaseSlips.splice(purchaseSlips.indexOf(savedSinglePurchaseSlip), 1);
 
 window.navigateTo("purchase-entry");
 assert.equal(typeof window.peGetStaffDisplayName, "function", "purchase slips must expose the shared staff-name resolver");
+assert.ok(document.getElementById("pe-tax-domestic"), "purchase entry must expose a domestic purchase switch");
+assert.ok(document.getElementById("pe-tax-overseas"), "purchase entry must expose an overseas purchase switch");
+assert.equal(document.getElementById("pe-tax-domestic").getAttribute("aria-checked"), "true");
+assert.match(document.getElementById("pe-tax-mode-badge").textContent, /消費税（10%）/u);
+assert.ok(document.querySelector('#page-purchase-entry button[onclick="peDownloadCSVTemplate()"]'), "purchase entry must expose a CSV template download");
+assert.ok(document.getElementById("pe-csv-import-button"), "purchase entry must expose CSV detail staging");
+assert.match(document.getElementById("pe-csv-import-button").textContent, /CSV取込/u);
+assert.equal(document.querySelector('#peProductModal button[onclick="peExportProductCSV()"]'), null,
+  "CSV must be handled by the purchase template, not by the per-product modal");
+assert.equal(typeof window.peDownloadCSVTemplate, "function");
+assert.equal(typeof window.peExportProductCSV, "undefined");
+assert.equal(typeof window.peImportCSVText, "function");
 const purchaseStaffRecord = window.eval("APP_DATA.staffRecords[0]");
 const staffDisplaySlip = window.eval("APP_DATA.purchaseSlips[0]");
 const originalStaffValue = staffDisplaySlip.staff;
@@ -1304,6 +1408,14 @@ window.peViewSlip(staffDisplaySlip.id);
 assert.equal(document.getElementById("peViewModalBody").textContent.includes(purchaseStaffRecord.name), true, "purchase-slip details must display the staff name");
 assert.equal(document.getElementById("peViewModalBody").textContent.includes(purchaseStaffRecord.code), false, "purchase-slip details must hide the internal staff code");
 document.getElementById("peViewModal").style.display = "none";
+const purchaseSlipDetailHtml = window.buildSlipDetailBody("purchase", staffDisplaySlip);
+assert.equal(purchaseSlipDetailHtml.includes("${purchaseTax.taxLabel}"), false,
+  "purchase-slip details must render the tax label instead of exposing the template expression");
+assert.match(purchaseSlipDetailHtml, /消費税（10%）/u);
+assert.match(purchaseSlipDetailHtml, /purchase-slip-tax-cell/u,
+  "purchase-slip details must use a dedicated balanced tax column");
+assert.match(purchaseSlipDetailHtml, /purchase-slip-grand-total-row/u,
+  "purchase-slip details must separate subtotal, tax and grand total rows");
 staffDisplaySlip.staff = originalStaffValue;
 window.peRenderList();
 const addLineCountInput = document.getElementById("pe-line-add-count");
@@ -1313,6 +1425,57 @@ assert.equal(addLineCountInput.pattern, "[0-9]*");
 assert.equal(addLineCountInput.value, "1");
 assert.equal(typeof window.peNormalizeAddCountInput, "function");
 assert.equal(typeof window.peHandleAddCountKey, "function");
+const purchaseSaveButton = document.getElementById("pe-save-button");
+assert.ok(purchaseSaveButton, "purchase entry must expose a save button with a stable id");
+
+document.getElementById("pe-date").value = "2099-12-27";
+window.peOnDateChange();
+document.getElementById("pe-supplier").value = window.eval("APP_DATA.suppliers[0].code");
+document.getElementById("pe-staff").value = window.eval("APP_DATA.staffRecords[0].code");
+addLineCountInput.value = "1";
+window.peAddLine();
+window.eval(`
+  _peSlipData.lines[0].sku = "SAVE-RESET-TEST";
+  _peSlipData.lines[0].purchasePrice = 100000;
+  _peSlipData.lines[0].salePrice = 1000;
+  _peSlipData.lines[0].productDetail = { brand: "", model: "Reset Test" };
+`);
+document.querySelector(".pe-sku-input").value = "SAVE-RESET-TEST";
+window.peSetPurchaseTaxMode("overseas");
+
+let purchaseSaveCalls = 0;
+let completePurchaseSave;
+const pendingPurchaseSave = new Promise((resolve) => { completePurchaseSave = resolve; });
+window.ZaikoAPI = {
+  savePurchaseSlip: async () => {
+    purchaseSaveCalls += 1;
+    return pendingPurchaseSave;
+  },
+};
+const firstPurchaseSave = window.peSave();
+const duplicatePurchaseSave = window.peSave();
+assert.equal(purchaseSaveCalls, 1, "a second click while saving must not submit another purchase slip");
+assert.equal(window.eval("_peSlipData.lines[0].productDetail.brand"), "",
+  "purchase registration must reach the API even when the brand is not known yet");
+assert.equal(purchaseSaveButton.disabled, true, "the purchase save button must be disabled while saving");
+assert.equal(purchaseSaveButton.getAttribute("aria-busy"), "true");
+assert.match(purchaseSaveButton.textContent, /登録中/u);
+completePurchaseSave({ record: { slipNumber: "PI-2099-RESET" }, approval: null });
+await Promise.all([firstPurchaseSave, duplicatePurchaseSave]);
+assert.equal(purchaseSaveButton.disabled, false);
+assert.equal(purchaseSaveButton.hasAttribute("aria-busy"), false);
+assert.match(purchaseSaveButton.textContent, /仕入登録する/u);
+assert.equal(document.getElementById("pe-date").value, "", "successful purchase registration must clear the purchase date");
+assert.equal(document.getElementById("pe-supplier").value, "", "successful purchase registration must clear the supplier");
+assert.equal(document.getElementById("pe-staff").value, "", "successful purchase registration must clear the staff member");
+assert.equal(document.querySelectorAll("#pe-detail-tbody tr").length, 0, "successful purchase registration must clear every detail row");
+assert.equal(document.getElementById("pe-line-count").textContent, "0");
+assert.equal(document.getElementById("pe-subtotal-purchase").textContent, "¥0");
+assert.equal(document.getElementById("pe-total-purchase").textContent, "¥0");
+assert.equal(document.getElementById("pe-total-sale").textContent, "$0");
+assert.equal(addLineCountInput.value, "1");
+assert.equal(document.getElementById("pe-tax-domestic").getAttribute("aria-checked"), "true", "a new purchase form must restore domestic tax mode");
+delete window.ZaikoAPI;
 
 addLineCountInput.value = "１２a";
 window.peNormalizeAddCountInput(addLineCountInput);
@@ -1349,6 +1512,104 @@ assert.deepEqual(
   "product codes must be reissued sequentially after a middle row is deleted",
 );
 
+const csvDownloadNames = [];
+const originalPurchaseCSVAnchorClick = window.HTMLAnchorElement.prototype.click;
+window.HTMLAnchorElement.prototype.click = function capturePurchaseCSVDownload() {
+  csvDownloadNames.push(this.download);
+};
+const purchaseCSVTemplate = window.peDownloadCSVTemplate();
+assert.equal(csvDownloadNames.at(-1), "仕入伝票_CSVテンプレート.csv");
+assert.deepEqual(
+  [...purchaseCSVTemplate.rows[0]],
+  [
+    "仕入日", "仕入先コード", "仕入担当者コード", "仕入区分",
+    "SKU", "売価（USD）", "仕入金額（JPY・税抜）", "ブランドコード", "モデル名", "型番（Ref.）", "シリアルNo.",
+    "素材コード", "駆動方式コード", "ベルト素材コード", "文字盤コード", "特徴・備考",
+  ],
+  "the purchase template must contain only user-entered fields and stable master codes",
+);
+assert.equal(purchaseCSVTemplate.rows.length, 2, "the purchase template must include one editable sample row");
+assert.equal(purchaseCSVTemplate.rows[1].length, purchaseCSVTemplate.rows[0].length);
+assert.match(purchaseCSVTemplate.rows[1][0], /^\d{4}-\d{2}-\d{2}$/u);
+assert.match(purchaseCSVTemplate.rows[1][1], /^S\d+/u, "the purchase sample must use a supplier master code");
+assert.match(purchaseCSVTemplate.rows[1][13], /^BLT-/u, "the purchase sample must use a belt-material master code");
+assert.match(purchaseCSVTemplate.rows[1][14], /^DIA-/u, "the purchase sample must use a dial master code");
+for (const removedColumn of ["仕入伝票番号", "伝票備考", "明細No.", "管理番号", "ブランド名", "コンディションコード", "コンディション名（参照用）", "BOX番号", "付属品", "BRACELET PARTS数量"]) {
+  assert.equal(purchaseCSVTemplate.rows[0].includes(removedColumn), false, `${removedColumn} must not remain in the purchase CSV template`);
+}
+const marketCSVTemplate = window.marketDownloadTemplate();
+assert.equal(csvDownloadNames.at(-1), "相場表_取込テンプレート.csv");
+assert.equal(marketCSVTemplate.rows.length, 2, "the market template must include one editable sample row");
+assert.equal(marketCSVTemplate.rows[1].length, marketCSVTemplate.rows[0].length);
+assert.match(marketCSVTemplate.rows[1][0], /^\d{4}-\d{2}-\d{2}$/u);
+assert.match(marketCSVTemplate.rows[1][7], /^AUC-/u, "the market sample must use an auction master code");
+const marketTemplateCSVText = marketCSVTemplate.rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\r\n");
+const marketCountBeforeTemplateImport = window.eval("APP_DATA.marketPrices.length");
+const marketTemplateImportResult = window.marketImportCsvText(marketTemplateCSVText, "相場表_取込テンプレート.csv");
+assert.deepEqual({ ...marketTemplateImportResult }, { imported: 0, staged: 1, skipped: 0 }, "the downloaded market sample must stage without saving");
+assert.equal(window.eval("APP_DATA.marketPrices.length"), marketCountBeforeTemplateImport, "market sample staging must not change persisted rows");
+assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), false, "market CSV staging must open the detail preview");
+window.marketCancelCSVImport();
+assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), true);
+const purchaseCSVHeaders = [...purchaseCSVTemplate.rows[0]];
+const supplierForCSV = window.eval("APP_DATA.suppliers[0]");
+const staffForCSV = window.eval("APP_DATA.staffRecords[0]");
+const materialForCSV = window.eval("APP_DATA.materials[0]");
+const movementForCSV = window.eval("APP_DATA.movements[0]");
+const beltMaterialForCSV = window.eval("APP_DATA.beltMaterialRecords[0]");
+const dialForCSV = window.eval("APP_DATA.dialRecords[0]");
+const bulkProductNote = "CSV一括登録,改行付き\n備考";
+const purchaseCSVValues = {
+  "仕入日": "2099-12-29",
+  "仕入先コード": supplierForCSV.code,
+  "仕入担当者コード": staffForCSV.code,
+  "仕入区分": "国内仕入",
+  SKU: "CSV-BULK-001",
+  "仕入金額（JPY・税抜）": "1,234,567",
+  "売価（USD）": "9,876",
+  "ブランドコード": "",
+  "モデル名": "CSV Bulk Model",
+  "型番（Ref.）": "CSV-REF-001",
+  "シリアルNo.": "CSV-SERIAL-001",
+  "素材コード": materialForCSV.code,
+  "駆動方式コード": movementForCSV.code,
+  "ベルト素材コード": beltMaterialForCSV.code,
+  "文字盤コード": dialForCSV.code,
+  "特徴・備考": bulkProductNote,
+};
+const escapeCSVCell = (value) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+const secondPurchaseCSVValues = { ...purchaseCSVValues, SKU: "CSV-BULK-002", "シリアルNo.": "CSV-SERIAL-002", "特徴・備考": "2行目" };
+const purchaseCSVText = [purchaseCSVHeaders, purchaseCSVHeaders.map((header) => purchaseCSVValues[header] || ""), purchaseCSVHeaders.map((header) => secondPurchaseCSVValues[header] || "")]
+  .map((row) => row.map(escapeCSVCell).join(","))
+  .join("\r\n");
+const purchaseCountBeforeBulkCSV = window.eval("APP_DATA.purchaseSlips.length");
+const inventoryCountBeforeBulkCSV = window.eval("APP_DATA.inventory.length");
+const bulkImportSummary = await window.peImportCSVText(purchaseCSVText);
+assert.deepEqual({ ...bulkImportSummary }, { staged: 2, slipCount: 0, productCount: 0, approvalCount: 0 });
+assert.equal(window.eval("APP_DATA.purchaseSlips.length"), purchaseCountBeforeBulkCSV, "CSV staging must not create the purchase slip");
+assert.equal(window.eval("APP_DATA.inventory.length"), inventoryCountBeforeBulkCSV, "CSV staging must not add products to inventory");
+const bulkPurchase = window.eval("_peSlipData");
+assert.ok(bulkPurchase, "the CSV purchase must be loaded into the editable draft");
+assert.equal(document.querySelectorAll("#pe-detail-tbody tr").length, 2, "all CSV rows must be visible in the purchase detail table");
+assert.equal(document.getElementById("pe-date").value, "2099-12-29");
+assert.equal(document.getElementById("pe-supplier").value, supplierForCSV.code);
+assert.match(bulkPurchase.id, /^PI-2099-[0-9]{4}$/u, "the purchase slip number must be generated without a CSV column");
+assert.deepEqual([...bulkPurchase.lines.map((line) => line.lineNo)], [1, 2], "detail numbers must follow CSV row order automatically");
+assert.deepEqual([...bulkPurchase.lines.map((line) => line.code)], ["20991229001", "20991229002"], "management numbers must be generated sequentially without a CSV column");
+assert.equal(bulkPurchase.lines[0].productDetail.brand, "", "CSV purchase registration must allow an unknown brand");
+assert.equal(bulkPurchase.lines[0].productDetail.model, "CSV Bulk Model");
+assert.equal(bulkPurchase.lines[0].productDetail.material, materialForCSV.code);
+assert.equal(bulkPurchase.lines[0].productDetail.movement, movementForCSV.code);
+assert.equal(bulkPurchase.lines[0].productDetail.condition, "", "condition is intentionally outside the purchase CSV");
+assert.equal(bulkPurchase.lines[0].productDetail.belt, beltMaterialForCSV.name, "belt material code must resolve through the master");
+assert.equal(bulkPurchase.lines[0].productDetail.dial, dialForCSV.name, "dial code must resolve through the master");
+assert.deepEqual([...bulkPurchase.lines[0].productDetail.accessories], [], "accessories are intentionally outside the purchase CSV");
+assert.equal(bulkPurchase.lines[0].productDetail.note, bulkProductNote, "quoted multiline notes must survive CSV import");
+assert.equal(bulkPurchase.lines[0].purchasePrice, 1234567);
+assert.equal(bulkPurchase.lines[0].salePrice, 9876);
+window.eval("_peInitNewSlip()");
+window.HTMLAnchorElement.prototype.click = originalPurchaseCSVAnchorClick;
+
 window.navigateTo("master");
 window.switchMasterTab("company");
 window.toggleMCompanyEdit();
@@ -1380,12 +1641,56 @@ assert.match(document.getElementById("mBankViewArea").textContent, /7654321/u);
 const savedShippingTemplateHtml = window.buildShipmentRecordTemplateHTML(window.eval("APP_DATA.shipments[0]"));
 assert.match(savedShippingTemplateHtml, /出荷伝票/u, "saved shipping slips must use the template layout");
 assert.equal(savedShippingTemplateHtml.includes("お振込先"), false);
+const savedConsignment = {
+  id: "CO-TEMPLATE-0001",
+  date: "2099-11-30",
+  destination: window.eval("APP_DATA.shipments[0].destination"),
+  status: "処理済",
+  note: "委託帳票テスト",
+  items: window.eval("APP_DATA.shipments[0].items.slice(0, 1)"),
+};
+window.eval("APP_DATA.consignments").push(savedConsignment);
+const savedConsignmentTemplateHtml = window.buildConsignmentRecordTemplateHTML(savedConsignment);
+assert.match(savedConsignmentTemplateHtml, /委託伝票/u, "saved consignment slips must use the shipping template layout");
+assert.match(savedConsignmentTemplateHtml, /委託日/u);
+assert.match(savedConsignmentTemplateHtml, /委託先/u);
+assert.match(savedConsignmentTemplateHtml, /明細表/u);
+assert.equal(savedConsignmentTemplateHtml.includes("お振込先"), false);
 const savedPurchase = window.eval("APP_DATA.purchaseSlips[0]");
 const savedPurchaseTemplateHtml = window.buildPurchaseRecordTemplateHTML(savedPurchase);
 assert.match(savedPurchaseTemplateHtml, /仕入伝票/u, "saved purchase slips must use the template layout");
 assert.match(savedPurchaseTemplateHtml, /明細表/u);
+assert.equal(savedPurchaseTemplateHtml.includes("SKU:"), false, "saved purchase slips must not display SKU");
+assert.match(savedPurchaseTemplateHtml, /付属品: BOX・GUARANTEE/u, "saved purchase slips must display accessories in the description");
+assert.match(savedPurchaseTemplateHtml, /消費税（10%）/u, "saved domestic purchase slips must reproduce the 10% tax category");
 assert.equal(savedPurchaseTemplateHtml.includes("お振込先"), false);
 assert.match(savedPurchaseTemplateHtml, new RegExp(companyInfo.companyName));
+const currentPurchaseLine = savedPurchase.lines.find((line) => inventory.some((item) => item.code === line.code));
+assert.ok(currentPurchaseLine, "a saved purchase line must stay linked to its inventory product by management number");
+const currentPurchaseProduct = inventory.find((item) => item.code === currentPurchaseLine.code);
+const originalPurchaseProductDetails = {
+  brand: currentPurchaseProduct.brand,
+  model: currentPurchaseProduct.model,
+  ref: currentPurchaseProduct.ref,
+  serial: currentPurchaseProduct.serial,
+  accessories: [...(currentPurchaseProduct.accessories || [])],
+};
+Object.assign(currentPurchaseProduct, {
+  brand: "更新後ブランド",
+  model: "更新後モデル",
+  ref: "UPDATED-REF",
+  serial: "UPDATED-SERIAL",
+  accessories: ["CASE"],
+});
+const updatedPurchaseTemplateHtml = window.buildPurchaseRecordTemplateHTML(savedPurchase);
+const updatedPurchaseDetailHtml = window.buildSlipDetailBody("purchase", savedPurchase);
+assert.match(updatedPurchaseTemplateHtml, /更新後ブランド \/ 更新後モデル/u,
+  "purchase print previews must show the latest linked product brand and model");
+assert.match(updatedPurchaseTemplateHtml, /UPDATED-REF/u);
+assert.match(updatedPurchaseTemplateHtml, /付属品: CASE/u);
+assert.match(updatedPurchaseDetailHtml, /更新後ブランド/u,
+  "purchase detail popups must show later product edits without rewriting the historical snapshot");
+Object.assign(currentPurchaseProduct, originalPurchaseProductDetails);
 const savedSalesTemplateHtml = window.buildSalesRecordTemplateHTML(window.eval("APP_DATA.sales[0]"));
 assert.match(savedSalesTemplateHtml, /請求書/u, "saved sales slips must use the invoice template layout");
 assert.match(savedSalesTemplateHtml, /お振込先/u);
@@ -1409,6 +1714,7 @@ window.HTMLAnchorElement.prototype.click = function captureSavedSlipDownload() {
 const savedSlipCases = [
   { type: "purchase", record: savedPurchase, title: /仕入伝票プレビュー/u, filename: `${savedPurchase.id}_仕入伝票.html` },
   { type: "shipping", record: window.eval("APP_DATA.shipments[0]"), title: /出荷伝票プレビュー/u, filename: `${window.eval("APP_DATA.shipments[0].id")}_出荷伝票.html` },
+  { type: "consignment", record: savedConsignment, title: /委託伝票プレビュー/u, filename: `${savedConsignment.id}_委託伝票.html` },
   { type: "sales", record: window.eval("APP_DATA.sales[0]"), title: /請求書（売上伝票）プレビュー/u, filename: `${window.eval("APP_DATA.sales[0].id")}_請求書.html` },
 ];
 for (const savedSlipCase of savedSlipCases) {
@@ -1542,6 +1848,8 @@ window.URL.revokeObjectURL = originalRevokeObjectURL;
 window.closeSalesReturnInvoice();
 salesReturn.total = savedReturnTotal;
 salesReturn.items[0].salePrice = savedReturnItemPrice;
+document.getElementById("pe-line-add-count").value = "1";
+window.peAddLine();
 window.eval(`
   _peSlipData.lines[0].sku = "TPL-PURCHASE";
   _peSlipData.lines[0].purchasePrice = 123456;
@@ -1554,22 +1862,129 @@ window.eval(`
   };
 `);
 document.getElementById("pe-supplier").value = "S001";
+window.peSetPurchaseTaxMode("domestic");
+window.eval("_peUpdateDetailUI()");
+assert.match(document.querySelector('[data-role="pe-line-tax-label"]').textContent, /消費税（10%）/u);
+assert.equal(document.querySelector('[data-role="pe-line-tax-amount"]').textContent.trim(), "¥12,345");
+assert.equal(document.getElementById("pe-total-tax").textContent, "¥12,345");
+assert.equal(document.getElementById("pe-total-purchase").textContent, "¥135,801");
 window.pePrintPreview();
 const purchasePrintHtml = document.getElementById("pePrintPreviewContent").innerHTML;
 assert.match(purchasePrintHtml, /仕入伝票/u);
 assert.match(purchasePrintHtml, /明細表/u);
 assert.match(purchasePrintHtml, /¥123,456/u, "purchase slips must print the purchase amount");
+assert.match(purchasePrintHtml, /¥12,345/u, "domestic purchase slips must print each line's 10% consumption tax");
+assert.match(purchasePrintHtml, /¥135,801/u, "domestic purchase slips must print the tax-inclusive total");
+assert.match(purchasePrintHtml, /商品点数：1点/u, "purchase slips must display the number of products");
+assert.match(purchasePrintHtml, /\.tpl-cover-total span\{[^}]*white-space:nowrap/u, "purchase total labels must remain on one line");
+assert.equal(purchasePrintHtml.includes("SKU:"), false, "purchase slip previews must not display SKU");
+assert.match(purchasePrintHtml, /付属品: BOX・GUARANTEE/u, "purchase slip previews must display accessories in the description");
 assert.match(purchasePrintHtml, new RegExp(companyInfo.companyName));
 assert.match(purchasePrintHtml, new RegExp(companyInfo.address));
 assert.equal(purchasePrintHtml.includes("お振込先"), false, "purchase slips must not print bank details");
 window.peclosePrintModal();
+window.peSetPurchaseTaxMode("overseas");
+assert.equal(document.getElementById("pe-tax-overseas").getAttribute("aria-checked"), "true");
+assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "対象外");
+assert.equal(document.getElementById("pe-total-tax").textContent.trim(), "対象外");
+assert.equal(document.getElementById("pe-total-purchase").textContent, "$123,456");
+assert.match(document.getElementById("pe-purchase-price-heading").textContent, /USD/u);
+window.pePrintPreview();
+const overseasPurchasePrintHtml = document.getElementById("pePrintPreviewContent").innerHTML;
+assert.match(overseasPurchasePrintHtml, /対象外/u, "overseas purchase slip tax cells must be marked out of scope");
+assert.match(overseasPurchasePrintHtml, /\$123,456/u, "overseas purchase slips must print the original USD amount");
+assert.match(overseasPurchasePrintHtml, /USD（米ドル）/u, "overseas purchase slips must identify USD as the display currency");
+assert.match(overseasPurchasePrintHtml, /発行日時/u, "purchase slips must label the issuance timestamp explicitly");
+assert.equal(overseasPurchasePrintHtml.includes("¥135,801"), false, "overseas purchases must not add domestic consumption tax");
+window.peclosePrintModal();
+window.peSetPurchaseTaxMode("domestic");
+
+const domesticPurchaseSummarySlip = {
+  id: "PI-SUMMARY-JPY",
+  date: "2026-08-15",
+  supplier: "S001",
+  staff: "管理者",
+  purchaseTaxMode: "domestic",
+  taxRateBasisPoints: 1000,
+  status: "処理済",
+  lines: [{ purchasePrice: 1000 }],
+};
+const overseasPurchaseSummarySlip = {
+  id: "PI-SUMMARY-USD",
+  date: "2026-08-15",
+  supplier: "S003",
+  staff: "管理者",
+  purchaseTaxMode: "overseas",
+  issueFxRateScaled: 99900000000,
+  issueFxScale: 100000000,
+  issuedAt: "2026-08-15T10:00:00+09:00",
+  status: "処理済",
+  lines: [{
+    purchasePrice: 100,
+    convertedPurchasePriceJpy: 16000,
+    purchaseFxRateScaled: 16000000000,
+    purchaseFxScale: 100000000,
+  }],
+};
+assert.equal(window.getPurchaseSlipGrandTotalJPY(domesticPurchaseSummarySlip), 1100);
+assert.equal(window.getPurchaseSlipGrandTotalJPY(overseasPurchaseSummarySlip), 16000);
+overseasPurchaseSummarySlip.issueFxRateScaled = 20000000000;
+overseasPurchaseSummarySlip.issueFxScale = 100000000;
+overseasPurchaseSummarySlip.issuedAt = "2026-08-15T12:00:00+09:00";
+assert.equal(window.getPurchaseSlipGrandTotalJPY(overseasPurchaseSummarySlip), 16000,
+  "issuing or reissuing must not change the registration-time JPY conversion");
+window.eval("currentSlipTab = 'purchase'");
+window.renderSlipList([domesticPurchaseSummarySlip, overseasPurchaseSummarySlip]);
+assert.equal(document.getElementById("slipSummaryTotalLabel").textContent, "合計金額（仕入登録時レート換算・JPY）");
+assert.equal(document.getElementById("slipSummaryTotal").textContent, "¥17,100");
+assert.doesNotMatch(document.getElementById("slipSummaryTotal").textContent, /国内|海外|\$/u);
 
 window.navigateTo("shipping");
-const shippingTemplateItem = inventory[0];
+const shippingAvailableItems = inventory.filter(item => item.status === "在庫中");
+assert.ok(shippingAvailableItems.length >= 3, "shipping QR/auto-row tests require at least three available inventory items");
+assert.match(document.querySelector("#page-shipping .shipping-line-header").textContent, /商品管理番号/u);
+assert.equal(document.querySelector("#page-shipping .shipping-line-header").textContent.includes("商品コード"), false);
+const shippingQrButton = document.querySelector('#page-shipping button[onclick="openBarcodeScanner(\'shipping\')"]');
+assert.ok(shippingQrButton, "shipping entry must expose the continuous QR scanner");
+assert.match(shippingQrButton.textContent, /QR連続読取/u);
+
+window.resetShippingForm();
+const firstShippingInput = document.getElementById("sh-code-1");
+firstShippingInput.value = shippingAvailableItems[0].code;
+assert.equal(window.onShippingManagementNumberInput(firstShippingInput, 1), true);
+assert.equal(document.querySelectorAll("#shippingLines .slip-line").length, 2,
+  "manual entry must append a trailing blank row after a valid management number");
+assert.equal(document.getElementById("sh-code-2").value, "");
+assert.equal(window.addShippingItemByCode(shippingAvailableItems[1].code, { notify: false, focusNext: false }), true);
+assert.equal(document.getElementById("sh-code-2").value, shippingAvailableItems[1].code,
+  "the next QR scan must append to the next blank row");
+assert.equal(document.querySelectorAll("#shippingLines .slip-line").length, 3,
+  "continuous QR scans must keep one trailing blank row");
+assert.equal(window.addShippingItemByCode(shippingAvailableItems[1].code, { notify: false }), false,
+  "the same management number must not be added twice");
+let shippingCollected = window.collectShippingItemsForSave();
+assert.deepEqual(shippingCollected.items.map(item => item.code), shippingAvailableItems.slice(0, 2).map(item => item.code));
+assert.equal(shippingCollected.items.some(item => item.code === ""), false,
+  "the trailing blank row must never be included in the saved shipment payload");
+
+window.eval("_barcodeMode = 'shipping'; _barcodeScanCount = 0; _barcodeCooldown = false; _barcodeLastCode = '';");
+document.getElementById("barcodeScanCount").textContent = "0";
+window._onBarcodeDetected(shippingAvailableItems[2].code);
+assert.equal(document.getElementById("sh-code-3").value, shippingAvailableItems[2].code,
+  "camera QR detection must continuously append management numbers");
+assert.equal(document.getElementById("sh-code-4").value, "");
+assert.equal(document.getElementById("barcodeScanCount").textContent, "1");
+
+window.resetShippingForm();
+shippingCollected = window.collectShippingItemsForSave();
+assert.equal(shippingCollected.items.length, 0, "a blank shipment row must not become a shipment item");
+
+const shippingTemplateItem = shippingAvailableItems[0];
 document.getElementById("sh-dest").value = "B001";
 document.getElementById("sh-code-1").value = shippingTemplateItem.code;
-window.autoFillItem(document.getElementById("sh-code-1"), 1, "shipping");
-document.getElementById("sh-price-1").value = "999999";
+window.onShippingManagementNumberInput(document.getElementById("sh-code-1"), 1);
+document.getElementById("sh-price-1").value = "1001";
+window.onShippingPriceInput(document.getElementById("sh-price-1"));
 const downloadClicks = [];
 const originalAnchorClick = window.HTMLAnchorElement.prototype.click;
 window.HTMLAnchorElement.prototype.click = function clickDownloadAnchor() {
@@ -1580,19 +1995,36 @@ assert.match(shippingDownloadButton.textContent, /ダウンロード/u);
 assert.equal(shippingDownloadButton.textContent.includes("CSV"), false, "shipping button must be labelled as download");
 const shippingDownload = window.exportCSV("shipping");
 assert.match(shippingDownload.filename, /^shipping_slip_.*\.csv$/u);
-assert.match(shippingDownload.csv, /仕入金額（JPY・税抜）/u);
-assert.match(shippingDownload.csv, /999999/u, "shipping download must include the entered JPY purchase amount");
+assert.match(shippingDownload.csv, /売価（USD）/u);
+assert.match(shippingDownload.csv, /円換算売価（JPY・1,000円単位切上げ）/u);
+assert.match(shippingDownload.csv, /1001/u, "shipping download must include the entered USD sale amount");
+const expectedShippingDownloadJPY = window.roundShippingJPYToThousand(1001 * window.getShippingFormRate());
+assert.match(shippingDownload.csv, new RegExp(String(expectedShippingDownloadJPY), "u"),
+  "shipping download must include per-item JPY rounding at the fixed rate");
 assert.equal(downloadClicks.at(-1).filename, shippingDownload.filename);
 const shippingPrintHtml = window.buildShipmentSlipHTML();
 assert.match(shippingPrintHtml, /出荷伝票/u);
 assert.match(shippingPrintHtml, /明細表/u);
-assert.match(shippingPrintHtml, /¥999,999/u, "shipping slips must print the entered JPY purchase amount");
+assert.match(shippingPrintHtml, /\$1,001/u, "shipping slips must print the entered USD sale amount");
+assert.match(shippingPrintHtml, /合計金額/u);
+assert.match(shippingPrintHtml, /商品詳細/u);
+assert.match(shippingPrintHtml, /付属品:/u);
+assert.match(shippingPrintHtml, /素材（本体）:/u);
+assert.match(shippingPrintHtml, /駆動方式:/u);
+assert.match(shippingPrintHtml, /ベルト素材:/u);
+assert.equal(shippingPrintHtml.includes("文字盤:"), false, "shipping product detail must not include the dial field");
+assert.equal(shippingPrintHtml.includes("発行日"), false, "shipping slips must not show an issue date");
+window.switchShippingEntryCurrency("JPY");
+const shippingPrintJpyHtml = window.buildShipmentSlipHTML();
+assert.match(shippingPrintJpyHtml, /¥156,000/u, "shipping JPY print must use per-item 1,000-yen rounding");
+window.switchShippingEntryCurrency("USD");
 assert.match(shippingPrintHtml, new RegExp(companyInfo.companyName));
 assert.match(shippingPrintHtml, new RegExp(companyInfo.address));
 assert.equal(shippingPrintHtml.includes("お振込先"), false, "shipping slips must not print bank details");
 
 window.navigateTo("sales");
-assert.equal(document.querySelector('label[for="sl-id"]').textContent.trim(), "出荷伝票番号");
+assert.equal(document.querySelector('label[for="sl-id"]').textContent.trim(), "参照伝票番号");
+assert.match(document.getElementById("sl-id").placeholder, /SH-2026-0001 \/ CO-2026-0001/u);
 assert.equal(window.getSalesUsdRate(), 155, "sales conversion must use the USD rate from master data");
 assert.equal(document.getElementById("sl-currency-usd").getAttribute("aria-pressed"), "true");
 assert.equal(document.getElementById("sl-currency-jpy").getAttribute("aria-pressed"), "false");
@@ -1612,16 +2044,55 @@ assert.equal(document.getElementById("sl-code-1").value, "", "clearing the shipm
 assert.equal(document.getElementById("sl-price-1").value, "", "clearing the shipment number must clear the linked price");
 assert.equal(document.getElementById("sl-note").value, "", "clearing the shipment number must clear the auto-filled shipment note");
 
+const consignmentInventoryItem = window.eval("APP_DATA.inventory.find(item => item.status === '在庫中' && Number(item.salePrice) > 0)");
+assert.ok(consignmentInventoryItem, "an in-stock item with a sale price is required for the consignment-to-sales test");
+const originalConsignmentItemStatus = consignmentInventoryItem.status;
+consignmentInventoryItem.status = "委託中";
+const sourceConsignmentForSales = {
+  id: "CO-2026-0999",
+  date: "2026-08-01",
+  destination: sourceShipmentForClear.destination || "B001",
+  items: [{
+    code: consignmentInventoryItem.code,
+    brand: consignmentInventoryItem.brand,
+    model: consignmentInventoryItem.model,
+  }],
+};
+window.eval("APP_DATA.consignments").push(sourceConsignmentForSales);
+const salesDateBeforeConsignmentLink = document.getElementById("sl-date").value;
+document.getElementById("sl-id").value = sourceConsignmentForSales.id;
+window.onSalesIdInput(sourceConsignmentForSales.id);
+assert.equal(window.eval("_salesSourceShipmentId"), null, "a consignment source must not retain the shipment link");
+assert.equal(window.eval("_salesSourceConsignmentId"), sourceConsignmentForSales.id);
+assert.equal(document.getElementById("sl-id").value, sourceConsignmentForSales.id,
+  "the entered consignment number must remain visible as the source reference");
+assert.equal(document.getElementById("sl-buyer").value, sourceConsignmentForSales.destination,
+  "the consignee must populate the sales destination");
+assert.equal(document.getElementById("sl-code-1").value, consignmentInventoryItem.code);
+assert.notEqual(document.getElementById("sl-price-1").value, "", "the inventory sale price must populate from a consignment slip");
+assert.equal(document.getElementById("sl-date").value, salesDateBeforeConsignmentLink,
+  "linking a consignment must keep the actual sales date instead of copying the consignment date");
+assert.equal(window.canUseInventoryItemForSales(consignmentInventoryItem), true,
+  "a consigned item may be sold only while its source consignment is linked");
+assert.match(document.getElementById("sl-note").value, /委託伝票: CO-2026-0999/u);
+document.getElementById("sl-id").value = "";
+window.onSalesIdInput("");
+assert.equal(window.eval("_salesSourceConsignmentId"), null);
+assert.equal(window.canUseInventoryItemForSales(consignmentInventoryItem), false,
+  "clearing the consignment reference must stop a consigned item from being sold manually");
+window.eval("APP_DATA.consignments").pop();
+consignmentInventoryItem.status = originalConsignmentItemStatus;
+
 const salesPriceInput = document.getElementById("sl-price-1");
 salesPriceInput.value = "1000";
 window.onSalesPriceInput(salesPriceInput);
 assert.equal(salesPriceInput.value, "1,000");
 assert.equal(salesPriceInput.dataset.entryCurrency, "USD");
 assert.equal(document.getElementById("salesTotalDisplay").textContent.trim(), "$1,000");
-assert.equal(document.getElementById("salesTotalTax").textContent.trim(), "$100");
-assert.equal(document.getElementById("salesTotalGrand").textContent.trim(), "$1,100");
+assert.equal(document.getElementById("salesTotalTax").textContent.trim(), "対象外");
+assert.equal(document.getElementById("salesTotalGrand").textContent.trim(), "$1,000");
 assert.match(document.getElementById("salesSubtotalLabel").textContent, /USD/u);
-assert.match(document.getElementById("salesTotalFxReference").textContent, /¥170,500/u);
+assert.match(document.getElementById("salesTotalFxReference").textContent, /¥155,000/u);
 
 window.switchSalesEntryCurrency("JPY");
 assert.equal(document.getElementById("sl-currency-usd").getAttribute("aria-pressed"), "false");
@@ -1650,7 +2121,7 @@ const salesPrintHtml = window.buildSalesSlip2PageHTML();
 assert.match(salesPrintHtml, /請求書/u);
 assert.match(salesPrintHtml, /明細表/u);
 assert.match(salesPrintHtml, /表示通貨：JPY（円）/u);
-assert.match(salesPrintHtml, /基準通貨：USD/u);
+assert.match(salesPrintHtml, /売上登録時に固定予定のレート/u);
 assert.match(salesPrintHtml, /¥310,000/u);
 assert.match(salesPrintHtml, /¥341,000/u);
 assert.match(salesPrintHtml, /消費税（10%）/u);
@@ -1690,13 +2161,14 @@ window.onTaxFreeToggle(false);
 window.switchSalesEntryCurrency("USD");
 assert.equal(salesPriceInput.value, "2,000", "JPY input must round-trip back to the USD base amount");
 assert.equal(document.getElementById("salesTotalDisplay").textContent.trim(), "$2,000");
-assert.equal(document.getElementById("salesTotalTax").textContent.trim(), "$200");
-assert.equal(document.getElementById("salesTotalGrand").textContent.trim(), "$2,200");
-assert.match(document.getElementById("salesTotalFxReference").textContent, /¥341,000/u);
+assert.equal(document.getElementById("salesTotalTax").textContent.trim(), "対象外");
+assert.equal(document.getElementById("salesTotalGrand").textContent.trim(), "$2,000");
+assert.match(document.getElementById("salesTotalFxReference").textContent, /¥310,000/u);
 const usdSalesPrintHtml = window.buildSalesSlip2PageHTML();
 assert.match(usdSalesPrintHtml, /表示通貨：USD/u);
 assert.match(usdSalesPrintHtml, /\$2,000/u);
-assert.match(usdSalesPrintHtml, /\$2,200/u);
+assert.match(usdSalesPrintHtml, /税区分：対象外/u);
+assert.equal(usdSalesPrintHtml.includes("$2,200"), false, "USD invoices must not add consumption tax");
 window.switchSalesEntryCurrency("JPY");
 
 const saleInventoryItem = inventory.find((item) => item.status === "在庫中");
@@ -1723,40 +2195,52 @@ window.navigateTo("market");
 const marketRows = window.eval("APP_DATA.marketPrices");
 assert.equal(marketRows.length, inventory.length, "market preview must start from inventory rows");
 assert.equal(document.querySelectorAll("#marketTableBody tr").length, inventory.length);
-assert.match(document.getElementById("marketTableBody").textContent, /\$/u, "market prices must display in USD");
-assert.match(document.querySelector("#page-market thead").textContent, /取り込み日付/u);
-assert.match(document.querySelector("#page-market thead").textContent, /仕入れ価格/u);
-assert.match(document.querySelector("#page-market thead").textContent, /相場価格（USD）/u);
-assert.doesNotMatch(document.querySelector("#page-market thead").textContent, /シリアル|仕入日|ステータス|BOX/u);
-assert.match(document.querySelector("#page-market thead").textContent, /担当者/u, "purchase staff must remain in the market table");
+assert.doesNotMatch(document.getElementById("marketTableBody").textContent, /\$/u, "winning bid prices must be displayed in JPY only");
+assert.match(document.querySelector("#page-market thead").textContent, /オークション開催日/u);
+assert.match(document.querySelector("#page-market thead").textContent, /オークション名/u);
+assert.match(document.querySelector("#page-market thead").textContent, /落札価格（JPY）/u);
+assert.match(document.querySelector("#page-market thead").textContent, /備考/u);
+assert.doesNotMatch(document.querySelector("#page-market thead").textContent, /シリアル|仕入日|仕入れ価格|担当者|ステータス|BOX/u);
 assert.equal(document.getElementById("market-f-serial"), null, "market filters must not include serial number");
-assert.notEqual(document.getElementById("market-f-staff"), null, "purchase staff filter must remain in the market table");
+assert.equal(document.getElementById("market-f-staff"), null, "market filters must not include staff");
+assert.equal(document.getElementById("market-f-supplier"), null, "market filters must not include supplier");
+const marketAuctionFilter = document.getElementById("market-f-auction");
+assert.notEqual(marketAuctionFilter, null, "market filters must include auction name");
+const auctionMasters = window.eval("APP_DATA.auctionRecords");
+assert.deepEqual(
+  [...marketAuctionFilter.options].map(option => option.value),
+  ["", ...auctionMasters.map(record => record.code)],
+  "auction filter values must use stable master codes",
+);
+assert.deepEqual(
+  [...marketAuctionFilter.options].map(option => option.textContent),
+  ["すべて", ...auctionMasters.map(record => record.name)],
+  "auction filter labels must come from the auction master",
+);
+marketRows[0].auctionCode = auctionMasters[0].code;
+marketRows[0].auctionName = "旧オークション名";
+window.init_market();
+assert.equal(marketRows[0].auctionName, auctionMasters[0].name, "market row name must follow the current master name");
+marketAuctionFilter.value = auctionMasters[0].code;
+window.marketApplyFilters();
+const expectedAuctionRows = marketRows.filter(row => row.auctionCode === auctionMasters[0].code).length;
+assert.equal(document.querySelectorAll("#marketTableBody tr").length, expectedAuctionRows, "auction filter must match by master code");
+assert.match(document.getElementById("marketTableBody").textContent, new RegExp(auctionMasters[0].name, "u"));
+window.marketResetFilters();
 assert.equal(document.getElementById("market-f-status"), null, "market filters must not include inventory status");
-for (const removedKey of ["serial", "purchaseDate", "status", "box"]) {
+for (const removedKey of ["serial", "purchaseDate", "purchasePrice", "staff", "supplier", "status", "box"]) {
   assert.equal(document.querySelector(`#market-column-panel input[value="${removedKey}"]`), null, `${removedKey} must not be a market column option`);
   assert.equal(document.querySelector(`#marketTable [data-market-col="${removedKey}"]`), null, `${removedKey} must not be rendered in the market table`);
 }
-assert.equal(document.getElementById("market-purchase-jpy").getAttribute("aria-pressed"), "true");
-assert.equal(document.getElementById("market-purchase-usd").getAttribute("aria-pressed"), "false");
-assert.equal(document.getElementById("market-price-jpy").getAttribute("aria-pressed"), "false");
-assert.equal(document.getElementById("market-price-usd").getAttribute("aria-pressed"), "true");
-assert.equal(document.querySelector('#marketTableBody td[data-market-col="purchasePrice"]').textContent.trim(), "¥850,000");
-assert.equal(document.querySelector('#marketTableBody td[data-market-col="marketPrice"]').textContent.trim(), "$7,900");
-
-window.marketSwitchPriceCurrency("purchase", "USD");
-window.marketSwitchPriceCurrency("market", "JPY");
-assert.equal(document.getElementById("market-purchase-heading").textContent, "仕入れ価格（USD）");
-assert.equal(document.getElementById("market-price-heading").textContent, "相場価格（JPY）");
-assert.equal(document.getElementById("market-purchase-usd").getAttribute("aria-pressed"), "true");
-assert.equal(document.getElementById("market-price-jpy").getAttribute("aria-pressed"), "true");
-assert.equal(document.querySelector('#marketTableBody td[data-market-col="purchasePrice"]').textContent.trim(), "$5,484");
+assert.equal(document.getElementById("market-purchase-jpy"), null);
+assert.equal(document.getElementById("market-price-usd"), null);
+assert.equal(document.getElementById("market-price-heading").textContent, "落札価格（JPY）");
 assert.equal(document.querySelector('#marketTableBody td[data-market-col="marketPrice"]').textContent.trim(), "¥1,224,500");
-assert.equal(marketRows[0].purchasePrice, 850000, "display currency changes must not modify the JPY purchase value");
-assert.equal(marketRows[0].marketPriceUsd, 7900, "display currency changes must not modify the USD market value");
+assert.equal(marketRows[0].marketPriceJpy, 1224500, "legacy preview prices must normalize to JPY once");
 
 window.marketToggleColumnMenu({ stopPropagation() {} });
 assert.equal(document.getElementById("market-column-trigger").getAttribute("aria-expanded"), "true");
-const marketHiddenKeys = ["purchasePrice", "marketPrice"];
+const marketHiddenKeys = ["marketPrice", "note"];
 for (const key of marketHiddenKeys) {
   const checkbox = document.querySelector(`#market-column-panel input[value="${key}"]`);
   checkbox.checked = false;
@@ -1764,14 +2248,11 @@ for (const key of marketHiddenKeys) {
   assert.equal(document.querySelector(`th[data-market-col="${key}"]`).classList.contains("market-col-hidden"), true);
   assert.equal(document.querySelector(`#marketTableBody td[data-market-col="${key}"]`).classList.contains("market-col-hidden"), true);
 }
-assert.equal(document.getElementById("market-column-count").textContent, "9/11");
+assert.equal(document.getElementById("market-column-count").textContent, "8/10");
 window.marketShowAllColumns();
-assert.equal(document.getElementById("market-column-count").textContent, "11/11");
+assert.equal(document.getElementById("market-column-count").textContent, "10/10");
 assert.equal(document.querySelectorAll("#marketTable .market-col-hidden").length, 0);
 window.marketCloseColumnMenu();
-window.marketSwitchPriceCurrency("purchase", "JPY");
-window.marketSwitchPriceCurrency("market", "USD");
-
 const firstMarketId = marketRows[0].id;
 window.marketOpenEdit(firstMarketId);
 assert.equal(document.getElementById("marketEditModal").classList.contains("hidden"), false, "market edit modal must open");
@@ -1779,24 +2260,42 @@ assert.equal(document.getElementById("me-purchaseDate"), null, "market edit must
 assert.equal(document.getElementById("me-status"), null, "market edit must not include inventory status");
 assert.equal(document.getElementById("me-box"), null, "market edit must not include BOX assignment");
 assert.equal(document.getElementById("me-serial"), null, "market edit must not include serial number");
-assert.notEqual(document.getElementById("me-staff"), null, "market edit must retain purchase staff");
-document.getElementById("me-marketPriceUsd").value = "8125.5";
+assert.equal(document.getElementById("me-staff"), null, "market edit must not include staff");
+assert.equal(document.getElementById("me-purchasePrice"), null, "market edit must not include purchase price");
+document.getElementById("me-marketPriceJpy").value = "1,259,500";
+document.getElementById("me-auctionCode").value = "AUC-001";
+document.getElementById("me-note").value = "落札結果を確認済み";
 window.marketSaveEdit();
-assert.equal(marketRows[0].marketPriceUsd, 8125.5, "market edit must save USD price");
+assert.equal(marketRows[0].marketPriceJpy, 1259500, "market edit must save JPY winning bid price");
+assert.equal(marketRows[0].auctionName, "東京オークション");
+assert.equal(marketRows[0].auctionCode, "AUC-001");
+assert.equal(marketRows[0].note, "落札結果を確認済み");
 assert.equal(document.getElementById("marketEditModal").classList.contains("hidden"), true, "market edit modal must close after save");
 
 const csvResult = window.marketImportCsvText(
-  "取り込み日付,ブランド,モデル名,型番,仕入先,担当者,仕入れ価格,相場価格（USD）,SKU,付属品\n" +
-  "2026-08-01,オメガ,シーマスター,210.30.42.20.03.001,山田時計店,佐藤 花子,410000,$3650,OMG-SM-001,BOX・GUARANTEE",
+  "オークション開催日,ブランド,モデル名,型番,オークションコード,落札価格（JPY）,SKU,付属品,備考\n" +
+  "2026-08-01,自由入力ブランド,自由入力モデル,自由入力型番,AUC-001,565750,FREE-SKU-001,自由入力付属品,自由入力備考",
   "market-test.csv",
 );
-assert.equal(csvResult.imported, 1);
+const marketCountBeforeCsvPreview = marketRows.length;
+assert.equal(csvResult.imported, 0);
+assert.equal(csvResult.staged, 1);
 assert.equal(csvResult.skipped, 0);
-assert.equal(marketRows.length, inventory.length + 1, "CSV import must append a market row");
+assert.equal(marketRows.length, marketCountBeforeCsvPreview, "market CSV staging must not append a row before confirmation");
+assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), false);
+assert.match(document.getElementById("marketCsvPreviewBody").textContent, /自由入力ブランド/u);
+const marketConfirmResult = await window.marketConfirmCSVImport();
+assert.equal(marketConfirmResult.imported, 1);
+assert.equal(marketRows.length, marketCountBeforeCsvPreview + 1, "market CSV confirmation must append the staged row");
 assert.equal(marketRows.at(-1).importDate, "2026-08-01");
-assert.equal(marketRows.at(-1).purchasePrice, 410000);
-assert.equal(marketRows.at(-1).marketPriceUsd, 3650);
+assert.equal(marketRows.at(-1).auctionName, "東京オークション");
+assert.equal(marketRows.at(-1).auctionCode, "AUC-001");
+assert.equal(marketRows.at(-1).brand, "自由入力ブランド");
+assert.equal(marketRows.at(-1).accessories[0], "自由入力付属品");
+assert.equal(marketRows.at(-1).marketPriceJpy, 565750);
+assert.equal(marketRows.at(-1).note, "自由入力備考");
 assert.equal(document.getElementById("marketImportSummary").classList.contains("show"), true);
+assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), true);
 
 // 管理者／作業者の画面権限と、ログイン切替をまたぐ承認フロー
 window.localStorage.removeItem("inv_approval_workflow_v2");
@@ -1912,9 +2411,9 @@ assert.deepEqual(
   `inline handlers reference missing functions: ${[...missingHandlerFunctions].sort().join(", ")}`,
 );
 
-assert.equal(document.querySelectorAll(".page-panel").length, 18);
-assert.equal(document.querySelectorAll(".nav-item").length, 15);
-assert.equal(document.querySelectorAll(".modal-overlay").length, 45);
+assert.equal(document.querySelectorAll(".page-panel").length, 19);
+assert.equal(document.querySelectorAll(".nav-item").length, 16);
+assert.equal(document.querySelectorAll(".modal-overlay").length, 46);
 const sidebarGroups = [...document.querySelectorAll(".sidebar-nav > .nav-group")];
 assert.equal(sidebarGroups[0].querySelector(".nav-group-label").textContent.trim(), "メイン");
 assert.deepEqual(
@@ -1925,9 +2424,11 @@ assert.deepEqual(
 assert.equal(sidebarGroups[1].querySelector(".nav-group-label").textContent.trim(), "経理・会計");
 assert.deepEqual(
   [...sidebarGroups[1].querySelectorAll(".nav-item")].map((item) => item.dataset.page),
-  ["sales-list", "sales", "shipping", "returns"],
+  ["sales-list", "sales", "shipping", "consignment", "returns"],
   "accounting navigation must start with the document list",
 );
+assert.ok(document.getElementById("page-consignment"), "consignment registration page must be present");
+assert.ok(document.getElementById("sltab-consignment"), "document list must include the consignment tab");
 assert.equal(
   window.eval("getLocalDateISO(new Date(2026, 7, 3, 1, 0, 0))"),
   "2026-08-03",

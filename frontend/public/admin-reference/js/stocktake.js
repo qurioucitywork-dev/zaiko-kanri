@@ -128,7 +128,7 @@ function stkHandleInput() {
   };
 
   // 対応するタブに切り替え
-  const targetTab = (item.status === '出荷済') ? 'shipped' : 'instock';
+  const targetTab = ['出荷済', '委託中'].includes(item.status) ? 'shipped' : 'instock';
   if (_stkCurrentTab !== targetTab) {
     const btn = document.getElementById(targetTab === 'instock' ? 'stkTabInStock' : 'stkTabShipped');
     if (btn) stkSwitchTab(targetTab, btn);
@@ -166,7 +166,7 @@ function stkRenderTable() {
   if (!tbody) return;
 
   // 現在タブのステータスで絞り込み
-  const targetStatuses = _stkCurrentTab === 'instock' ? ['在庫中', '取置中'] : ['出荷済'];
+  const targetStatuses = _stkCurrentTab === 'instock' ? ['在庫中', '取置中'] : ['出荷済', '委託中'];
 
   // 取置中も物理在庫なので在庫中タブの棚卸対象に含める。
   let items = (APP_DATA.inventory || []).filter(i => targetStatuses.includes(i.status));
@@ -179,7 +179,7 @@ function stkRenderTable() {
 
   // タブカウント更新
   const inStockCount  = (APP_DATA.inventory || []).filter(i => ['在庫中', '取置中'].includes(i.status)).length;
-  const shippedCount  = (APP_DATA.inventory || []).filter(i => i.status === '出荷済').length;
+  const shippedCount  = (APP_DATA.inventory || []).filter(i => ['出荷済', '委託中'].includes(i.status)).length;
   const countInStk = document.getElementById('stkTabCountInStock');
   const countShp  = document.getElementById('stkTabCountShipped');
   if (countInStk) countInStk.textContent = inStockCount;
@@ -248,7 +248,7 @@ function stkUpdateProgress() {
   const inv = APP_DATA.inventory || [];
 
   const inStockItems  = inv.filter(i => ['在庫中', '取置中'].includes(i.status));
-  const shippedItems  = inv.filter(i => i.status === '出荷済');
+  const shippedItems  = inv.filter(i => ['出荷済', '委託中'].includes(i.status));
 
   const doneInStock  = inStockItems.filter(i => _stkState[i.code]?.state === '棚卸済').length;
   const doneShipped  = shippedItems.filter(i => _stkState[i.code]?.state === '棚卸済').length;
@@ -270,7 +270,7 @@ function stkUpdateSummary() {
   const inv = APP_DATA.inventory || [];
 
   const inStockItems  = inv.filter(i => ['在庫中', '取置中'].includes(i.status));
-  const shippedItems  = inv.filter(i => i.status === '出荷済');
+  const shippedItems  = inv.filter(i => ['出荷済', '委託中'].includes(i.status));
 
   const sum = arr => arr.reduce((s, i) => s + (i.purchasePrice || 0), 0);
   const fmt = v => typeof formatPrice === 'function'
@@ -603,7 +603,7 @@ function stkTryComplete() {
   const statsEl = document.getElementById('stkCompleteStats');
   if (statsEl) {
     statsEl.innerHTML = [
-      { label: 'システム合計（在庫中・取置中＋出荷済）', val: fmt(grandTotal) },
+      { label: 'システム合計（在庫中・取置中＋出荷済・委託中）', val: fmt(grandTotal) },
       { label: '棚卸済合計',                    val: fmt(doneTotal) },
       { label: '不一致合計',                    val: fmt(mismatchTotal) },
       { label: 'チェック',                      val: diff < 1 ? '✓ 一致' : '✗ 不一致' },
