@@ -5590,7 +5590,7 @@ function formatPurchaseIssuedAt(value) {
   }).format(date);
 }
 
-/** 一覧表では長い発行日時を日付・時刻の2段に分け、狭い幅でも見切れさせない。 */
+/** 一覧表は横スクロールを前提に、発行日時を読みやすい1行で表示する。 */
 function formatIssuedAtStacked(value) {
   if (!value) return '<span class="issued-at-stack issued-at-empty">未発行</span>';
   const date = new Date(value);
