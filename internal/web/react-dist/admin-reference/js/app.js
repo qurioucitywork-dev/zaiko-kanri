@@ -1860,7 +1860,7 @@ function renderInventoryTable() {
           <td data-inv-col="salePrice" style="font-weight:bold;color:var(--success);">${item.salePrice ? formatInventorySalePrice(item.salePrice) : '—'}</td>
           <td data-inv-col="purchaseDate" style="font-size:12px;white-space:nowrap;">${item.purchaseDate || '—'}</td>
           <td data-inv-col="sku" style="font-size:12px;">${skuVal}</td>
-          <td data-inv-col="accessories" style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${accText}">${accText}</td>
+          <td data-inv-col="accessories" class="acc-cell" style="font-size:11px;" title="${accText}">${accText}</td>
           <td data-inv-col="status">${getStatusBadge(item.status)}</td>
           <td data-inv-col="box">${_buildBoxBadge(item.boxNo)}</td>
           <td data-inv-col="qr">

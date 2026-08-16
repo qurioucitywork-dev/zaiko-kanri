@@ -12,14 +12,14 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":               "8df299505f1878bdfe8a90495be678ad2f59aaf26a106e66a521461ccf391007",
+		"app.html":               "2a7f32113ea9a7f052ce886be251e3aa40a1486eb07895d03b372f424128edba",
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
 		"css/market-table.css":   "7fd79f92a5b5a3a42556f862ada62ae8adb79d24e6baa158b1cd668439f3c97e",
-		"css/style.css":          "540bb23ccd3410ef13a9295df7bcd1c11e61ed31bff43c223455578a5603fc4a",
+		"css/style.css":          "aabd1ecf54eb8638e1ec1ae9b3b6b67bd6bfd3ff50207da12011a05380dcfbb8",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
 		"js/api_bridge.js":       "3f5e22f8f859bc1d12a424c951d87565214e098f5ccaffca9ff332bb33b46e36",
-		"js/app.js":              "40aa9aedd002e8a5bd561379616b159d647b88f0d361453c27aab342ea28b98e",
+		"js/app.js":              "e700ccae66d6936226d52cca679318bc4a2f6728196359973cc604b6dbfc9a2c",
 		"js/approval.js":         "23b78eb379f3b380ed9c9d2a4b563a3e0d0abbf199bd31941d7dac539bd5b0a0",
 		"js/auth.js":             "a9f0cc7a928b801342241f4740c055f4f34eb208ac6ed61e25ef82191ad97c50",
 		"js/box.js":              "4d2e41d7ea036881d4e2566a90e8663c8ccf1b2bb656f4817d12c1d6447140d7",

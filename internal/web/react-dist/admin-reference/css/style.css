@@ -459,14 +459,16 @@ select.form-control {
 /* 在庫一覧固定幅テーブル（table-layout: fixed で縦ずれ防止） */
 .inv-fixed-table {
   table-layout: fixed;
-  width: 100%;
-  min-width: 1364px;
+  width: max(100%, 2030px);
+  min-width: 2030px;
 }
 .inv-fixed-table th,
 .inv-fixed-table td {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
   vertical-align: middle;
 }
 .inv-fixed-table .inv-col-hidden {
@@ -518,7 +520,13 @@ select.form-control {
 .inv-fixed-table td[data-inv-col="purchasePrice"],
 .inv-fixed-table td[data-inv-col="salePrice"] {
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
+.inv-fixed-table td[data-inv-col="code"],
+.inv-fixed-table td[data-inv-col="purchaseDate"],
+.inv-fixed-table td[data-inv-col="box"],
+.inv-fixed-table td[data-inv-col="qr"],
+.inv-fixed-table td[data-inv-col="edit"] { white-space: nowrap; }
 .inv-status-sort-btn {
   display: inline-flex;
   align-items: center;
@@ -550,12 +558,10 @@ select.form-control {
 @media (max-width: 768px) {
   .inv-status-sort-btn { min-height: 44px; }
 }
-/* 付属品セルだけ省略を明示 */
+/* 付属品は省略せず、列内で折り返して全文を確認できるようにする。 */
 .inv-fixed-table td.acc-cell {
-  max-width: 0; /* table-layout:fixed 環境では親colの幅が適用される */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 /* ===================== STATUS BADGES ===================== */
