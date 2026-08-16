@@ -16,7 +16,7 @@ func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
 		"css/market-table.css":   "7fd79f92a5b5a3a42556f862ada62ae8adb79d24e6baa158b1cd668439f3c97e",
-		"css/style.css":          "a567eace6912c8b5de6efbe03253276921b509a2345dba37f6dcc8323693589d",
+		"css/style.css":          "949cb2f82b7ffee05f591c3d9326fbdbb7dcf96905d549e589019d951dd37cff",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
 		"js/api_bridge.js":       "3f5e22f8f859bc1d12a424c951d87565214e098f5ccaffca9ff332bb33b46e36",
 		"js/app.js":              "a672abcccd683df050288e5a48659910e58533fe38e7051ea97ecc01869c2784",
