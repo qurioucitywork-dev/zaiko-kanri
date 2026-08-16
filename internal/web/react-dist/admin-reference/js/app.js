@@ -2080,7 +2080,17 @@ function showItemDetail(code) {
 
   document.getElementById('itemDetailEditBtn').onclick = () => openItemEdit(code);
   switchItemDetailTab('info');
-  document.getElementById('itemDetailModal').classList.remove('hidden');
+  const detailModal = document.getElementById('itemDetailModal');
+  const detailBody = document.getElementById('itemDetailBody');
+  // 前回開いた際のスクロール位置を引き継がず、常に商品情報の先頭から表示する。
+  if (detailBody) detailBody.scrollTop = 0;
+  detailModal?.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    if (detailBody) {
+      detailBody.scrollTop = 0;
+      detailBody.scrollTo?.({ top: 0, left: 0, behavior: 'auto' });
+    }
+  });
 }
 
 /** 商品詳細ポップアップの商品情報／タグ表示を切り替える。 */
