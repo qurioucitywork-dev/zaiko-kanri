@@ -91,10 +91,10 @@ type fxSnapshot struct {
 	Scale      int64
 }
 
-func latestFX(tx *gorm.DB, organizationID string) (fxSnapshot, error) {
+func latestFX(tx *gorm.DB, organizationID, baseCurrency string) (fxSnapshot, error) {
 	var rate fxSnapshot
 	result := tx.Table("exchange_rate_snapshots").Select("id,rate_scaled,scale").Where(
-		"organization_id=? AND base_currency='USD' AND quote_currency='JPY'", organizationID).
+		"organization_id=? AND base_currency=? AND quote_currency='JPY'", organizationID, baseCurrency).
 		Order("observed_at DESC,created_at DESC").Limit(1).Scan(&rate)
 	if result.Error != nil || rate.ID == "" || rate.RateScaled <= 0 || rate.Scale <= 0 {
 		return fxSnapshot{}, ErrExchangeRate
@@ -115,10 +115,10 @@ func convertCurrency(amount int64, from, to string, rate fxSnapshot) (int64, err
 	if from == to {
 		return amount, nil
 	}
-	if from == "USD" && to == "JPY" {
+	if from != "JPY" && to == "JPY" {
 		return mulDivRound(amount, rate.RateScaled, rate.Scale), nil
 	}
-	if from == "JPY" && to == "USD" {
+	if from == "JPY" && to != "JPY" {
 		return mulDivRound(amount, rate.Scale, rate.RateScaled), nil
 	}
 	return 0, ErrExchangeRate
@@ -132,7 +132,7 @@ func purchaseCostSnapshot(tx *gorm.DB, organizationID string, unitAmount int64, 
 	if currency == "JPY" {
 		return total, nil, nil, nil, nil
 	}
-	rate, err := latestFX(tx, organizationID)
+	rate, err := latestFX(tx, organizationID, "USD")
 	if err != nil {
 		return 0, nil, nil, nil, err
 	}
@@ -186,7 +186,11 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 		if err != nil {
 			return err
 		}
-		rate, err := latestFX(tx, input.OrganizationID)
+		rateBase := input.DisplayCurrency
+		if rateBase == "JPY" {
+			rateBase = "USD"
+		}
+		rate, err := latestFX(tx, input.OrganizationID, rateBase)
 		if err != nil {
 			return err
 		}
@@ -195,7 +199,7 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 		// 課税を送信しても、DBには対象外（税額0）として保存する。
 		taxMode := input.TaxMode
 		taxRateBasisPoints := input.TaxRateBasisPoints
-		if input.DisplayCurrency == "USD" {
+		if input.DisplayCurrency != "JPY" {
 			taxMode = "out_of_scope"
 			taxRateBasisPoints = 0
 		}
@@ -247,7 +251,21 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 			}
 			price := line.UnitPriceMinor
 			if price == 0 {
-				price, err = convertCurrency(product.BaseSalePriceMinor, product.BaseSaleCurrency, input.DisplayCurrency, rate)
+				if product.BaseSaleCurrency == input.DisplayCurrency {
+					price = product.BaseSalePriceMinor
+				} else if product.BaseSaleCurrency == "JPY" || input.DisplayCurrency == "JPY" {
+					price, err = convertCurrency(product.BaseSalePriceMinor, product.BaseSaleCurrency, input.DisplayCurrency, rate)
+				} else {
+					fromRate, rateErr := latestFX(tx, input.OrganizationID, product.BaseSaleCurrency)
+					if rateErr != nil {
+						return rateErr
+					}
+					jpy, convertErr := convertCurrency(product.BaseSalePriceMinor, product.BaseSaleCurrency, "JPY", fromRate)
+					if convertErr != nil {
+						return convertErr
+					}
+					price, err = convertCurrency(jpy, "JPY", input.DisplayCurrency, rate)
+				}
 				if err != nil {
 					return err
 				}

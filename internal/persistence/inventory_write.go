@@ -285,7 +285,7 @@ func lookupCatalog(tx *gorm.DB, table, organizationID, code string, required boo
 	if strings.TrimSpace(code) == "" && !required {
 		return "", "", nil
 	}
-	if _, ok := map[string]bool{"brands": true, "materials": true, "movements": true, "product_conditions": true}[table]; !ok {
+	if !isCatalogLookupTable(table) {
 		return "", "", ErrUnsupportedMaster
 	}
 	var row struct{ ID, Name string }
@@ -295,6 +295,13 @@ func lookupCatalog(tx *gorm.DB, table, organizationID, code string, required boo
 		return "", "", ErrMasterCodeNotFound
 	}
 	return row.ID, row.Name, nil
+}
+
+func isCatalogLookupTable(table string) bool {
+	return map[string]bool{
+		"brands": true, "materials": true, "movements": true,
+		"product_conditions": true, "auction_houses": true,
+	}[table]
 }
 
 func lookupAccessories(tx *gorm.DB, organizationID string, codes []string) ([]string, []string, error) {

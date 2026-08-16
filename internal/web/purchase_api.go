@@ -18,13 +18,27 @@ func (s *Server) apiPurchases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := currentUser(r.Context())
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	records, err := s.repository.PurchaseSlips(r.Context(), user.OrganizationID, limit)
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	pageSize, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		// Keep the old limit query compatible while moving callers to paging.
+		pageSize, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 100
+	}
+	records, total, err := s.repository.PurchaseSlipsPage(r.Context(), user.OrganizationID, page, pageSize)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "purchases_unavailable", "仕入伝票を取得できませんでした。")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": records, "total": len(records)})
+	totalPages := int((total + int64(pageSize) - 1) / int64(pageSize))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items": records, "total": total, "page": page, "pageSize": pageSize, "totalPages": totalPages,
+	})
 }
 
 func (s *Server) apiPurchase(w http.ResponseWriter, r *http.Request) {

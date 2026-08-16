@@ -182,6 +182,12 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/masters/{kind}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiMasterItems)))
 	mux.Handle("POST /api/v1/masters/{kind}", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiMasterCreate)))
 	mux.Handle("PATCH /api/v1/masters/{kind}/{id}", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiMasterUpdate)))
+	mux.Handle("GET /api/v1/stocktakes/current", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiCurrentStocktake)))
+	mux.Handle("POST /api/v1/stocktakes/start", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiStartStocktake)))
+	mux.Handle("POST /api/v1/stocktakes/{id}/sync", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiSyncStocktake)))
+	mux.Handle("POST /api/v1/stocktakes/{id}/scan", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiScanStocktake)))
+	mux.Handle("PATCH /api/v1/stocktakes/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiSaveStocktake)))
+	mux.Handle("POST /api/v1/stocktakes/{id}/complete", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiCompleteStocktake)))
 	mux.HandleFunc("GET /app", redirectToReact)
 	mux.HandleFunc("GET /app/{path...}", s.reactApp)
 	mux.HandleFunc("GET /login", s.loginPage)
@@ -275,7 +281,8 @@ func (s *Server) parseTemplates() error {
 		"productStatus": func(status string) string {
 			return map[string]string{
 				"purchasing": "仕入中", "in_stock": "在庫中", "reserved": "取置中",
-				"sold": "販売済み", "shipped": "出荷済み", "cancelled": "取消", "invalid": "無効",
+				"return_pending": "仕入返品中", "consigned": "委託中",
+				"sold": "販売済み", "shipped": "出荷済み", "cancelled": "仕入返品済", "invalid": "無効",
 				"public": "公開", "private": "非公開",
 			}[status]
 		},

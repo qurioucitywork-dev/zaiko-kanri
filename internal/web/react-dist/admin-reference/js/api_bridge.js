@@ -3,7 +3,7 @@
 (function () {
   const state = { csrfToken: '', user: null, hydrated: false, company: null, latestRate: 155 };
   const statusLabel = {
-    purchasing: '仕入中', in_stock: '在庫中', reserved: '取置中', return_pending: '仕入返品中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '取消',
+    purchasing: '仕入中', in_stock: '在庫中', reserved: '取置中', return_pending: '仕入返品中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '仕入返品済',
     draft: '未処理', confirmed: '処理済', pending: '未対応', approved: '承認済', rejected: '却下', returned: '差戻し',
   };
 
@@ -64,6 +64,32 @@
     }
   }
 
+  /**
+   * ページングされた一覧APIを先頭ページから順番に取得し、itemsを1つに結合する。
+   * 最初のページが権限などで取得できない場合は optional() と同じく null を返すが、
+   * 途中ページの失敗は部分データを在庫全件として扱わないよう、そのままエラーにする。
+   */
+  async function fetchAllPages(path, pageSize = 100) {
+    const separator = path.includes('?') ? '&' : '?';
+    const first = await optional(`${path}${separator}page=1&pageSize=${pageSize}`);
+    if (!first || !Array.isArray(first.items)) return first;
+
+    const totalPages = Math.max(1, Number(first.totalPages) || 1);
+    const items = [...first.items];
+    for (let page = 2; page <= totalPages; page += 1) {
+      const next = await request(`${path}${separator}page=${page}&pageSize=${pageSize}`);
+      if (Array.isArray(next?.items)) items.push(...next.items);
+    }
+
+    return {
+      ...first,
+      items,
+      page: 1,
+      pageSize,
+      total: Number(first.total) || items.length,
+    };
+  }
+
   function roleItem(partner, role) {
     return {
       _partnerId: partner.id,
@@ -74,6 +100,9 @@
       address: [partner.postalCode, partner.address].filter(Boolean).join(' '),
       contact: partner.phone,
       invoice: partner.invoiceNumber,
+      regionType: partner.regionType || 'domestic',
+      closingDay: partner.closingDay || null,
+      isOther: Boolean(partner.isOther),
       email: partner.email,
       partnerCode: partner.partnerCode,
       guestManaged: Boolean(role.guestCode),
@@ -117,14 +146,19 @@
       contactPerson: '',
       email: partner.email,
       tel: partner.phone,
+      contactPhone: partner.contactPhone || '',
       postalCode: partner.postalCode,
-      address: [partner.postalCode, partner.address].filter(Boolean).join(' '),
+      address: partner.address,
       invoice: partner.invoiceNumber,
+      antiqueLicenseNumber: partner.antiqueLicenseNumber || '',
+      regionType: partner.regionType || 'domestic',
+      closingDay: partner.closingDay || null,
+      isOther: Boolean(partner.isOther),
       note: partner.notes,
-      tradeTypes: (partner.roles || []).map(role => role.roleType),
-      buyerCode: partner.roles?.find(role => role.roleType === 'buyer')?.roleCode || '',
-      supplierCode: partner.roles?.find(role => role.roleType === 'supplier')?.roleCode || '',
-      guestId: partner.roles?.find(role => role.roleType === 'buyer')?.guestCode || '',
+      tradeTypes: (partner.roles || []).filter(role => role.isActive).map(role => role.roleType),
+      buyerCode: partner.roles?.find(role => role.roleType === 'buyer' && role.isActive)?.roleCode || '',
+      supplierCode: partner.roles?.find(role => role.roleType === 'supplier' && role.isActive)?.roleCode || '',
+      guestId: partner.roles?.find(role => role.roleType === 'buyer' && role.isActive)?.guestCode || '',
     }));
   }
 
@@ -232,7 +266,8 @@
     };
     return {
       _id: record.id, id: record.slipNumber, date: record.purchaseDate, supplier: record.supplierCode,
-      staff: staffName, staffCode: record.staffCode, note: record.notes, status: statusLabel[record.status] || record.status,
+      staff: staffName, staffCode: record.staffCode, note: record.notes,
+      rawStatus: record.status, status: statusLabel[record.status] || record.status,
       purchaseTaxMode: record.purchaseTaxMode === 'overseas' ? 'overseas' : 'domestic',
       taxRateBasisPoints: record.purchaseTaxMode === 'overseas' ? 0 : 1000,
       registeredAt: record.createdAt, issuedAt: record.issuedAt || null, issuedBy: record.issuedBy || null,
@@ -247,6 +282,7 @@
           code: currentProduct?.code || '',
           sku: currentProduct ? currentProduct.sku : line.sku,
           quantity: line.quantity,
+          generatedProductCount: Number(line.generatedProductCount) || 0,
           // 仕入伝票の金額は起票時通貨の原額を保持する。商品詳細は最新値へ追随するが、
           // 海外仕入を円換算してしまわないよう伝票明細の通貨スナップショットを優先する。
           purchasePrice: line.unitCostMinor,
@@ -403,8 +439,8 @@
     const masterResults = {};
     await Promise.all(masterKeys.map(async key => { masterResults[key] = await optional(`/masters/${key}`); }));
     const [products, partners, users, staff, purchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, settings, company, rates, dashboard] = await Promise.all([
-      optional('/products?page=1&pageSize=100&includeCancelled=true'), optional('/partners?includeInactive=true'),
-      optional('/users?includeInactive=true'), optional('/purchase-staff'), optional('/purchases?limit=500'), optional('/market-prices?limit=1000'),
+      fetchAllPages('/products?includeCancelled=true'), optional('/partners?includeInactive=true'),
+      optional('/users?includeInactive=true'), optional('/purchase-staff'), fetchAllPages('/purchases'), optional('/market-prices?limit=1000'),
       optional('/boxes'), optional('/purchase-requests'), optional('/notifications?limit=500'), optional('/approvals'),
       optional('/sales?limit=500'), optional('/shipments?limit=500'), optional('/consignments?limit=500'), optional('/returns?limit=500'),
       optional('/settings'), optional('/company'), optional('/exchange-rates?limit=100'), optional('/dashboard?months=24'),
@@ -435,7 +471,15 @@
     const shipmentDetails = await withDetails('/shipments', shipments);
     const consignmentDetails = await withDetails('/consignments', consignments);
     const returnDetails = await withDetails('/returns', returns);
-    APP_DATA.purchaseSlips = purchaseDetails.map(record => purchaseView(record, productByLine, latestRate, users?.items || staff?.items || []));
+    const purchaseViews = purchaseDetails.map(record => purchaseView(record, productByLine, latestRate, users?.items || staff?.items || []));
+    const reflectedPurchaseProducts = purchaseViews.reduce((total, slip) => total + (slip.lines || []).reduce(
+      (lineTotal, line) => lineTotal + (Number(line.generatedProductCount) || 0), 0), 0);
+    if (reflectedPurchaseProducts !== APP_DATA.inventory.length) {
+      const error = new Error(`仕入反映点数（${reflectedPurchaseProducts}点）と在庫全件（${APP_DATA.inventory.length}点）が一致しません。`);
+      error.code = 'purchase_inventory_mismatch';
+      throw error;
+    }
+    APP_DATA.purchaseSlips = purchaseViews;
     APP_DATA.sales = saleDetails.map(saleView);
     APP_DATA.shipments = shipmentDetails.map(shipmentView);
     APP_DATA.consignments = consignmentDetails.map(consignmentView);
@@ -449,18 +493,24 @@
       const items = (record.lines || []).map(line => {
         const inventory = inventoryByCode.get(line.productCode) || {};
         const saleLine = sourceSaleLines.get(line.productCode) || {};
+        const purchaseReturnStatus = record.trackingNumber ? '処理済' : '処理中';
         return { code: line.productCode, brand: line.brand, model: line.modelNumber,
           ref: inventory.ref || '', serial: inventory.serial || '',
           salePrice: Number(saleLine.unitPriceMinor || inventory.salePrice || 0),
           purchasePrice: line.costCurrency === 'USD' ? Math.round(line.costAmountMinor * latestRate) : line.costAmountMinor,
           trackingNo: record.trackingNumber || '',
-          status: record.status === 'confirmed' ? '処理済' : (pendingApprovalTargetIds.has(record.id) ? '承認待ち' : '未処理') };
+          status: record.operationType === 'purchase_return'
+            ? purchaseReturnStatus
+            : (record.status === 'confirmed' ? '処理済' : (pendingApprovalTargetIds.has(record.id) ? '承認待ち' : '未処理')) };
       });
       return {
         _id: record.id, id: record.slipNumber, date: record.transactionDate, buyer: record.buyerCode,
         supplier: record.supplierCode, slipId: record.sourcePurchaseSlipNumber || sourceSale?.slipNumber || '',
         carrier: record.carrier || '', trackingNo: record.trackingNumber || '',
         status: pendingApprovalTargetIds.has(record.id) ? '承認待ち' : (statusLabel[record.status] || record.status),
+        processingStatus: record.operationType === 'purchase_return'
+          ? (record.trackingNumber ? '処理済' : '処理中')
+          : '',
         reason: record.reason, note: record.notes, createdBy: 'DB連動', createdAt: record.createdAt,
         returnType: record.operationType, total: items.reduce((sum, item) => sum + item.salePrice, 0),
         apiManaged: true, items,
@@ -1054,11 +1104,14 @@
     }));
     const payload = {
       partnerCode: entry.id, legalName: entry.companyName, representativeName: entry.representative || '',
-      email: entry.email || '', phone: entry.tel || '', postalCode: entry.postalCode || '', address: entry.address || '',
-      invoiceNumber: entry.invoice || '', notes: entry.note || '', roles,
+      email: entry.email || '', phone: entry.tel || '', contactPhone: entry.contactPhone || '', postalCode: entry.postalCode || '', address: entry.address || '',
+      invoiceNumber: entry.invoice || '', antiqueLicenseNumber: entry.antiqueLicenseNumber || '', regionType: entry.regionType || 'domestic',
+      closingDay: entry.closingDay || null,
+      isOther: Boolean(entry.isOther), notes: entry.note || '', roles,
     };
     if (entry._id) {
       delete payload.partnerCode;
+      payload.clearClosingDay = !entry.closingDay;
       return request(`/partners/${encodeURIComponent(entry._id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
     }
     return request('/partners', { method: 'POST', body: JSON.stringify(payload) });

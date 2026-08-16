@@ -287,7 +287,7 @@ func (r *Repository) dashboardPostgres(ctx context.Context, organizationID strin
 	}
 	result.PurchaseUnits = purchases.Units
 
-	rate, rateErr := latestFX(db, organizationID)
+	rate, rateErr := latestFX(db, organizationID, "USD")
 	if rateErr == nil {
 		result.ConfirmedSalesUSD, _ = convertCurrency(result.ConfirmedSalesJPY, "JPY", "USD", rate)
 		purchaseUSDInJPY, _ := convertCurrency(purchases.USD, "USD", "JPY", rate)

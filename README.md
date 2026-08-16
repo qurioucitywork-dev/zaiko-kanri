@@ -7,7 +7,7 @@
 - React + JavaScript: `/app/`を単一のReact入口へ統一し、指定された基準デザインを同一DOMへ直接マウント。iframeと別デザイン画面を廃止
 - Go REST API: 認証、マスタ、取引先、相場、仕入、商品、在庫、BOX、購入依頼、承認、通知、出荷、売上、返品、伝票、追跡番号、CSV、帳票履歴、集計を接続済み
 - GORM: PostgreSQLの読取・書込・トランザクションで利用
-- PostgreSQL: WSL2上のローカルDBを業務データの正本として接続済み。migration `000001`～`000016`を適用
+- PostgreSQL: ローカルDBを業務データの正本として接続済み。migration `000001`～`000040`を適用
 - Amazon RDS: Terraform定義済み。実AWSへの作成・データ移行は未実施
 - Amazon S3: ローカル/S3切替ストレージと商品画像APIを接続済み。現在のローカル起動はローカルファイル保存
 - Amazon ECS Fargate: DockerfileとTerraformを準備済み。実デプロイは未実施
@@ -96,6 +96,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\release-check.ps1
 
 ## 資料
 
+- [別PCへの引き継ぎ・起動手順](docs/other-pc-handoff.md)
+- [別PCのCodexへ渡す引き継ぎプロンプト](docs/CODEX_HANDOFF_PROMPT.md)
 - [相場取込から売上確定までの実務操作（管理者・作業者／Mermaid図）](docs/operations-workflow.md)
 - [目標アーキテクチャと段階移行メモ](docs/target-architecture.md)
 - [REST API v1](docs/rest-api.md)

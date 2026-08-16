@@ -20,6 +20,7 @@ var (
 var partnerCodePattern = regexp.MustCompile(`^CLI-[0-9]{3,}$`)
 var buyerCodePattern = regexp.MustCompile(`^B[0-9]{3,}$`)
 var supplierCodePattern = regexp.MustCompile(`^S[0-9]{3,}$`)
+var invoiceNumberPattern = regexp.MustCompile(`^T[0-9]{13}$`)
 
 type PartnerRoleRecord struct {
 	ID        string `json:"id"`
@@ -30,20 +31,25 @@ type PartnerRoleRecord struct {
 }
 
 type PartnerRecord struct {
-	ID                 string              `json:"id"`
-	PartnerCode        string              `json:"partnerCode"`
-	LegalName          string              `json:"legalName"`
-	RepresentativeName string              `json:"representativeName"`
-	Email              string              `json:"email"`
-	Phone              string              `json:"phone"`
-	PostalCode         string              `json:"postalCode"`
-	Address            string              `json:"address"`
-	InvoiceNumber      string              `json:"invoiceNumber"`
-	Notes              string              `json:"notes"`
-	Status             string              `json:"status"`
-	Roles              []PartnerRoleRecord `gorm:"-" json:"roles"`
-	CreatedAt          time.Time           `json:"createdAt"`
-	UpdatedAt          time.Time           `json:"updatedAt"`
+	ID                   string              `json:"id"`
+	PartnerCode          string              `json:"partnerCode"`
+	LegalName            string              `json:"legalName"`
+	RepresentativeName   string              `json:"representativeName"`
+	Email                string              `json:"email"`
+	Phone                string              `json:"phone"`
+	ContactPhone         string              `json:"contactPhone"`
+	PostalCode           string              `json:"postalCode"`
+	Address              string              `json:"address"`
+	InvoiceNumber        string              `json:"invoiceNumber"`
+	AntiqueLicenseNumber string              `json:"antiqueLicenseNumber"`
+	RegionType           string              `json:"regionType"`
+	ClosingDay           *int                `json:"closingDay,omitempty"`
+	IsOther              bool                `json:"isOther"`
+	Notes                string              `json:"notes"`
+	Status               string              `json:"status"`
+	Roles                []PartnerRoleRecord `gorm:"-" json:"roles"`
+	CreatedAt            time.Time           `json:"createdAt"`
+	UpdatedAt            time.Time           `json:"updatedAt"`
 }
 
 type PartnerRoleInput struct {
@@ -53,36 +59,47 @@ type PartnerRoleInput struct {
 }
 
 type PartnerCreateInput struct {
-	PartnerCode        string             `json:"partnerCode"`
-	LegalName          string             `json:"legalName"`
-	RepresentativeName string             `json:"representativeName"`
-	Email              string             `json:"email"`
-	Phone              string             `json:"phone"`
-	PostalCode         string             `json:"postalCode"`
-	Address            string             `json:"address"`
-	InvoiceNumber      string             `json:"invoiceNumber"`
-	Notes              string             `json:"notes"`
-	Roles              []PartnerRoleInput `json:"roles"`
+	PartnerCode          string             `json:"partnerCode"`
+	LegalName            string             `json:"legalName"`
+	RepresentativeName   string             `json:"representativeName"`
+	Email                string             `json:"email"`
+	Phone                string             `json:"phone"`
+	ContactPhone         string             `json:"contactPhone"`
+	PostalCode           string             `json:"postalCode"`
+	Address              string             `json:"address"`
+	InvoiceNumber        string             `json:"invoiceNumber"`
+	AntiqueLicenseNumber string             `json:"antiqueLicenseNumber"`
+	RegionType           string             `json:"regionType"`
+	ClosingDay           *int               `json:"closingDay"`
+	IsOther              bool               `json:"isOther"`
+	Notes                string             `json:"notes"`
+	Roles                []PartnerRoleInput `json:"roles"`
 }
 
 type PartnerUpdateInput struct {
-	LegalName          *string             `json:"legalName"`
-	RepresentativeName *string             `json:"representativeName"`
-	Email              *string             `json:"email"`
-	Phone              *string             `json:"phone"`
-	PostalCode         *string             `json:"postalCode"`
-	Address            *string             `json:"address"`
-	InvoiceNumber      *string             `json:"invoiceNumber"`
-	Notes              *string             `json:"notes"`
-	Status             *string             `json:"status"`
-	Roles              *[]PartnerRoleInput `json:"roles"`
+	LegalName            *string             `json:"legalName"`
+	RepresentativeName   *string             `json:"representativeName"`
+	Email                *string             `json:"email"`
+	Phone                *string             `json:"phone"`
+	ContactPhone         *string             `json:"contactPhone"`
+	PostalCode           *string             `json:"postalCode"`
+	Address              *string             `json:"address"`
+	InvoiceNumber        *string             `json:"invoiceNumber"`
+	AntiqueLicenseNumber *string             `json:"antiqueLicenseNumber"`
+	RegionType           *string             `json:"regionType"`
+	ClosingDay           *int                `json:"closingDay"`
+	ClearClosingDay      *bool               `json:"clearClosingDay"`
+	IsOther              *bool               `json:"isOther"`
+	Notes                *string             `json:"notes"`
+	Status               *string             `json:"status"`
+	Roles                *[]PartnerRoleInput `json:"roles"`
 }
 
 func (r *Repository) Partners(ctx context.Context, organizationID string, includeInactive bool) ([]PartnerRecord, error) {
 	var records []PartnerRecord
 	query := r.db.WithContext(ctx).Table("business_partners").
-		Select(`id,partner_code,legal_name,representative_name,email,phone,postal_code,address,
-			invoice_number,notes,status,created_at,updated_at`).Where("organization_id=?", organizationID)
+		Select(`id,partner_code,legal_name,representative_name,email,phone,contact_phone,postal_code,address,
+			invoice_number,antique_license_number,region_type,closing_day,is_other,notes,status,created_at,updated_at`).Where("organization_id=?", organizationID)
 	if !includeInactive {
 		query = query.Where("status='active'")
 	}
@@ -170,14 +187,20 @@ func normalizePartnerRole(input PartnerRoleInput) (PartnerRoleInput, error) {
 	return input, nil
 }
 
-func validatePartnerFields(name, email, invoice string, roles []PartnerRoleInput) error {
-	if strings.TrimSpace(name) == "" || len([]rune(strings.TrimSpace(name))) > 200 || len(roles) == 0 || len(roles) > 2 {
+func validatePartnerFields(name, address, email, invoice, regionType string, closingDay *int, isOther bool, roles []PartnerRoleInput) error {
+	if strings.TrimSpace(name) == "" || strings.TrimSpace(address) == "" || len([]rune(strings.TrimSpace(name))) > 200 || len(roles) > 2 || (len(roles) == 0 && !isOther) {
+		return ErrPartnerInvalid
+	}
+	if regionType != "domestic" && regionType != "overseas" {
+		return ErrPartnerInvalid
+	}
+	if closingDay != nil && (*closingDay < 1 || *closingDay > 31) {
 		return ErrPartnerInvalid
 	}
 	if email != "" && (!strings.Contains(email, "@") || len(email) > 320) {
 		return ErrPartnerInvalid
 	}
-	if len(invoice) > 30 {
+	if invoice != "" && !invoiceNumberPattern.MatchString(strings.ToUpper(invoice)) {
 		return ErrPartnerInvalid
 	}
 	seen := map[string]bool{}
@@ -196,9 +219,15 @@ func (r *Repository) CreatePartner(ctx context.Context, organizationID, actorUse
 	input.RepresentativeName = strings.TrimSpace(input.RepresentativeName)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.Phone = strings.TrimSpace(input.Phone)
+	input.ContactPhone = strings.TrimSpace(input.ContactPhone)
 	input.PostalCode = strings.TrimSpace(input.PostalCode)
 	input.Address = strings.TrimSpace(input.Address)
 	input.InvoiceNumber = strings.TrimSpace(input.InvoiceNumber)
+	input.AntiqueLicenseNumber = strings.TrimSpace(input.AntiqueLicenseNumber)
+	input.RegionType = strings.ToLower(strings.TrimSpace(input.RegionType))
+	if input.RegionType == "" {
+		input.RegionType = "domestic"
+	}
 	input.Notes = strings.TrimSpace(input.Notes)
 	for index := range input.Roles {
 		role, err := normalizePartnerRole(input.Roles[index])
@@ -207,7 +236,7 @@ func (r *Repository) CreatePartner(ctx context.Context, organizationID, actorUse
 		}
 		input.Roles[index] = role
 	}
-	if err := validatePartnerFields(input.LegalName, input.Email, input.InvoiceNumber, input.Roles); err != nil {
+	if err := validatePartnerFields(input.LegalName, input.Address, input.Email, input.InvoiceNumber, input.RegionType, input.ClosingDay, input.IsOther, input.Roles); err != nil {
 		return PartnerRecord{}, err
 	}
 	partnerID, err := database.NewID("ptn")
@@ -226,11 +255,11 @@ func (r *Repository) CreatePartner(ctx context.Context, organizationID, actorUse
 			return ErrPartnerInvalid
 		}
 		if err := tx.Exec(`INSERT INTO business_partners(
-			id,organization_id,partner_code,legal_name,representative_name,email,phone,postal_code,address,
-			invoice_number,notes,status,created_by,updated_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,'active',?,?,?,?)`, partnerID, organizationID, input.PartnerCode,
-			input.LegalName, input.RepresentativeName, input.Email, input.Phone, input.PostalCode, input.Address,
-			input.InvoiceNumber, input.Notes, actorUserID, actorUserID, now, now).Error; err != nil {
+			id,organization_id,partner_code,legal_name,representative_name,email,phone,contact_phone,postal_code,address,
+			invoice_number,antique_license_number,region_type,closing_day,is_other,notes,status,created_by,updated_by,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'active',?,?,?,?)`, partnerID, organizationID, input.PartnerCode,
+			input.LegalName, input.RepresentativeName, input.Email, input.Phone, input.ContactPhone, input.PostalCode, input.Address,
+			input.InvoiceNumber, input.AntiqueLicenseNumber, input.RegionType, input.ClosingDay, input.IsOther, input.Notes, actorUserID, actorUserID, now, now).Error; err != nil {
 			return err
 		}
 		for _, role := range input.Roles {
@@ -274,15 +303,15 @@ func (r *Repository) UpdatePartner(ctx context.Context, organizationID, partnerI
 			Column string
 		}{
 			{input.LegalName, "legal_name"}, {input.RepresentativeName, "representative_name"},
-			{input.Email, "email"}, {input.Phone, "phone"}, {input.PostalCode, "postal_code"},
-			{input.Address, "address"}, {input.InvoiceNumber, "invoice_number"}, {input.Notes, "notes"},
+			{input.Email, "email"}, {input.Phone, "phone"}, {input.ContactPhone, "contact_phone"}, {input.PostalCode, "postal_code"},
+			{input.Address, "address"}, {input.InvoiceNumber, "invoice_number"}, {input.AntiqueLicenseNumber, "antique_license_number"}, {input.Notes, "notes"},
 		}
 		for _, field := range stringFields {
 			if field.Value == nil {
 				continue
 			}
 			value := strings.TrimSpace(*field.Value)
-			if field.Column == "legal_name" && value == "" {
+			if (field.Column == "legal_name" || field.Column == "address") && value == "" {
 				return ErrPartnerInvalid
 			}
 			if field.Column == "email" {
@@ -290,6 +319,9 @@ func (r *Repository) UpdatePartner(ctx context.Context, organizationID, partnerI
 				if value != "" && (!strings.Contains(value, "@") || len(value) > 320) {
 					return ErrPartnerInvalid
 				}
+			}
+			if field.Column == "invoice_number" && value != "" && !invoiceNumberPattern.MatchString(strings.ToUpper(value)) {
+				return ErrPartnerInvalid
 			}
 			updates[field.Column] = value
 		}
@@ -299,6 +331,25 @@ func (r *Repository) UpdatePartner(ctx context.Context, organizationID, partnerI
 				return ErrPartnerInvalid
 			}
 			updates["status"] = status
+		}
+		if input.RegionType != nil {
+			regionType := strings.ToLower(strings.TrimSpace(*input.RegionType))
+			if regionType != "domestic" && regionType != "overseas" {
+				return ErrPartnerInvalid
+			}
+			updates["region_type"] = regionType
+		}
+		if input.ClosingDay != nil {
+			if *input.ClosingDay < 1 || *input.ClosingDay > 31 {
+				return ErrPartnerInvalid
+			}
+			updates["closing_day"] = *input.ClosingDay
+		}
+		if input.ClearClosingDay != nil && *input.ClearClosingDay {
+			updates["closing_day"] = nil
+		}
+		if input.IsOther != nil {
+			updates["is_other"] = *input.IsOther
 		}
 		if len(updates) > 2 {
 			if err := tx.Table("business_partners").Where("organization_id=? AND id=?", organizationID, partnerID).Updates(updates).Error; err != nil {
@@ -362,6 +413,36 @@ func (r *Repository) UpdatePartner(ctx context.Context, organizationID, partnerI
 				if err := tx.Exec(`INSERT INTO partner_roles(
 					id,organization_id,partner_id,role_type,role_code,is_active,created_at,updated_at
 				) VALUES(?,?,?,?,?,?,?,?)`, roleID, organizationID, partnerID, role.RoleType, role.RoleCode, active, now, now).Error; err != nil {
+					return err
+				}
+			}
+			if len(seen) == 0 {
+				var isOther bool
+				if err := tx.Table("business_partners").Select("is_other").Where("organization_id=? AND id=?", organizationID, partnerID).Scan(&isOther).Error; err != nil {
+					return err
+				}
+				if !isOther {
+					return ErrPartnerInvalid
+				}
+			}
+			for _, roleType := range []string{"buyer", "supplier"} {
+				if seen[roleType] {
+					continue
+				}
+				if roleType == "buyer" {
+					var guestCount int64
+					if err := tx.Table("guest_accounts AS ga").
+						Joins("JOIN partner_roles AS pr ON pr.id=ga.buyer_role_id AND pr.organization_id=ga.organization_id").
+						Where("pr.organization_id=? AND pr.partner_id=? AND pr.role_type='buyer'", organizationID, partnerID).
+						Count(&guestCount).Error; err != nil {
+						return err
+					}
+					if guestCount > 0 {
+						return ErrPartnerInvalid
+					}
+				}
+				if err := tx.Table("partner_roles").Where("organization_id=? AND partner_id=? AND role_type=?", organizationID, partnerID, roleType).
+					Updates(map[string]any{"is_active": false, "updated_at": now}).Error; err != nil {
 					return err
 				}
 			}

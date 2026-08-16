@@ -1258,11 +1258,10 @@ function buildPurchaseReturnApprDetail(d) {
           <span class="appr-content-val">${d.date||'—'}</span>
         </div>
         <div class="appr-content-item">
-          <span class="appr-content-label">返品理由</span>
-          <span class="appr-content-val">${d.reason||'—'}</span>
+          <span class="appr-content-label">備考</span>
+          <span class="appr-content-val">${d.note||d.reason||'—'}</span>
         </div>
       </div>
-      ${d.note ? `<div class="appr-content-note"><i class="fa-solid fa-note-sticky"></i> ${d.note}</div>` : ''}
     </div>`;
 }
 

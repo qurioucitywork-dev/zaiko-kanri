@@ -73,7 +73,7 @@ func (r *Repository) CreateConsignment(ctx context.Context, input ConsignmentCre
 		if err != nil {
 			return err
 		}
-		rate, err := latestFX(tx, input.OrganizationID)
+		rate, err := latestFX(tx, input.OrganizationID, "USD")
 		if err != nil {
 			return err
 		}

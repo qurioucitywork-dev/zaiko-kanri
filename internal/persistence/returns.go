@@ -76,6 +76,9 @@ func (r *Repository) CreateReturn(ctx context.Context, input ReturnCreateInput) 
 		(input.OperationType != "return" && input.OperationType != "takeout" && input.OperationType != "purchase_return") {
 		return ReturnSlipRecord{}, ErrReturnState
 	}
+	if input.OperationType == "purchase_return" && strings.TrimSpace(input.Notes) == "" {
+		return ReturnSlipRecord{}, ErrReturnState
+	}
 	var returnID string
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var buyerRoleID string
@@ -223,14 +226,70 @@ func (r *Repository) ReturnSlip(ctx context.Context, organizationID, returnID st
 	return record, nil
 }
 
-func (r *Repository) UpdateReturnTracking(ctx context.Context, organizationID, returnID, carrier, trackingNumber string) (ReturnSlipRecord, error) {
-	result := r.db.WithContext(ctx).Table("return_slips").Where("organization_id=? AND id=? AND status<>'cancelled'", organizationID, returnID).
-		Updates(map[string]any{"carrier": strings.TrimSpace(carrier), "tracking_number": strings.TrimSpace(trackingNumber), "updated_at": time.Now().UTC()})
-	if result.Error != nil {
-		return ReturnSlipRecord{}, result.Error
-	}
-	if result.RowsAffected == 0 {
-		return ReturnSlipRecord{}, ErrReturnNotFound
+func (r *Repository) UpdateReturnTracking(ctx context.Context, organizationID, returnID, actorUserID, carrier, trackingNumber string) (ReturnSlipRecord, error) {
+	carrier = strings.TrimSpace(carrier)
+	trackingNumber = strings.TrimSpace(trackingNumber)
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var slip struct {
+			Status        string
+			OperationType string
+		}
+		result := tx.Raw(`SELECT status,operation_type FROM return_slips
+			WHERE organization_id=? AND id=? FOR UPDATE`, organizationID, returnID).Scan(&slip)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 || slip.Status == "cancelled" {
+			return ErrReturnNotFound
+		}
+
+		now := time.Now().UTC()
+		// 仕入返品は、伝票起票・承認時点では実物が手元にあるため「仕入返品中」
+		// （内部値 return_pending）のまま保持する。配送番号を明示的に保存した時点を
+		// 返品発送完了とみなし、「仕入返品済」（内部値 cancelled）へ遷移させる。
+		if slip.OperationType == "purchase_return" && trackingNumber != "" {
+			var lines []struct{ ProductID string }
+			if err := tx.Table("return_lines").Select("product_id").Where("return_slip_id=?", returnID).
+				Order("line_number").Scan(&lines).Error; err != nil {
+				return err
+			}
+			for _, line := range lines {
+				var current string
+				productResult := tx.Raw(`SELECT inventory_status FROM products
+					WHERE organization_id=? AND id=? FOR UPDATE`, organizationID, line.ProductID).Scan(&current)
+				if productResult.Error != nil {
+					return productResult.Error
+				}
+				if productResult.RowsAffected == 0 {
+					return ErrProductUnavailable
+				}
+				if current == "cancelled" {
+					continue
+				}
+				if current != "return_pending" {
+					return ErrReturnState
+				}
+				if err := tx.Exec(`UPDATE products SET inventory_status='cancelled',cancelled_at=?,cancelled_by=?,
+					cancel_reason=?,updated_at=? WHERE organization_id=? AND id=?`, now, actorUserID,
+					"仕入返品の配送番号保存", now, organizationID, line.ProductID).Error; err != nil {
+					return err
+				}
+				eventID, _ := database.NewID("ive")
+				if err := tx.Exec(`INSERT INTO inventory_events(
+					id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
+				) VALUES(?,?,?,?,?,?,?,?,?)`, eventID, organizationID, line.ProductID,
+					"purchase_return_tracking_confirmed", "return_pending", "cancelled",
+					"配送番号保存により仕入返品済へ変更", actorUserID, now).Error; err != nil {
+					return err
+				}
+			}
+		}
+
+		return tx.Table("return_slips").Where("organization_id=? AND id=?", organizationID, returnID).
+			Updates(map[string]any{"carrier": carrier, "tracking_number": trackingNumber, "updated_at": now}).Error
+	})
+	if err != nil {
+		return ReturnSlipRecord{}, err
 	}
 	return r.ReturnSlip(ctx, organizationID, returnID)
 }
@@ -269,6 +328,11 @@ func (r *Repository) ConfirmReturn(ctx context.Context, organizationID, returnID
 			}
 			if slip.OperationType == "purchase_return" && current != "return_pending" {
 				return ErrReturnState
+			}
+			// 仕入返品の確定は伝票の承認だけを行い、商品は「仕入返品中」のまま保持する。
+			// 「仕入返品済」への遷移は配送番号を保存した時点で UpdateReturnTracking が行う。
+			if slip.OperationType == "purchase_return" {
+				continue
 			}
 			if err := tx.Exec(`UPDATE products SET inventory_status=?,updated_at=? WHERE id=?`, line.ToStatus, now, line.ProductID).Error; err != nil {
 				return err

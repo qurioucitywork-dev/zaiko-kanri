@@ -108,6 +108,10 @@ func amount(currency string, value int64) string {
 	prefix := "￥"
 	if strings.EqualFold(currency, "USD") {
 		prefix = "$"
+	} else if strings.EqualFold(currency, "EUR") {
+		prefix = "€"
+	} else if strings.EqualFold(currency, "HKD") {
+		prefix = "HK$"
 	}
 	return prefix + pdfFormatInteger(value)
 }

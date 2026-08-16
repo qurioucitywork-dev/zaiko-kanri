@@ -145,6 +145,35 @@ func TestUniquePurchaseItemsMigrationSplitsBulkLines(t *testing.T) {
 	}
 }
 
+func TestPurchaseInventoryConsistencyMigrationEnforcesOneToOneLink(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000036_purchase_inventory_consistency" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase inventory consistency migration 000036 is missing")
+	}
+	for _, fragment := range []string{
+		"idx_products_one_per_purchase_line",
+		"assert_purchase_inventory_consistency",
+		"purchase_slips_inventory_consistency",
+		"purchase_lines_inventory_consistency",
+		"products_purchase_inventory_consistency",
+		"expected_count <> actual_count",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase inventory consistency migration is missing %q", fragment)
+		}
+	}
+}
+
 func TestPurchaseTaxModeMigrationFixesTaxSnapshot(t *testing.T) {
 	migrations, err := migrationCatalog()
 	if err != nil {
@@ -397,6 +426,50 @@ func TestConsignmentFinancialSnapshotMigrationPersistsRegistrationAndIssueEviden
 	} {
 		if !strings.Contains(sql, fragment) {
 			t.Fatalf("consignment financial snapshot migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestUnifiedBusinessPartnersMigrationAddsClassificationFields(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000037_unify_business_partners" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("unified business partners migration 000037 is missing")
+	}
+	for _, fragment := range []string{"region_type", "closing_day", "is_other", "domestic", "overseas"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("unified business partners migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPartnerContactDetailsMigrationAddsOperationalFields(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000038_partner_contact_details" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("partner contact details migration 000038 is missing")
+	}
+	for _, fragment := range []string{"contact_phone", "antique_license_number", "LPAD", "^T[0-9]{13}$"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("partner contact details migration is missing %q", fragment)
 		}
 	}
 }

@@ -19,7 +19,7 @@ const PE_PURCHASE_CSV_HEADERS = Object.freeze([
   '仕入日', '仕入先コード', '仕入担当者コード', '仕入区分',
   'SKU', '売価（USD）', '仕入金額（JPY・税抜）',
   'ブランドコード', 'モデル名', '型番（Ref.）', 'シリアルNo.',
-  '素材コード', '駆動方式コード', 'ベルト素材コード', '文字盤コード', '特徴・備考',
+  '素材コード', '駆動方式コード', 'ベルト素材コード', '特徴・備考',
 ]);
 
 // ── 伝票番号採番 ───────────────────────────────────────
@@ -66,7 +66,9 @@ function peGetStaffDisplayName(value, fallback = '—') {
 
 /** 仕入区分を国内／海外の永続値へ正規化する。既存伝票は国内仕入として扱う。 */
 function peNormalizePurchaseTaxMode(value) {
-  return value === PE_PURCHASE_TAX_OVERSEAS ? PE_PURCHASE_TAX_OVERSEAS : PE_PURCHASE_TAX_DOMESTIC;
+  return value === PE_PURCHASE_TAX_OVERSEAS || String(value) === '2'
+    ? PE_PURCHASE_TAX_OVERSEAS
+    : PE_PURCHASE_TAX_DOMESTIC;
 }
 
 function peGetPurchaseTaxInfo(slip = _peSlipData) {
@@ -695,7 +697,19 @@ function peRenderList() {
   const countEl = document.getElementById('pe-list-count');
   if (!tbody) return;
 
-  if (countEl) countEl.textContent = `全 ${slips.length} 件`;
+  const reflectedLineCount = (slip, line) => slip.apiManaged
+    ? Math.max(0, Number(line.generatedProductCount) || 0)
+    : Math.max(0, Number(line.quantity) || 1);
+  const reflectedProductCount = slips.reduce((total, slip) => total + (slip.lines || []).reduce(
+    (lineTotal, line) => lineTotal + reflectedLineCount(slip, line), 0), 0);
+  const pendingProductCount = slips.reduce((total, slip) => total + (slip.lines || []).reduce(
+    (lineTotal, line) => lineTotal + Math.max(0, (Number(line.quantity) || 1) - reflectedLineCount(slip, line)), 0), 0);
+  if (countEl) {
+    countEl.textContent = `全 ${slips.length}伝票 / 在庫反映 ${reflectedProductCount}点${pendingProductCount ? ` / 未反映 ${pendingProductCount}点` : ''}`;
+    countEl.title = pendingProductCount
+      ? '未反映点数は下書き伝票です。在庫点数との比較には「在庫反映」を使用します。'
+      : '在庫反映点数は在庫一覧の全ステータス件数と一致します。';
+  }
   if (emptyEl) emptyEl.style.display = slips.length === 0 ? '' : 'none';
 
   // 降順（新しい順）
@@ -707,15 +721,32 @@ function peRenderList() {
     const staffName = peGetStaffDisplayName(slip.staff);
     const canIssue = typeof canIssuePurchaseSlip === 'function' ? canIssuePurchaseSlip() : true;
     const issueLabel = slip.issuedAt ? '再発行' : '発行';
+    const formatPurchaseAmount = amount => typeof formatPurchaseSlipAmount === 'function'
+      ? formatPurchaseSlipAmount(amount, slip)
+      : `¥${Number(amount || 0).toLocaleString('ja-JP')}`;
+    const grandTotalLabel = totals.mode === PE_PURCHASE_TAX_OVERSEAS
+      ? '仕入合計（対象外）'
+      : '仕入合計（税込）';
     return `<tr>
       <td><strong>${_escHtml(slip.id)}</strong></td>
       <td>${_escHtml(slip.date)}</td>
-      <td style="white-space:nowrap;">${_escHtml(typeof formatPurchaseIssuedAt === 'function' ? formatPurchaseIssuedAt(slip.issuedAt) : (slip.issuedAt || '未発行'))}</td>
+      <td>${_escHtml(typeof formatPurchaseIssuedAt === 'function' ? formatPurchaseIssuedAt(slip.issuedAt) : (slip.issuedAt || '未発行'))}</td>
       <td>${_escHtml(suppName)}</td>
       <td>${_escHtml(staffName)}</td>
       <td><span class="status-badge">${_escHtml(totals.modeLabel)}</span><br><small>${_escHtml(totals.taxLabel)}</small></td>
-      <td style="text-align:right;">${(slip.lines || []).length} 件</td>
-      <td style="text-align:right;font-weight:bold;color:var(--primary);">${typeof formatPurchaseSlipAmount === 'function' ? formatPurchaseSlipAmount(totals.grandTotal, slip) : `¥${totals.grandTotal.toLocaleString('ja-JP')}`}</td>
+      <td style="text-align:right;">${(slip.lines || []).reduce((sum, line) => sum + reflectedLineCount(slip, line), 0)} 点${slip.rawStatus === 'draft' ? '<br><small>下書き・未反映</small>' : ''}</td>
+      <td class="pe-purchase-total-cell">
+        <div class="pe-purchase-total-stack">
+          <div class="pe-purchase-total-line">
+            <span class="pe-purchase-total-label">仕入小計（税抜）</span>
+            <strong class="pe-purchase-total-value">${formatPurchaseAmount(totals.subtotal)}</strong>
+          </div>
+          <div class="pe-purchase-total-line pe-purchase-total-line-grand">
+            <span class="pe-purchase-total-label">${grandTotalLabel}</span>
+            <strong class="pe-purchase-total-value">${formatPurchaseAmount(totals.grandTotal)}</strong>
+          </div>
+        </div>
+      </td>
       <td style="text-align:right;font-weight:bold;color:var(--success);">${formatSalePrice(totals.saleTotal)}</td>
       <td style="text-align:center;">
         <button class="btn btn-outline btn-sm" onclick="peViewSlip('${_escHtml(slip.id)}')">
@@ -1119,19 +1150,18 @@ function _peCSVTemplateSampleRow() {
   const material = (APP_DATA.materials || [])[0] || {};
   const movement = (APP_DATA.movements || [])[0] || {};
   const beltMaterial = (APP_DATA.beltMaterialRecords || [])[0] || {};
-  const dial = (APP_DATA.dialRecords || [])[0] || {};
   return [
-    localToday, supplier.code || '', staff.code || '', '国内仕入',
+    localToday, supplier.code || '', staff.code || '', '1',
     `SAMPLE-${localToday.replace(/-/g, '')}-001`, 10000, 1000000,
     brand.code || '', 'サブマリーナ', '116610LN', 'SAMPLE-SERIAL-001',
-    material.code || '', movement.code || '', beltMaterial.code || '', dial.code || '',
+    material.code || '', movement.code || '', beltMaterial.code || '',
     '入力例：必要に応じて変更してください',
   ];
 }
 
 /** 仕入伝票CSV取込と同じ列順で、取込可能な入力例付きテンプレートを出力する。 */
 function peDownloadCSVTemplate() {
-  const result = _peDownloadCSVRows('仕入伝票_CSVテンプレート.csv', [PE_PURCHASE_CSV_HEADERS, _peCSVTemplateSampleRow()]);
+  const result = _peDownloadCSVRows('仕入登録テンプレート.csv', [PE_PURCHASE_CSV_HEADERS, _peCSVTemplateSampleRow()]);
   showToast('success', 'CSVテンプレート', '入力例1行付きの仕入CSVテンプレートをダウンロードしました');
   return result;
 }
@@ -1157,15 +1187,14 @@ function _peCSVExportRow(slip, line) {
   const material = _peCSVFindRecord(APP_DATA.materials || [], detail.material);
   const movement = _peCSVFindRecord(APP_DATA.movements || [], detail.movement);
   const beltMaterial = _peCSVFindRecord(APP_DATA.beltMaterialRecords || [], detail.belt);
-  const dial = _peCSVFindRecord(APP_DATA.dialRecords || [], detail.dial);
   const taxInfo = peGetPurchaseTaxInfo(slip);
   return [
     slip.date || '', supplier?.code || slip.supplier || '',
-    staff?.code || slip.staffCode || slip.staff || '', taxInfo.modeLabel, line.sku || '',
+    staff?.code || slip.staffCode || slip.staff || '', taxInfo.mode === PE_PURCHASE_TAX_DOMESTIC ? '1' : '2', line.sku || '',
     Number(line.salePrice) || 0, Number(line.purchasePrice) || 0,
     brand?.code || detail.brandCode || '', detail.model || '', detail.ref || '', detail.serial || '',
     material?.code || detail.material || '', movement?.code || detail.movement || '',
-    beltMaterial?.code || '', dial?.code || '', detail.note || '',
+    beltMaterial?.code || '', detail.note || '',
   ];
 }
 
@@ -1315,9 +1344,9 @@ function _peCSVParseAmount(value, label, rowNumber, errors) {
 
 function _peCSVNormalizeTaxMode(value, rowNumber, errors) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (!normalized || normalized === 'domestic' || normalized === '国内' || normalized === '国内仕入') return PE_PURCHASE_TAX_DOMESTIC;
-  if (normalized === 'overseas' || normalized === '海外' || normalized === '海外仕入') return PE_PURCHASE_TAX_OVERSEAS;
-  errors.push(`${rowNumber}行目: 仕入区分は「国内仕入」または「海外仕入」で入力してください`);
+  if (!normalized || normalized === '1' || normalized === 'domestic' || normalized === '国内' || normalized === '国内仕入') return PE_PURCHASE_TAX_DOMESTIC;
+  if (normalized === '2' || normalized === 'overseas' || normalized === '海外' || normalized === '海外仕入') return PE_PURCHASE_TAX_OVERSEAS;
+  errors.push(`${rowNumber}行目: 仕入区分は国内仕入「1」または海外仕入「2」で入力してください`);
   return PE_PURCHASE_TAX_DOMESTIC;
 }
 
@@ -1383,7 +1412,6 @@ function _peBuildPurchaseSlipsFromCSV(text) {
     const material = _peCSVResolveMaster(APP_DATA.materials || [], get('素材コード'), '', '素材', rowNumber, errors, false);
     const movement = _peCSVResolveMaster(APP_DATA.movements || [], get('駆動方式コード'), '', '駆動方式', rowNumber, errors, false);
     const beltMaterial = _peCSVResolveMaster(APP_DATA.beltMaterialRecords || [], get('ベルト素材コード'), '', 'ベルト素材', rowNumber, errors, false);
-    const dial = _peCSVResolveMaster(APP_DATA.dialRecords || [], get('文字盤コード'), '', '文字盤', rowNumber, errors, false);
 
     const sku = get('SKU');
     if (!sku) errors.push(`${rowNumber}行目: SKUを入力してください`);
@@ -1423,7 +1451,7 @@ function _peBuildPurchaseSlipsFromCSV(text) {
       productDetail: {
         brand: brand?.name || '', brandCode: brand?.code || '', model: get('モデル名'), ref: get('型番（Ref.）'),
         serial: get('シリアルNo.'), material: material?.code || '', movement: movement?.code || '', condition: '',
-        belt: beltMaterial?.name || '', dial: dial?.name || '', boxNo: null,
+        belt: beltMaterial?.name || '', dial: '', boxNo: null,
         accessories: [], braceletQty: null, note: get('特徴・備考'),
       },
     });

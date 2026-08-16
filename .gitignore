@@ -8,9 +8,12 @@
 /.backups/
 /output/
 /.gocache/
+/.logs/
 
 # Local configuration
 .env
+.env.local
+.env.*.local
 
 # Test and coverage output
 coverage.out

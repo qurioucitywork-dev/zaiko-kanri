@@ -159,7 +159,7 @@ func (s *Server) apiPartnerCreate(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, persistence.ErrPartnerInvalid) {
 			status = http.StatusBadRequest
 		}
-		writeAPIError(w, status, "partner_create_failed", "会社情報または販売先・仕入先コードを確認してください。")
+		writeAPIError(w, status, "partner_create_failed", "会社情報または取引区分を確認してください。")
 		return
 	}
 	after, _ := json.Marshal(record)

@@ -58,6 +58,10 @@ func (s *Server) apiReturnCreate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_purchase_return", "仕入先と返品元の仕入伝票を指定してください。")
 		return
 	}
+	if input.OperationType == "purchase_return" && strings.TrimSpace(input.Notes) == "" {
+		writeAPIError(w, http.StatusBadRequest, "purchase_return_notes_required", "備考を入力してください。")
+		return
+	}
 	if len(input.Carrier) > 100 || len(input.TrackingNumber) > 200 {
 		writeAPIError(w, http.StatusBadRequest, "invalid_tracking", "配送会社と追跡番号を確認してください。")
 		return

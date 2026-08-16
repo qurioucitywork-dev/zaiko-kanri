@@ -44,6 +44,10 @@ function Notice({ kind = "error", children }) { return <div className={`alert ${
 function Loading() { return <section className="card react-loading" aria-busy="true"><div /><div /><div /></section>; }
 function Empty({ text = "対象データはありません。" }) { return <div className="empty-state"><strong>{text}</strong><p>検索条件や登録内容を確認してください。</p></div>; }
 function Status({ value }) { return <span className={`status-badge ${value}`}>{statusLabel(value)}</span>; }
+function InventoryStatus({ value }) {
+  const label = value === "return_pending" ? "仕入返品中" : value === "cancelled" ? "仕入返品済" : statusLabel(value);
+  return <span className={`status-badge ${value}`}>{label}</span>;
+}
 function CsvLink({ kind, children = "ダウンロード" }) { return <a className="button secondary" href={`/api/v1/exports/${kind}.csv`}>↓ {children}</a>; }
 function TableCard({ title, description, count, columns, rows, empty = "対象データはありません。" }) {
   return <section className="card"><div className="card-header"><div><h3>{title}</h3><p>{description}</p></div><span className="badge">{count ?? rows.length}件</span></div>
@@ -131,7 +135,7 @@ export function ProductDetail() {
   async function upload(event) { const file = event.target.files?.[0]; if (!file) return; const body = new FormData(); body.append("file", file); setUploading(true); setError(""); try { await api.post(`/products/${id}/files`, body, session.csrfToken); files.reload(); } catch (reason) { setError(reason.message); } finally { setUploading(false); event.target.value = ""; } }
   if (product.loading) return <Loading />; if (product.error) return <Notice>{product.error}</Notice>; const item = product.data;
   return <><PageHeader title={item.productCode} description={`${item.brand} ${item.modelNumber || ""}`} actions={<Link className="button ghost" to="/products">← 在庫一覧</Link>} />{error && <Notice>{error}</Notice>}
-    <section className="detail-grid"><article className="card detail-card"><h3>商品情報</h3><dl><dt>SKU</dt><dd>{item.sku || "—"}</dd><dt>リファレンス</dt><dd>{item.referenceNumber || "—"}</dd><dt>シリアル</dt><dd>{item.serialNumber || "—"}</dd><dt>仕入日</dt><dd>{item.purchaseDate}</dd><dt>原価</dt><dd>{money(item.costAmountMinor, item.costCurrency)}</dd><dt>売価</dt><dd>{money(item.baseSalePriceMinor, item.baseSaleCurrency)}</dd><dt>状態</dt><dd><Status value={item.inventoryStatus} /></dd></dl></article>
+    <section className="detail-grid"><article className="card detail-card"><h3>商品情報</h3><dl><dt>SKU</dt><dd>{item.sku || "—"}</dd><dt>リファレンス</dt><dd>{item.referenceNumber || "—"}</dd><dt>シリアル</dt><dd>{item.serialNumber || "—"}</dd><dt>仕入日</dt><dd>{item.purchaseDate}</dd><dt>原価</dt><dd>{money(item.costAmountMinor, item.costCurrency)}</dd><dt>売価</dt><dd>{money(item.baseSalePriceMinor, item.baseSaleCurrency)}</dd><dt>状態</dt><dd><InventoryStatus value={item.inventoryStatus} /></dd></dl></article>
       <article className="card detail-card"><h3>商品画像</h3><label className="button secondary upload-button">{uploading ? "アップロード中…" : "＋ 画像追加"}<input type="file" accept="image/jpeg,image/png,image/webp" onChange={upload} disabled={uploading} /></label><div className="image-grid">{(files.data?.items || []).map((file) => <img key={file.id} src={file.url} alt={`${item.productCode} 商品画像`} loading="lazy" />)}</div></article></section></>;
 }
 
@@ -279,7 +283,7 @@ export function AuditPage() {
 
 export function StocktakePage() {
   const remote = useRemote("/products?page=1&pageSize=100&sort=code_asc&includeCancelled=true"); if (remote.loading) return <Loading />;
-  return <><PageHeader title="棚卸" description="バーコード・商品コード単位で在庫状態を確認し、棚卸CSVを保存履歴付きで出力します。" actions={<CsvLink kind="stocktake" />} />{remote.error && <Notice>{remote.error}</Notice>}<TableCard title="棚卸対象" rows={remote.data?.items || []} columns={[{ key: "productCode", label: "商品コード" }, { key: "brand", label: "ブランド" }, { key: "modelNumber", label: "モデル" }, { key: "serialNumber", label: "シリアル" }, { key: "inventoryStatus", label: "在庫状態", render: (row) => <Status value={row.inventoryStatus} /> }, { key: "checked", label: "確認", render: (row) => <label className="stock-check"><input type="checkbox" />確認済み</label> }]} /></>;
+  return <><PageHeader title="棚卸" description="バーコード・商品コード単位で在庫状態を確認し、棚卸CSVを保存履歴付きで出力します。" actions={<CsvLink kind="stocktake" />} />{remote.error && <Notice>{remote.error}</Notice>}<TableCard title="棚卸対象" rows={remote.data?.items || []} columns={[{ key: "productCode", label: "商品コード" }, { key: "brand", label: "ブランド" }, { key: "modelNumber", label: "モデル" }, { key: "serialNumber", label: "シリアル" }, { key: "inventoryStatus", label: "在庫状態", render: (row) => <InventoryStatus value={row.inventoryStatus} /> }, { key: "checked", label: "確認", render: (row) => <label className="stock-check"><input type="checkbox" />確認済み</label> }]} /></>;
 }
 
 export function GuestPortal({ session, onLogout }) {

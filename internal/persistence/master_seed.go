@@ -78,15 +78,15 @@ func (r *Repository) SeedPreviewMasters(ctx context.Context) error {
 			ID, Code, Name, Representative, Email, Phone, Address, Invoice string
 			Roles                                                          []catalogSeed
 		}{
-			{"partner_cli_001", "CLI-001", "クロノス東京株式会社", "田中 正雄", "info@chronos-tokyo.co.jp", "03-9999-0000", "東京都新宿区西新宿2-1-1", "T7777888899", []catalogSeed{{"B004", "buyer"}}},
-			{"partner_cli_002", "CLI-002", "タイムレス商会有限会社", "中村 健一", "info@timeless.co.jp", "092-444-5555", "福岡県福岡市博多区博多駅前3-2-8", "T3333444455", []catalogSeed{{"B002", "buyer"}}},
-			{"partner_cli_003", "CLI-003", "ウォッチマート", "", "guest.b001@local.invalid", "03-7777-8888", "東京都渋谷区", "T1111222233", []catalogSeed{{"B001", "buyer"}}},
-			{"partner_cli_004", "CLI-004", "ラグジュアリーアイランド", "", "guest.b003@local.invalid", "098-666-7777", "沖縄県那覇市", "T5555666677", []catalogSeed{{"B003", "buyer"}}},
-			{"partner_cli_005", "CLI-005", "田中商事", "", "", "03-1234-5678", "東京都台東区", "T1234567890", []catalogSeed{{"S001", "supplier"}}},
-			{"partner_cli_006", "CLI-006", "山田時計店", "", "", "06-9876-5432", "大阪府大阪市", "T0987654321", []catalogSeed{{"S002", "supplier"}}},
-			{"partner_cli_007", "CLI-007", "ゴールデンウォッチ", "", "", "045-111-2222", "神奈川県横浜市", "T1122334455", []catalogSeed{{"S003", "supplier"}}},
-			{"partner_cli_008", "CLI-008", "プレシャスメタル", "", "", "052-333-4444", "愛知県名古屋市", "T5566778899", []catalogSeed{{"S004", "supplier"}}},
-			{"partner_cli_009", "CLI-009", "レアウォッチジャパン", "", "", "03-5555-6666", "東京都港区", "T9988776655", []catalogSeed{{"S005", "supplier"}}},
+			{"partner_cli_001", "CLI-001", "クロノス東京株式会社", "田中 正雄", "info@chronos-tokyo.co.jp", "03-9999-0000", "東京都新宿区西新宿2-1-1", "T0007777888899", []catalogSeed{{"B004", "buyer"}, {"S006", "supplier"}}},
+			{"partner_cli_002", "CLI-002", "タイムレス商会有限会社", "中村 健一", "info@timeless.co.jp", "092-444-5555", "福岡県福岡市博多区博多駅前3-2-8", "T0003333444455", []catalogSeed{{"B002", "buyer"}}},
+			{"partner_cli_003", "CLI-003", "ウォッチマート", "", "guest.b001@local.invalid", "03-7777-8888", "東京都渋谷区", "T0001111222233", []catalogSeed{{"B001", "buyer"}}},
+			{"partner_cli_004", "CLI-004", "ラグジュアリーアイランド", "", "guest.b003@local.invalid", "098-666-7777", "沖縄県那覇市", "T0005555666677", []catalogSeed{{"B003", "buyer"}}},
+			{"partner_cli_005", "CLI-005", "田中商事", "", "", "03-1234-5678", "東京都台東区", "T0001234567890", []catalogSeed{{"S001", "supplier"}}},
+			{"partner_cli_006", "CLI-006", "山田時計店", "", "", "06-9876-5432", "大阪府大阪市", "T0000987654321", []catalogSeed{{"S002", "supplier"}}},
+			{"partner_cli_007", "CLI-007", "ゴールデンウォッチ", "", "", "045-111-2222", "神奈川県横浜市", "T0001122334455", []catalogSeed{{"S003", "supplier"}}},
+			{"partner_cli_008", "CLI-008", "プレシャスメタル", "", "", "052-333-4444", "愛知県名古屋市", "T0005566778899", []catalogSeed{{"S004", "supplier"}}},
+			{"partner_cli_009", "CLI-009", "レアウォッチジャパン", "", "", "03-5555-6666", "東京都港区", "T0009988776655", []catalogSeed{{"S005", "supplier"}}},
 		}
 		now := time.Now().UTC()
 		for _, partner := range partners {

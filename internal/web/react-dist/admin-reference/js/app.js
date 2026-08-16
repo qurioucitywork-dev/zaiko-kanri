@@ -339,6 +339,7 @@ function hydrateBusinessWorkflowState() {
     BUSINESS_WORKFLOW_COLLECTIONS.forEach(key => {
       if (Array.isArray(stored[key])) APP_DATA[key] = stored[key];
     });
+    normalizeInventoryCollectionStatuses();
     if (typeof syncPurchaseRequestReservations === 'function') syncPurchaseRequestReservations();
     return true;
   } catch {
@@ -453,17 +454,37 @@ function syncPurchaseSlipToInventory(slip) {
   return affected;
 }
 
+/** 商品在庫ステータスの旧名称を現行名称へ統一する。DBの英語値にも対応する。 */
+function normalizeInventoryStatusLabel(status) {
+  const value = String(status || '').trim();
+  if (['return_pending', '仕入返品', '仕入返品中'].includes(value)) return '仕入返品中';
+  if (['cancelled', '取消', '取消済', '取り消し', '仕入返品済'].includes(value)) return '仕入返品済';
+  return value;
+}
+
+/**
+ * ブラウザ保存に残っている旧商品ステータスを、読込時点で現行名称へ統一する。
+ * 伝票自体の「取消」は対象にせず、商品在庫だけを書き換える。
+ */
+function normalizeInventoryCollectionStatuses() {
+  (APP_DATA.inventory || []).forEach(item => {
+    const normalized = normalizeInventoryStatusLabel(item.status);
+    if (normalized) item.status = normalized;
+  });
+}
+
 function _setRecordInventoryStatus(record, status) {
+  const normalizedStatus = normalizeInventoryStatusLabel(status);
   const codes = [];
   (record?.items || []).forEach(recordItem => {
     if (recordItem.returnType) return;
     const inventoryItem = (APP_DATA.inventory || []).find(item => item.code === recordItem.code);
     if (!inventoryItem) return;
-    inventoryItem.status = status;
+    inventoryItem.status = normalizedStatus;
     if (typeof clearInventoryReservationMetadata === 'function') clearInventoryReservationMetadata(inventoryItem);
     codes.push(inventoryItem.code);
   });
-  if (['出荷済', '売上済', '仕入返品'].includes(status)
+  if (['出荷済', '売上済', '仕入返品中', '仕入返品済'].includes(normalizedStatus)
       && typeof unpublishGuestProducts === 'function') unpublishGuestProducts(codes);
   return codes;
 }
@@ -488,7 +509,7 @@ function applyBusinessRecordState(type, record) {
       if (inventoryItem) inventoryItem.status = '在庫中';
     });
   } else if (type === 'purchasereturn') {
-    _setRecordInventoryStatus(record, '仕入返品');
+    _setRecordInventoryStatus(record, '仕入返品中');
   }
 }
 
@@ -518,6 +539,7 @@ function syncApprovalRequestForBusinessRecord(type, recordId, status, revisionCo
 }
 
 function refreshLinkedBusinessViews({ persist = true, source = '' } = {}) {
+  normalizeInventoryCollectionStatuses();
   if (persist) persistBusinessWorkflowState();
   if (typeof _refreshTaskCounts === 'function') _refreshTaskCounts();
   if (typeof refreshSlipList === 'function' && document.getElementById('slipListBody')) refreshSlipList();
@@ -564,6 +586,16 @@ document.addEventListener('DOMContentLoaded', async function () {
         window.location.href = 'index.html';
         return;
       }
+      // API接続画面で静的サンプルを「全件」として残すと、仕入伝票と
+      // 在庫の点数が別データ同士で比較される。障害時は業務データを空にし、
+      // 復旧するまで明示的なエラーとして扱う。
+      ['inventory', 'purchaseSlips', 'sales', 'shipments', 'consignments', 'purchaseReturns', 'salesReturns']
+        .forEach(key => { APP_DATA[key] = []; });
+      window.setTimeout(() => {
+        if (typeof showToast === 'function') {
+          showToast('error', 'DBデータを取得できません', 'サンプル表示には切り替えていません。サーバー接続を確認して再読み込みしてください。');
+        }
+      }, 0);
     }
   }
   const todayDate = document.getElementById('todayDate');
@@ -892,7 +924,7 @@ function init_dashboard() {
       <td><code style="font-size:11px;">${item.code}</code></td>
       <td>${item.brand}<br><span style="font-size:11px;color:var(--text-muted);">${item.model}</span></td>
       <td>${formatPrice(item.purchasePrice)}</td>
-      <td>${getStatusBadge(item.status)}</td>
+      <td>${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</td>
     </tr>
   `).join('');
 
@@ -1155,7 +1187,7 @@ const ITEMS_PER_PAGE = 10;
 let _invStatusSort = 'none';
 
 // 在庫の業務進行順。未定義のステータスは末尾にまとめる。
-const INV_STATUS_SORT_ORDER = ['在庫中', '取置中', '委託中', '仕入返品中', '出荷済', '売上済', '仕入返品', '保留'];
+const INV_STATUS_SORT_ORDER = ['在庫中', '取置中', '委託中', '仕入返品中', '出荷済', '売上済', '仕入返品済', '保留'];
 
 // =====================================================
 // 在庫一覧 — 検索・フィルター
@@ -1578,6 +1610,8 @@ function _invAccTogglePanel(e) {
   e.stopPropagation();
   const panel   = document.getElementById('inv-acc-panel');
   const trigger = document.getElementById('inv-acc-trigger');
+  const wrap    = document.getElementById('inv-acc-dropdown-wrap');
+  const searchPanel = document.getElementById('inv-search-panel');
   if (!panel || !trigger) return;
   const isOpen = panel.classList.contains('open');
   // 他のドロップダウンを閉じる（将来拡張用）
@@ -1585,6 +1619,8 @@ function _invAccTogglePanel(e) {
   if (!isOpen) {
     panel.classList.add('open');
     trigger.classList.add('open');
+    if (wrap) wrap.classList.add('open');
+    if (searchPanel) searchPanel.classList.add('inv-dropdown-open');
     trigger.setAttribute('aria-expanded', 'true');
   }
 }
@@ -1595,8 +1631,12 @@ function _invAccTogglePanel(e) {
 function _invAccClosePanel() {
   const panel   = document.getElementById('inv-acc-panel');
   const trigger = document.getElementById('inv-acc-trigger');
+  const wrap    = document.getElementById('inv-acc-dropdown-wrap');
+  const searchPanel = document.getElementById('inv-search-panel');
   if (panel)   panel.classList.remove('open');
   if (trigger) { trigger.classList.remove('open'); trigger.setAttribute('aria-expanded', 'false'); }
+  if (wrap) wrap.classList.remove('open');
+  if (searchPanel) searchPanel.classList.remove('inv-dropdown-open');
 }
 
 // パネル外クリックで閉じる
@@ -1671,6 +1711,8 @@ function resetInventorySearch() {
     const el = document.getElementById(id);
     if (el) el.selectedIndex = 0;
   });
+  const statusFilter = document.getElementById('inv-f-status');
+  if (statusFilter) statusFilter.value = '在庫中';
   // 付属品マルチセレクトをリセット（ステートベース）
   _invAccFilterState = [];
   _invAccSyncCheckboxes();
@@ -1784,41 +1826,46 @@ function filterInventory() {
   if (_invSearched) execInventorySearch();
 }
 
+// ステータス未指定の「すべて」は、仕入伝票から生成された商品との突合に使うため
+// 仕入返品済を含む全商品を返す。通常利用時は検索条件の初期値が「在庫中」なので、
+// 実在庫だけを見たい従来の初期表示は維持される。
+function _matchesInventoryFilters(item, f) {
+  const itemStatus = normalizeInventoryStatusLabel(item.status);
+  const filterStatus = normalizeInventoryStatusLabel(f.status);
+  if (f.code     && !item.code.toLowerCase().includes(f.code))               return false;
+  if (f.brand    && item.brand !== f.brand)                                   return false;
+  if (f.ref      && !(item.ref     || '').toLowerCase().includes(f.ref))      return false;
+  if (f.serial   && !(item.serial  || '').toLowerCase().includes(f.serial))   return false;
+  if (f.sku      && !(item.sku     || '').toLowerCase().includes(f.sku))      return false;
+  if (f.supplier && item.supplier !== f.supplier)                             return false;
+  if (f.staff    && (item.staff || '') !== f.staff)                           return false;
+  if (f.material && (item.material || '') !== f.material)                     return false;
+  if (f.movement && (item.movement || '') !== f.movement)                     return false;
+  if (f.condition && (item.condition || '') !== f.condition)                  return false;
+  if (filterStatus && itemStatus !== filterStatus)                            return false;
+  if (f.box      && String(item.boxNo || '') !== f.box)                       return false;
+  if (f.accessories.length > 0) {
+    const itemAccs = item.accessories || [];
+    if (!f.accessories.some(sel => itemAccs.includes(sel))) return false;
+  }
+  if (f.dateFrom && (item.purchaseDate || '') < f.dateFrom)                   return false;
+  if (f.dateTo   && (item.purchaseDate || '') > f.dateTo)                     return false;
+  return true;
+}
+
 function renderInventoryTable() {
   if (!_invSearched) return;   // 検索前は描画しない
 
   const f = _getInvFilters();
 
-  let filtered = APP_DATA.inventory.filter(item => {
-    if (f.code     && !item.code.toLowerCase().includes(f.code))           return false;
-    if (f.brand    && item.brand !== f.brand)                               return false;
-    if (f.ref      && !(item.ref     || '').toLowerCase().includes(f.ref))  return false;
-    if (f.serial   && !(item.serial  || '').toLowerCase().includes(f.serial)) return false;
-    if (f.sku      && !(item.sku     || '').toLowerCase().includes(f.sku))  return false;
-    if (f.supplier && item.supplier !== f.supplier)                         return false;
-    if (f.staff    && (item.staff || '') !== f.staff)                       return false;
-    if (f.material && (item.material || '') !== f.material)                 return false;
-    if (f.movement && (item.movement || '') !== f.movement)                 return false;
-    if (f.condition && (item.condition || '') !== f.condition)              return false;
-    if (f.status   && item.status !== f.status)                             return false;
-    if (f.box      && String(item.boxNo || '') !== f.box)                   return false;
-    // 付属品：完全一致 OR 条件（選択値のいずれかが在庫の accessories に含まれていれば通過）
-    if (f.accessories.length > 0) {
-      const itemAccs = item.accessories || [];
-      const matched  = f.accessories.some(sel => itemAccs.includes(sel));
-      if (!matched) return false;
-    }
-    if (f.dateFrom && (item.purchaseDate || '') < f.dateFrom)               return false;
-    if (f.dateTo   && (item.purchaseDate || '') > f.dateTo)                 return false;
-    return true;
-  });
+  let filtered = APP_DATA.inventory.filter(item => _matchesInventoryFilters(item, f));
 
   if (_invStatusSort !== 'none') {
     filtered = filtered
       .map((item, originalIndex) => ({ item, originalIndex }))
       .sort((a, b) => {
-        const rankA = INV_STATUS_SORT_ORDER.indexOf(a.item.status);
-        const rankB = INV_STATUS_SORT_ORDER.indexOf(b.item.status);
+        const rankA = INV_STATUS_SORT_ORDER.indexOf(normalizeInventoryStatusLabel(a.item.status));
+        const rankB = INV_STATUS_SORT_ORDER.indexOf(normalizeInventoryStatusLabel(b.item.status));
         const safeRankA = rankA === -1 ? INV_STATUS_SORT_ORDER.length : rankA;
         const safeRankB = rankB === -1 ? INV_STATUS_SORT_ORDER.length : rankB;
         const direction = _invStatusSort === 'ascending' ? 1 : -1;
@@ -1860,8 +1907,8 @@ function renderInventoryTable() {
           <td data-inv-col="salePrice" style="font-weight:bold;color:var(--success);">${item.salePrice ? formatInventorySalePrice(item.salePrice) : '—'}</td>
           <td data-inv-col="purchaseDate" style="font-size:12px;white-space:nowrap;">${item.purchaseDate || '—'}</td>
           <td data-inv-col="sku" style="font-size:12px;">${skuVal}</td>
-          <td data-inv-col="accessories" class="acc-cell" style="font-size:11px;" title="${accText}">${accText}</td>
-          <td data-inv-col="status">${getStatusBadge(item.status)}</td>
+          <td data-inv-col="accessories" style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${accText}">${accText}</td>
+          <td data-inv-col="status">${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</td>
           <td data-inv-col="box">${_buildBoxBadge(item.boxNo)}</td>
           <td data-inv-col="qr">
             <button class="btn btn-outline btn-sm inventory-qr-row-btn" style="white-space:nowrap;padding:3px 8px;"
@@ -1891,26 +1938,7 @@ function renderInventoryTable() {
 // 在庫一覧 CSV出力
 function exportInventoryCSV() {
   const f = _getInvFilters();
-  const filtered = APP_DATA.inventory.filter(item => {
-    if (f.code     && !item.code.toLowerCase().includes(f.code))              return false;
-    if (f.brand    && item.brand !== f.brand)                                  return false;
-    if (f.ref      && !(item.ref     || '').toLowerCase().includes(f.ref))     return false;
-    if (f.serial   && !(item.serial  || '').toLowerCase().includes(f.serial))  return false;
-    if (f.sku      && !(item.sku     || '').toLowerCase().includes(f.sku))     return false;
-    if (f.supplier && item.supplier !== f.supplier)                            return false;
-    if (f.staff    && (item.staff || '') !== f.staff)                          return false;
-    if (f.status   && item.status !== f.status)                                return false;
-    if (f.box      && String(item.boxNo || '') !== f.box)                      return false;
-    // 付属品：完全一致 OR 条件（選択値のいずれかが在庫の accessories に含まれていれば通過）
-    if (f.accessories.length > 0) {
-      const itemAccs = item.accessories || [];
-      const matched  = f.accessories.some(sel => itemAccs.includes(sel));
-      if (!matched) return false;
-    }
-    if (f.dateFrom && (item.purchaseDate || '') < f.dateFrom)                  return false;
-    if (f.dateTo   && (item.purchaseDate || '') > f.dateTo)                    return false;
-    return true;
-  });
+  const filtered = APP_DATA.inventory.filter(item => _matchesInventoryFilters(item, f));
   const rows = [
     ['管理番号','ブランド','モデル','型番','シリアル','SKU','仕入先','担当者','仕入金額（JPY）','売価（USD）','仕入日','付属品','ステータス','BOX'],
     ...filtered.map(i => {
@@ -2008,7 +2036,7 @@ function showItemDetail(code) {
   const detailInfoHtml = `
     <div class="detail-grid mb-20">
       <div class="detail-row"><div class="detail-label">商品コード</div><div class="detail-value"><code>${item.code}</code></div></div>
-      <div class="detail-row"><div class="detail-label">ステータス</div><div class="detail-value">${getStatusBadge(item.status)}</div></div>
+      <div class="detail-row"><div class="detail-label">ステータス</div><div class="detail-value">${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</div></div>
       <div class="detail-row"><div class="detail-label">ブランド</div><div class="detail-value">${item.brand}</div></div>
       <div class="detail-row"><div class="detail-label">モデル名</div><div class="detail-value">${item.model}</div></div>
       <div class="detail-row"><div class="detail-label">型番（Ref.）</div><div class="detail-value">${item.ref || '—'}</div></div>
@@ -2080,17 +2108,7 @@ function showItemDetail(code) {
 
   document.getElementById('itemDetailEditBtn').onclick = () => openItemEdit(code);
   switchItemDetailTab('info');
-  const detailModal = document.getElementById('itemDetailModal');
-  const detailBody = document.getElementById('itemDetailBody');
-  // 前回開いた際のスクロール位置を引き継がず、常に商品情報の先頭から表示する。
-  if (detailBody) detailBody.scrollTop = 0;
-  detailModal?.classList.remove('hidden');
-  requestAnimationFrame(() => {
-    if (detailBody) {
-      detailBody.scrollTop = 0;
-      detailBody.scrollTo?.({ top: 0, left: 0, behavior: 'auto' });
-    }
-  });
+  document.getElementById('itemDetailModal').classList.remove('hidden');
 }
 
 /** 商品詳細ポップアップの商品情報／タグ表示を切り替える。 */
@@ -2336,6 +2354,7 @@ function openItemEdit(code) {
   populateProductSpecMasterSelect('ie-movement', 'movement', {
     emptyLabel: '-- 選択 --', selected: item.movement, extraCodes: [item.movement], labelMode: 'code-name',
   });
+  populateBeltMaterialMasterSelect('ie-belt', { selected: item.belt || item.beltMaterial || '' });
 
   // スタッフ
   populateStaffMasterSelect('ie-staff', {
@@ -2382,7 +2401,8 @@ function openItemEdit(code) {
 
   // ステータス
   const stSel = document.getElementById('ie-status');
-  [...stSel.options].forEach(o => { o.selected = o.value === item.status; });
+  const normalizedItemStatus = normalizeInventoryStatusLabel(item.status);
+  [...stSel.options].forEach(o => { o.selected = o.value === normalizedItemStatus; });
 
   // 付属品チェックボックス
   const accDiv = document.getElementById('ie-accessories');
@@ -3034,7 +3054,7 @@ function _puShowExistingBanner(code, item) {
   const banner = document.getElementById('pu-existing-banner');
   if (!banner) return;
   const label = [item.brand, item.model].filter(Boolean).join(' / ') || '詳細不明';
-  const status = item.status || '状態未設定';
+  const status = normalizeInventoryStatusLabel(item.status) || '状態未設定';
   banner.innerHTML = `
     <span class="pu-banner-icon"><i class="fa-solid fa-pen-to-square"></i></span>
     <span class="pu-banner-msg">
@@ -3235,6 +3255,7 @@ function initPurchaseForm() {
 
   populateProductSpecMasterSelect('pu-material', 'material', { emptyLabel: '-- 選択 --', labelMode: 'code-name' });
   populateProductSpecMasterSelect('pu-movement', 'movement', { emptyLabel: '-- 選択 --', labelMode: 'code-name' });
+  populateBeltMaterialMasterSelect('pu-belt');
 
   populateConditionMasterSelect('pu-condition', {
     emptyLabel: '-- 選択 --',
@@ -3305,6 +3326,7 @@ function init_purchase() {
   populateProductSpecMasterSelect('pu-movement', 'movement', {
     emptyLabel: '-- 選択 --', selected: document.getElementById('pu-movement')?.value || '', labelMode: 'code-name',
   });
+  populateBeltMaterialMasterSelect('pu-belt', { selected: document.getElementById('pu-belt')?.value || '' });
   // 商品コード欄をクリア（採番ボタン方式）
   const puCodeEl = document.getElementById('pu-code');
   if (puCodeEl) puCodeEl.value = '';
@@ -3826,10 +3848,23 @@ function getSalesUsdRate() {
   return Number(SALE_PRICE_JPY_PER_USD) || 155;
 }
 
+function getSalesCurrencyRate(currency) {
+  if (currency === 'USD') return getSalesUsdRate();
+  const masterRate = Number((APP_DATA.fxRates || []).find(rate => rate.code === currency)?.rate);
+  return Number.isFinite(masterRate) && masterRate > 0 ? masterRate : 1;
+}
+
+function getSalesCurrencySymbol(currency) {
+  return ({ USD: '$', EUR: '€', HKD: 'HK$', JPY: '¥' })[currency] || currency;
+}
+
 /** 入力通貨の金額を、内部基準のUSDへ換算する */
 function convertSalesEntryToUSD(amount, currency) {
   const value = Number(amount) || 0;
   if (currency === 'JPY') return Math.round(value / getSalesUsdRate());
+  if (currency === 'EUR' || currency === 'HKD') {
+    return Math.round(value * getSalesCurrencyRate(currency) / getSalesUsdRate());
+  }
   return Math.round(value);
 }
 
@@ -3839,7 +3874,9 @@ function formatSalesEntryAmount(usdAmount, currency) {
   if (usd <= 0) return '';
   const displayAmount = currency === 'JPY'
     ? Math.round(usd * getSalesUsdRate())
-    : Math.round(usd);
+    : currency === 'EUR' || currency === 'HKD'
+      ? Math.round(usd * getSalesUsdRate() / getSalesCurrencyRate(currency))
+      : Math.round(usd);
   return displayAmount.toLocaleString('ja-JP');
 }
 
@@ -3847,13 +3884,17 @@ function formatSalesEntryAmount(usdAmount, currency) {
 function convertSalesUSDToDisplay(usdAmount, currency = _salesEntryCurrency) {
   const usd = Number(usdAmount) || 0;
   if (currency === 'JPY') return Math.round(usd * getSalesUsdRate());
+  if (currency === 'EUR' || currency === 'HKD') {
+    return Math.round(usd * getSalesUsdRate() / getSalesCurrencyRate(currency));
+  }
   return Math.round(usd);
 }
 
 /** USD基準金額を、現在選択中の通貨記号付きで表示する */
 function formatSalesDisplayAmount(usdAmount, currency = _salesEntryCurrency) {
   const displayAmount = convertSalesUSDToDisplay(usdAmount, currency);
-  return currency === 'JPY' ? formatPrice(displayAmount) : formatSalePrice(displayAmount);
+  if (currency === 'JPY') return formatPrice(displayAmount);
+  return `${getSalesCurrencySymbol(currency)}${Number(displayAmount || 0).toLocaleString('ja-JP')}`;
 }
 
 /** 販売金額入力欄からUSD基準金額を取得する */
@@ -3872,6 +3913,8 @@ function _syncSalesCurrencyUI() {
   const heading = document.getElementById('sl-price-heading');
   const rateNote = document.getElementById('sl-price-rate');
   const usdButton = document.getElementById('sl-currency-usd');
+  const eurButton = document.getElementById('sl-currency-eur');
+  const hkdButton = document.getElementById('sl-currency-hkd');
   const jpyButton = document.getElementById('sl-currency-jpy');
   const subtotalLabel = document.getElementById('salesSubtotalLabel');
   const taxLabel = document.getElementById('salesTaxLabel');
@@ -3880,23 +3923,29 @@ function _syncSalesCurrencyUI() {
   const taxToggle = document.getElementById('taxFreeToggle');
   const taxModeLabel = document.getElementById('taxFreeLabel');
 
-  if (heading) heading.textContent = isJPY ? '販売金額（円入力・税抜）' : '販売金額（USD・税抜）';
-  if (rateNote) rateNote.textContent = `1 USD = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  if (subtotalLabel) subtotalLabel.textContent = isJPY ? '合計金額（円・税抜）' : '合計金額（USD・税抜）';
+  const code = _salesEntryCurrency;
+  const symbol = getSalesCurrencySymbol(code);
+  if (heading) heading.textContent = isJPY ? '販売金額（円入力・税抜）' : `販売金額（${code}・税抜）`;
+  if (rateNote) rateNote.textContent = code === 'JPY'
+    ? `1 USD = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : `1 ${code} = ¥${getSalesCurrencyRate(code).toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (subtotalLabel) subtotalLabel.textContent = isJPY ? '合計金額（円・税抜）' : `合計金額（${code}・税抜）`;
   if (taxLabel) taxLabel.textContent = isJPY
     ? (_taxFreeMode ? '免税（0%・円）' : '消費税（10%・円）')
     : '税区分：対象外';
   if (grandLabel) grandLabel.textContent = isJPY
     ? (_taxFreeMode ? '合計金額（免税・円）' : '税込合計（円）')
-    : '合計金額（USD）';
+    : `合計金額（${code}）`;
   if (taxToggle) taxToggle.disabled = !isJPY;
   if (taxToggleWrap) {
     taxToggleWrap.classList.toggle('sales-tax-out-of-scope', !isJPY);
-    taxToggleWrap.title = isJPY ? '免税モード切替' : 'USD建て売上は税対象外です';
+    taxToggleWrap.title = isJPY ? '免税モード切替' : `${code}建て売上は税対象外です`;
   }
   if (taxModeLabel) taxModeLabel.textContent = isJPY ? (_taxFreeMode ? '免税' : '通常') : '対象外';
   [
-    [usdButton, !isJPY],
+    [usdButton, code === 'USD'],
+    [eurButton, code === 'EUR'],
+    [hkdButton, code === 'HKD'],
     [jpyButton, isJPY],
   ].forEach(([button, active]) => {
     if (!button) return;
@@ -3907,15 +3956,15 @@ function _syncSalesCurrencyUI() {
   document.querySelectorAll('#salesLines .sl-input-price').forEach(input => {
     const lineId = input.id.replace('sl-price-', '');
     const prefix = document.getElementById(`sl-price-prefix-${lineId}`);
-    if (prefix) prefix.textContent = isJPY ? '¥' : '\u0024';
-    input.setAttribute('aria-label', isJPY ? '販売金額（円）' : '販売金額（USD）');
-    input.placeholder = isJPY ? '0円' : '0 USD';
+    if (prefix) prefix.textContent = symbol;
+    input.setAttribute('aria-label', isJPY ? '販売金額（円）' : `販売金額（${code}）`);
+    input.placeholder = isJPY ? '0円' : `0 ${code}`;
   });
 }
 
 /** 販売金額の入力通貨を切り替える（内部基準は常にUSD） */
 function switchSalesEntryCurrency(currency) {
-  if (currency !== 'USD' && currency !== 'JPY') return;
+  if (!['USD', 'EUR', 'HKD', 'JPY'].includes(currency)) return;
 
   const inputs = [...document.querySelectorAll('#salesLines .sl-input-price')];
   const usdValues = inputs.map(input => getSalesLinePriceUSD(input));
@@ -4119,10 +4168,10 @@ function buildSalesLineHTML(lineId, code, brand, model, price, itemData) {
   <td class="sl-td sl-td-text sl-td-sub" id="sl-accs-${lineId}">${accsHtml}</td>
   <td class="sl-td sl-td-price">
     <div class="sl-price-field">
-      <span class="sl-price-prefix" id="sl-price-prefix-${lineId}" aria-hidden="true">${_salesEntryCurrency === 'JPY' ? '¥' : '\u0024'}</span>
+      <span class="sl-price-prefix" id="sl-price-prefix-${lineId}" aria-hidden="true">${getSalesCurrencySymbol(_salesEntryCurrency)}</span>
       <input class="sl-input sl-input-price" type="text" inputmode="numeric" id="sl-price-${lineId}"
-        aria-label="${_salesEntryCurrency === 'JPY' ? '販売金額（円）' : '販売金額（USD）'}"
-        placeholder="${_salesEntryCurrency === 'JPY' ? '0円' : '0 USD'}"
+        aria-label="${_salesEntryCurrency === 'JPY' ? '販売金額（円）' : `販売金額（${_salesEntryCurrency}）`}"
+        placeholder="${_salesEntryCurrency === 'JPY' ? '0円' : `0 ${_salesEntryCurrency}`}"
         value="${price ? formatSalesEntryAmount(price, _salesEntryCurrency) : ''}"
         data-entry-currency="${_salesEntryCurrency}"
         data-usd-value="${price || ''}"
@@ -4269,12 +4318,14 @@ function switchSlipTab(type) {
   });
   // 取引先セレクト更新
   rebuildSlipPartySelect(type);
-  // 登録元との連動結果をすぐ確認できるよう、タブ切替時は全件表示する。
-  _slipFilterState = { executed: true, showAll: true };
+  // タブ切替時は、未完了の対応対象を優先して確認できるよう「処理中」を既定表示する。
+  _slipFilterState = { executed: true, showAll: false };
   ['slip-filter-from','slip-filter-to','slip-filter-party','slip-filter-keyword'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  const statusFilter = document.getElementById('slip-filter-status');
+  if (statusFilter) statusFilter.value = 'processing';
   // 売上・出荷伝票の選択状態をリセット
   _slResetSelection();
   _shResetSelection();
@@ -4289,6 +4340,8 @@ function switchSlipTabPending(type) {
     document.getElementById('sltab-' + t)?.classList.toggle('active', t === type);
   });
   rebuildSlipPartySelect(type);
+  const statusFilter = document.getElementById('slip-filter-status');
+  if (statusFilter) statusFilter.value = '';
 
   // 売上伝票選択状態をリセット
   _slResetSelection();
@@ -4403,6 +4456,8 @@ function showAllSlipList() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  const statusFilter = document.getElementById('slip-filter-status');
+  if (statusFilter) statusFilter.value = '';
   _slipFilterState = { executed: true, showAll: true };
   filterSlipList();
 }
@@ -4420,10 +4475,49 @@ function refreshSlipList() {
   }
 }
 
+/**
+ * 伝票種別ごとの保存値を、検索欄で共通表示する「処理中／処理済」へ正規化する。
+ * 承認待ち・差戻し・未処理など、次の操作が必要な状態はすべて「処理中」とする。
+ */
+function getSlipSearchStatus(record, tabType = currentSlipTab) {
+  if (tabType === 'purchasereturn') {
+    return getPurchaseReturnProcessingStatus(record) === '処理済' ? 'completed' : 'processing';
+  }
+
+  const rawStatus = String(record?.status || '').trim();
+  const completedStatuses = new Set([
+    '処理済', '処理済み', '対応済', '承認済', '確定', '完了', '発送済', '発行済', '入金済',
+    '取消', '取消済', 'キャンセル', 'approved', 'completed', 'done',
+  ]);
+  if (completedStatuses.has(rawStatus)) return 'completed';
+
+  // 委託伝票の旧データはステータス未保存でも登録完了済として扱っている。
+  if (!rawStatus && tabType === 'consignment') return 'completed';
+  return 'processing';
+}
+
+function matchesSlipStatusFilter(record, statusFilter, tabType = currentSlipTab) {
+  return !statusFilter || getSlipSearchStatus(record, tabType) === statusFilter;
+}
+
+/** 現在の伝票タブが参照するDB連動済み配列を返す。 */
+function getCurrentSlipSource(tabType = currentSlipTab) {
+  const sources = {
+    purchase: APP_DATA.purchaseSlips,
+    shipping: APP_DATA.shipments,
+    consignment: APP_DATA.consignments,
+    sales: APP_DATA.sales,
+    salesreturn: APP_DATA.salesReturns,
+    purchasereturn: APP_DATA.purchaseReturns,
+  };
+  return Array.isArray(sources[tabType]) ? sources[tabType] : [];
+}
+
 function filterSlipList() {
   const from    = document.getElementById('slip-filter-from')?.value    || '';
   const to      = document.getElementById('slip-filter-to')?.value      || '';
   const party   = document.getElementById('slip-filter-party')?.value   || '';
+  const status  = document.getElementById('slip-filter-status')?.value  || '';
   const keyword = (document.getElementById('slip-filter-keyword')?.value || '').toLowerCase();
 
   // 全件表示モード：条件なしで全データ表示
@@ -4436,7 +4530,7 @@ function filterSlipList() {
   }
 
   // フィルター未入力 & 全件表示でないなら白紙（通常の絞り込み時）
-  const hasFilter = from || to || party || keyword;
+  const hasFilter = from || to || party || status || keyword;
   if (!_slipFilterState.showAll && !hasFilter) {
     renderSlipList(null);
     return;
@@ -4445,6 +4539,7 @@ function filterSlipList() {
   let data = [];
   if (currentSlipTab === 'purchase') {
     data = (APP_DATA.purchaseSlips || []).filter(slip => {
+      if (!matchesSlipStatusFilter(slip, status, 'purchase')) return false;
       if (from && slip.date < from) return false;
       if (to   && slip.date > to)   return false;
       if (party && slip.supplier !== party) return false;
@@ -4461,6 +4556,7 @@ function filterSlipList() {
     });
   } else if (currentSlipTab === 'shipping') {
     data = APP_DATA.shipments.filter(s => {
+      if (!matchesSlipStatusFilter(s, status, 'shipping')) return false;
       if (from && s.date < from) return false;
       if (to   && s.date > to)   return false;
       if (party && s.destination !== party) return false;
@@ -4473,6 +4569,7 @@ function filterSlipList() {
     });
   } else if (currentSlipTab === 'consignment') {
     data = (APP_DATA.consignments || []).filter(record => {
+      if (!matchesSlipStatusFilter(record, status, 'consignment')) return false;
       if (from && record.date < from) return false;
       if (to && record.date > to) return false;
       if (party && record.destination !== party) return false;
@@ -4486,6 +4583,7 @@ function filterSlipList() {
   } else if (currentSlipTab === 'salesreturn') {
     // 売上返品伝票（独立した salesReturns データ）
     data = (APP_DATA.salesReturns || []).filter(r => {
+      if (!matchesSlipStatusFilter(r, status, 'salesreturn')) return false;
       if (from && r.date < from) return false;
       if (to   && r.date > to)   return false;
       if (party && r.buyer !== party) return false;
@@ -4498,6 +4596,7 @@ function filterSlipList() {
     });
   } else if (currentSlipTab === 'purchasereturn') {
     data = (APP_DATA.purchaseReturns || []).filter(r => {
+      if (!matchesSlipStatusFilter(r, status, 'purchasereturn')) return false;
       if (from && r.date < from) return false;
       if (to   && r.date > to)   return false;
       if (party && r.supplier !== party) return false;
@@ -4510,6 +4609,7 @@ function filterSlipList() {
     });
   } else {
     data = APP_DATA.sales.filter(s => {
+      if (!matchesSlipStatusFilter(s, status, 'sales')) return false;
       if (from && s.date < from) return false;
       if (to   && s.date > to)   return false;
       if (party && s.buyer !== party) return false;
@@ -4531,12 +4631,14 @@ function clearSlipFilter() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
-  _slipFilterState = { executed: false, showAll: false };
+  const statusFilter = document.getElementById('slip-filter-status');
+  if (statusFilter) statusFilter.value = 'processing';
+  _slipFilterState = { executed: true, showAll: false };
   _pendingFilterActive = false;
   // ⑨ フィルターバーを非表示にしてUIを一致させる
   const bar = document.getElementById('pendingFilterBar');
   if (bar) bar.style.display = 'none';
-  renderSlipList(null);
+  filterSlipList();
 }
 
 // ── 一覧レンダリング ──
@@ -4545,6 +4647,14 @@ function renderSlipList(data) {
   const head   = document.getElementById('slipTableHead');
   const noData = document.getElementById('slipNoData');
   if (!tbody) return;
+
+  // 仕入返品一覧は、各情報を原則1行に保ったまま横スクロールで確認する。
+  // 他の伝票タブへはこの専用レイアウトを適用しない。
+  const slipTable = document.getElementById('slipTable');
+  const slipTableWrapper = slipTable?.closest('.data-table-wrapper');
+  const isPurchaseReturnList = currentSlipTab === 'purchasereturn';
+  slipTable?.classList.toggle('purchase-return-list-table', isPurchaseReturnList);
+  slipTableWrapper?.classList.toggle('purchase-return-list-scroll', isPurchaseReturnList);
 
   // ── タスク数（ロール共通） ──
   // グローバルの _isTaskItem() を使用する（カウントと絞り込みで同一関数を共有）
@@ -4614,14 +4724,22 @@ function renderSlipList(data) {
     });
   } else if (currentSlipTab === 'consignment') {
     data.forEach(record => {
-      totalAmt += getConsignmentTotalJPY(record.items || [], record);
+      totalAmt += Number(record.totalJpy) || getShippingSaleTotalJPY(record.items || [], record);
       totalItems += record.items?.length || 0;
       if ((record.revisions || []).length) revisedCount++;
     });
   } else {
     data.forEach(s => { totalAmt += s.total || 0; totalItems += s.items?.length || 0; if ((s.revisions||[]).length) revisedCount++; });
   }
-  document.getElementById('slipSummaryCount').textContent   = `${data.length}件`;
+  const sourceCount = getCurrentSlipSource(currentSlipTab).length;
+  document.getElementById('slipSummaryCount').textContent = `${data.length}件 / 全${sourceCount}件`;
+  const summaryScope = document.getElementById('slipSummaryScope');
+  if (summaryScope) {
+    const statusValue = document.getElementById('slip-filter-status')?.value || '';
+    summaryScope.textContent = statusValue === 'processing'
+      ? '処理中の表示件数 / DB全件数'
+      : (statusValue === 'completed' ? '処理済の表示件数 / DB全件数' : '表示件数 / DB全件数');
+  }
   const summaryUsesUSD = ['shipping', 'sales', 'salesreturn'].includes(currentSlipTab);
   const summaryTotalLabel = document.getElementById('slipSummaryTotalLabel');
   if (summaryTotalLabel) {
@@ -4700,21 +4818,21 @@ function renderSlipList(data) {
     </tr>`;
   } else if (currentSlipTab === 'purchasereturn') {
     head.innerHTML = `<tr>
-      <th style="width:36px;text-align:center;padding:6px 4px;">
+      <th class="pr-list-select-cell">
         <input type="checkbox" id="prSelectAll" title="全選択"
           onchange="prToggleSelectAll(this.checked)"
-          style="cursor:pointer;width:15px;height:15px;">
+          class="pr-list-checkbox">
       </th>
-      <th>仕入返品伝票番号</th><th>返品日</th>
-      <th class="pr-sort-th" onclick="prToggleSort()" style="cursor:pointer;user-select:none;white-space:nowrap;">
+      <th class="pr-list-number">仕入返品伝票番号</th><th class="pr-list-date">返品日</th>
+      <th class="pr-sort-th pr-list-supplier" onclick="prToggleSort()">
         仕入先 <span id="prSortIcon" class="pr-sort-icon"></span>
       </th>
-      <th style="text-align:center;">点数</th>
-      <th style="text-align:right;">仕入金額合計</th>
-      <th>返品理由</th>
-      <th>ステータス</th>
-      <th style="min-width:160px;">配送番号</th>
-      <th style="width:180px;text-align:center;">操作</th>
+      <th class="pr-list-count">点数</th>
+      <th class="pr-list-amount">仕入金額合計</th>
+      <th class="pr-list-note">備考</th>
+      <th class="pr-list-status">ステータス</th>
+      <th class="pr-list-tracking">配送番号</th>
+      <th class="pr-list-actions">操作</th>
     </tr>`;
     // 請求書発行ボタンを集計バーの右に注入
     _prInjectInvoiceBtn();
@@ -4873,7 +4991,7 @@ function buildSlipRow(row) {
       <td class="issued-at-cell">${formatIssuedAtStacked(row.issuedAt)}</td>
       <td>${getBuyerName(row.destination)}</td>
       <td style="text-align:center;">${row.items?.length || 0}点</td>
-      <td style="text-align:right;font-weight:bold;">${formatPrice(getConsignmentTotalJPY(row.items || [], row))}</td>
+      <td style="text-align:right;font-weight:bold;">${formatPrice(Number(row.totalJpy) || getShippingSaleTotalJPY(row.items || [], row))}</td>
       <td style="font-size:12px;color:var(--text-muted);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${row.note || '—'}</td>
       <td style="text-align:center;">${statusBadge}</td>
       <td style="text-align:center;"><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();issueConsignmentSlipDocument('${row.id}',event)" ${canIssuePurchaseSlip() ? '' : 'disabled'}><i class="fa-solid fa-file-arrow-down"></i> 発行</button></td>
@@ -4910,45 +5028,43 @@ function buildSlipRow(row) {
   // 仕入返品
   // ──────────────────────────────────────
   } else if (currentSlipTab === 'purchasereturn') {
-    const stBadge = _slipStatusBadge(row.status, row.id, 'purchasereturn');
+    const processingStatus = getPurchaseReturnProcessingStatus(row);
+    const stBadge = _slipStatusBadge(processingStatus, row.id, 'purchasereturn');
     const isChecked = _prSelectedIds.has(row.id);
     const retTotal = getPurchaseReturnOriginalAmountInfo(row).subtotal;
 
-    // 配送番号セル: 処理済のみ入力可、それ以外はグレーアウト disabled
-    // 伝票に紐づく items の trackingNo を先頭から取得して表示
+    // 配送番号は入力だけでは保存せず、「決定」を押した時点で保存する。
+    // 仕入返品の承認待ち・差戻し中は更新不可とし、承認済みの伝票だけ発送確定できる。
     const firstTracking = (row.items||[]).find(i => i.trackingNo)?.trackingNo || '';
-    const isDone = row.status === '処理済';
-    const trackingCell = isDone
-      ? `<input type="text" class="form-control"
-           style="font-size:11px;padding:3px 8px;width:140px;min-width:100px;"
-           placeholder="配送番号を入力"
-           value="${firstTracking.replace(/"/g,'&quot;')}"
-           oninput="prUpdateTrackingFromList('${row.id}',this.value)"
-           onclick="event.stopPropagation()">`
-      : `<input type="text" class="form-control"
-           style="font-size:11px;padding:3px 8px;width:140px;min-width:100px;
-                  background:#f1f5f9;color:#9ca3af;cursor:not-allowed;border-color:#e2e8f0;"
-           placeholder="配送番号を入力"
-           value="${firstTracking.replace(/"/g,'&quot;')}"
-           disabled>`;
+    const canSaveTracking = !['承認待ち', '差戻し', '却下'].includes(row.status);
+    const returnNote = row.note || row.reason || '—';
+    const trackingCell = `<div class="pr-tracking-control">
+      <input type="text" class="form-control" id="pr-list-tracking-${row.id}"
+        style="${canSaveTracking ? '' : 'background:#f1f5f9;color:#9ca3af;cursor:not-allowed;'}"
+        placeholder="配送番号を入力"
+        value="${firstTracking.replace(/"/g,'&quot;')}"
+        onclick="event.stopPropagation()" ${canSaveTracking ? '' : 'disabled'}>
+      <button type="button" class="btn btn-primary btn-sm"
+        onclick="event.stopPropagation();prConfirmTrackingFromList('${row.id}')"
+        ${canSaveTracking ? '' : 'disabled'}>決定</button>
+    </div>`;
 
     return `<tr class="slip-list-row${isChecked ? ' pr-row-selected' : ''}" id="pr-row-${row.id}" onclick="openPurchaseReturnDetail('${row.id}')">
-      <td style="width:36px;text-align:center;padding:6px 4px;" onclick="event.stopPropagation()">
-        <input type="checkbox" class="pr-row-chk" data-id="${row.id}"
+      <td class="pr-list-select-cell" onclick="event.stopPropagation()">
+        <input type="checkbox" class="pr-row-chk pr-list-checkbox" data-id="${row.id}"
           ${isChecked ? 'checked' : ''}
-          onchange="prToggleRow('${row.id}',this.checked)"
-          style="cursor:pointer;width:15px;height:15px;">
+          onchange="prToggleRow('${row.id}',this.checked)">
       </td>
-      <td><code style="font-size:12px;font-weight:bold;">${row.id}</code></td>
-      <td style="white-space:nowrap;">${row.date||'—'}</td>
-      <td>${getSupplierName(row.supplier)}</td>
-      <td style="text-align:center;">${(row.items||[]).length}点</td>
-      <td style="text-align:right;font-weight:bold;color:var(--primary);">${formatPrice(retTotal)}</td>
-      <td style="font-size:12px;color:var(--text-muted);">${row.reason||'—'}</td>
-      <td>${stBadge}</td>
-      <td onclick="event.stopPropagation()" style="white-space:nowrap;">${trackingCell}</td>
-      <td style="text-align:center;">
-        <div style="display:flex;gap:4px;justify-content:center;flex-wrap:wrap;">
+      <td class="pr-list-number"><code>${row.id}</code></td>
+      <td class="pr-list-date">${row.date||'—'}</td>
+      <td class="pr-list-supplier" title="${_escHtml(getSupplierName(row.supplier))}">${getSupplierName(row.supplier)}</td>
+      <td class="pr-list-count">${(row.items||[]).length}点</td>
+      <td class="pr-list-amount">${formatPrice(retTotal)}</td>
+      <td class="pr-list-note" title="${_escHtml(returnNote)}">${_escHtml(returnNote)}</td>
+      <td class="pr-list-status">${stBadge}</td>
+      <td class="pr-list-tracking" onclick="event.stopPropagation()">${trackingCell}</td>
+      <td class="pr-list-actions">
+        <div class="pr-action-buttons">
           <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();openPurchaseReturnDetail('${row.id}')">
             <i class="fa-solid fa-magnifying-glass"></i> 詳細
           </button>
@@ -5004,6 +5120,7 @@ function _slipStatusBadge(status, slipId, tabType) {
   const map = {
     '承認待ち': ['#d97706','#fffbeb','#fcd34d'],
     '差戻し':   ['#dc2626','#fef2f2','#fca5a5'],
+    '処理中':   ['#d97706','#fffbeb','#fcd34d'],
     '処理済':   ['#16a34a','#f0fdf4','#86efac'],
     '承認済':   ['#16a34a','#f0fdf4','#86efac'],
   };
@@ -5296,7 +5413,7 @@ function prOpenBulkInvoiceModal() {
         <td style="font-size:11px;font-family:monospace;">${r.id}</td>
         <td style="font-size:11px;">${r.date||'—'}</td>
         <td style="font-size:11px;">${purchaseAmount.items.length}点</td>
-        <td style="font-size:11px;color:var(--text-muted);">${r.reason||'—'}</td>
+        <td style="font-size:11px;color:var(--text-muted);">${r.note||r.reason||'—'}</td>
         <td style="font-size:11px;text-align:right;font-weight:bold;">${purchaseAmount.formatAmount(purchaseAmount.subtotal)}</td>
       </tr>`;
     }).join('');
@@ -5309,7 +5426,7 @@ function prOpenBulkInvoiceModal() {
         </div>
         <table class="pr-invoice-preview-table">
           <thead><tr>
-            <th>仕入返品伝票番号</th><th>返品日</th><th>点数</th><th>返品理由</th><th style="text-align:right;">仕入金額</th>
+            <th>仕入返品伝票番号</th><th>返品日</th><th>点数</th><th>備考</th><th style="text-align:right;">仕入金額</th>
           </tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
@@ -5338,7 +5455,7 @@ function prBulkDownloadCSV() {
   if (selected.length === 0) return;
 
   const bom  = '\uFEFF';
-  const headers = ['仕入先', '仕入返品伝票番号', '返品日', '商品コード', 'ブランド', 'モデル名', '型番', 'シリアル', '仕入金額', '返品理由', 'ステータス'];
+  const headers = ['仕入先', '仕入返品伝票番号', '返品日', '商品コード', 'ブランド', 'モデル名', '型番', 'シリアル', '仕入金額', '備考', 'ステータス'];
   const dataRows = [];
   selected.forEach(r => {
     const supplierName = getSupplierName(r.supplier);
@@ -5346,7 +5463,7 @@ function prBulkDownloadCSV() {
     (purchaseAmount.items.length > 0 ? purchaseAmount.items : [{ code:'—', brand:'—', model:'—', ref:'—', serial:'—', purchasePrice:0 }]).forEach(it => {
       dataRows.push([
         supplierName, r.id, r.date||'', it.code||'', it.brand||'', it.model||'',
-        it.ref||'', it.serial||'', it.purchasePrice||0, r.reason||'', r.status||''
+        it.ref||'', it.serial||'', it.purchasePrice||0, r.note||r.reason||'', r.status||''
       ]);
     });
   });
@@ -5402,7 +5519,7 @@ function prBulkPrintLegacy() {
           <td>${it.ref||'—'}</td>
           <td>${it.serial||'—'}</td>
           <td style="text-align:right;">¥${(it.purchasePrice||0).toLocaleString('ja-JP')}</td>
-          <td>${r.reason||'—'}</td>
+          <td>${r.note||r.reason||'—'}</td>
         </tr>`)
     ).join('');
     const total = g.rows.reduce((s,r)=>s+(r.items||[]).reduce((ss,it)=>ss+(it.purchasePrice||0),0),0);
@@ -5430,7 +5547,7 @@ function prBulkPrintLegacy() {
           <thead><tr>
             <th>返品伝票番号</th><th>返品日</th><th>商品コード</th>
             <th>商品名</th><th>型番</th><th>シリアル</th>
-            <th style="text-align:right;">仕入金額</th><th>返品理由</th>
+            <th style="text-align:right;">仕入金額</th><th>備考</th>
           </tr></thead>
           <tbody>${itemRows}</tbody>
           <tfoot><tr>
@@ -5590,7 +5707,7 @@ function formatPurchaseIssuedAt(value) {
   }).format(date);
 }
 
-/** 一覧表は横スクロールを前提に、発行日時を読みやすい1行で表示する。 */
+/** 一覧表では長い発行日時を日付・時刻の2段に分け、狭い幅でも見切れさせない。 */
 function formatIssuedAtStacked(value) {
   if (!value) return '<span class="issued-at-stack issued-at-empty">未発行</span>';
   const date = new Date(value);
@@ -5606,23 +5723,6 @@ function canIssuePurchaseSlip() {
   const session = typeof currentUser === 'function' ? currentUser() : null;
   // 未ログインの制作プレビューは既存仕様どおり管理者相当。実APIではサーバー側でも管理者を検証する。
   return !session || (typeof isAdmin === 'function' && isAdmin());
-}
-
-/** サーバーが発行時点で固定保存した正式PDFを、認証Cookie付きで取得する。 */
-async function downloadOfficialPDF(reference) {
-  if (!reference?.downloadUrl) return false;
-  const response = await fetch(reference.downloadUrl, { credentials: 'same-origin' });
-  if (!response.ok) throw new Error('保存済みPDFをダウンロードできませんでした。');
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = reference.fileName || 'document.pdf';
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return true;
 }
 
 async function issuePurchaseSlipDocument(slipId, event) {
@@ -5644,9 +5744,8 @@ async function issuePurchaseSlipDocument(slipId, event) {
     issueButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 発行中';
   }
   try {
-	let issuedRecord = null;
     if (window.ZaikoAPI?.issuePurchaseSlip) {
-	  issuedRecord = await window.ZaikoAPI.issuePurchaseSlip(slip);
+      await window.ZaikoAPI.issuePurchaseSlip(slip);
       slip = (APP_DATA.purchaseSlips || []).find(record => record.id === slipId) || slip;
     } else {
       slip.issuedAt = new Date().toISOString();
@@ -5656,9 +5755,7 @@ async function issuePurchaseSlipDocument(slipId, event) {
       renderSlipList(APP_DATA.purchaseSlips || []);
     }
     if (typeof peRenderList === 'function') peRenderList();
-	if (!(await downloadOfficialPDF(issuedRecord?.officialPdf))) {
-	  _downloadTemplateDocument('仕入伝票', `${slip.id}_仕入伝票.html`, buildPurchaseRecordTemplateHTML(slip));
-	}
+    _downloadTemplateDocument('仕入伝票', `${slip.id}_仕入伝票.html`, buildPurchaseRecordTemplateHTML(slip));
   } catch (error) {
     showToast('error', '発行できませんでした', error?.message || '仕入伝票の発行処理に失敗しました。');
   } finally {
@@ -5682,18 +5779,15 @@ async function issueConsignmentSlipDocument(slipId, event) {
   const original = button?.innerHTML || '';
   if (button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 発行中'; }
   try {
-	let issuedRecord = null;
     if (window.ZaikoAPI?.issueConsignmentSlip) {
-	  issuedRecord = await window.ZaikoAPI.issueConsignmentSlip(slip);
+      await window.ZaikoAPI.issueConsignmentSlip(slip);
       slip = (APP_DATA.consignments || []).find(record => record.id === slipId) || slip;
     } else {
       slip.issuedAt = new Date().toISOString();
       slip.issuedBy = typeof currentUserId === 'function' ? (currentUserId() || 'preview-admin') : 'preview-admin';
     }
     if (typeof renderSlipList === 'function' && currentSlipTab === 'consignment') renderSlipList(APP_DATA.consignments || []);
-	if (!(await downloadOfficialPDF(issuedRecord?.officialPdf))) {
-	  _downloadTemplateDocument('委託伝票', `${slip.id}_委託伝票.html`, buildConsignmentRecordTemplateHTML(slip));
-	}
+    _downloadTemplateDocument('委託伝票', `${slip.id}_委託伝票.html`, buildConsignmentRecordTemplateHTML(slip));
   } catch (error) {
     showToast('error', '発行できませんでした', error?.message || '委託伝票の発行処理に失敗しました。');
   } finally {
@@ -5749,9 +5843,8 @@ async function issueSaleSlipDocument(slipId, event) {
     issueButton.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 発行中';
   }
   try {
-	let issuedRecord = null;
     if (window.ZaikoAPI?.issueSaleSlip) {
-	  issuedRecord = await window.ZaikoAPI.issueSaleSlip(slip);
+      await window.ZaikoAPI.issueSaleSlip(slip);
       slip = (APP_DATA.sales || []).find(record => record.id === slipId) || slip;
     } else {
       slip.issuedAt = new Date().toISOString();
@@ -5760,9 +5853,7 @@ async function issueSaleSlipDocument(slipId, event) {
     if (typeof renderSlipList === 'function' && typeof currentSlipTab !== 'undefined' && currentSlipTab === 'sales') {
       renderSlipList(APP_DATA.sales || []);
     }
-	if (!(await downloadOfficialPDF(issuedRecord?.officialPdf))) {
-	  _downloadTemplateDocument('請求書（売上伝票）', `${slip.id}_請求書.html`, buildSalesRecordTemplateHTML(slip));
-	}
+    _downloadTemplateDocument('請求書（売上伝票）', `${slip.id}_請求書.html`, buildSalesRecordTemplateHTML(slip));
   } catch (error) {
     showToast('error', '発行できませんでした', error?.message || '売上伝票の発行処理に失敗しました。');
   } finally {
@@ -5882,18 +5973,6 @@ function getShippingSaleTotalJPY(items, record) {
   return (items || []).reduce((total, item) => total + getShippingLineJPY(item, record), 0);
 }
 
-/**
- * 委託伝票は常にJPY固定。旧データのtotalJpyにはUSD額が入っている場合があるため、
- * 合計値は登録時スナップショットを持つ各明細から必ず再集計する。
- */
-function getConsignmentLineJPY(item, record) {
-  return getShippingLineJPY(item, { ...record, displayCurrency: 'JPY', inputCurrency: 'JPY' });
-}
-
-function getConsignmentTotalJPY(items, record) {
-  return (items || []).reduce((total, item) => total + getConsignmentLineJPY(item, record), 0);
-}
-
 function formatShippingRecordAmount(amountUSD, record, item = null) {
   return getShippingRecordCurrency(record) === 'JPY'
     ? formatPrice(item ? getShippingLineJPY(item, record) : getShippingSaleTotalJPY(record?.items || [], record))
@@ -5973,16 +6052,7 @@ function buildShipmentRecordTemplateHTML(slip, documentOptions = {}) {
 
 /** 保存済み委託伝票を、出荷伝票と同じ雛形・項目構成で帳票化する。 */
 function buildConsignmentRecordTemplateHTML(slip) {
-  const fixedJPYSlip = {
-    ...slip,
-    displayCurrency: 'JPY',
-    inputCurrency: 'JPY',
-    items: (slip.items || []).map(item => ({
-      ...item,
-      convertedSalePriceJpy: getConsignmentLineJPY(item, slip),
-    })),
-  };
-  return buildShipmentRecordTemplateHTML(fixedJPYSlip, {
+  return buildShipmentRecordTemplateHTML({ ...slip, displayCurrency: 'JPY', inputCurrency: 'JPY' }, {
     title: '委託伝票',
     transactionDateLabel: '委託日',
     counterpartyLabel: '委託先',
@@ -6468,7 +6538,7 @@ function exportSlipCSV() {
   if (currentSlipTab === 'purchase') {
     rows = [['商品コード','仕入日','ブランド','モデル','仕入先','担当者','仕入金額','ステータス','修正回数']];
     data.forEach(item => rows.push([item.code, item.purchaseDate, item.brand, item.model,
-      getSupplierName(item.supplier), item.staff||'', item.purchasePrice, item.status, (item.revisions||[]).length]));
+      getSupplierName(item.supplier), item.staff||'', item.purchasePrice, normalizeInventoryStatusLabel(item.status), (item.revisions||[]).length]));
   } else if (currentSlipTab === 'shipping') {
     // 選択中の伝票があればその伝票のみ、なければ全件
     const exportData = _shSelectedIds.size > 0
@@ -6735,7 +6805,7 @@ function buildSlipDetailBody(type, rec) {
         ${buyer?.address ? metaRow('<i class="fa-solid fa-location-dot"></i> 住所', buyer.address) : ''}
         ${buyer?.contact ? metaRow('<i class="fa-solid fa-phone"></i> 連絡先', buyer.contact) : ''}
         ${metaRow('<i class="fa-solid fa-boxes-stacked"></i> 商品ステータス', '<span class="badge badge-consigned">● 委託中</span>')}
-        ${metaRow('<i class="fa-solid fa-yen-sign"></i> 合計金額（JPY）', `<span class="slip-detail-price">${formatPrice(getConsignmentTotalJPY(rec.items || [], rec))}</span>`)}
+        ${metaRow('<i class="fa-solid fa-yen-sign"></i> 合計金額（JPY）', `<span class="slip-detail-price">${formatPrice(Number(rec.totalJpy) || getShippingSaleTotalJPY(rec.items || [], rec))}</span>`)}
         ${metaRow('<i class="fa-solid fa-arrow-right-arrow-left"></i> 委託登録時固定レート', `1 USD = ¥${getShippingRecordRate(rec).toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)}
         ${rec.note ? metaRow('<i class="fa-solid fa-note-sticky"></i> 備考', rec.note) : ''}
       </div>`;
@@ -6749,7 +6819,7 @@ function buildSlipDetailBody(type, rec) {
             <td><code style="font-size:11px;">${item.code || '—'}</code></td>
             <td>${item.brand || '—'}</td>
             <td>${item.model || '—'}</td>
-            <td style="text-align:right;font-weight:bold;">${formatPrice(getConsignmentLineJPY(item, rec))}</td>
+            <td style="text-align:right;font-weight:bold;">${formatPrice(getShippingLineJPY(item, rec))}</td>
             <td><span class="badge badge-consigned">委託中</span></td>
           </tr>`).join('')}</tbody>
         </table>
@@ -7008,7 +7078,6 @@ function openPurchaseReturnModal(slipId) {
   _prRenderAddedItems();
 
   document.getElementById('pr-return-date').value = getLocalDateISO();
-  document.getElementById('pr-return-reason').value = '';
   document.getElementById('pr-return-note').value = '';
   const inp = document.getElementById('pr-add-code-input');
   if (inp) { inp.value = ''; setTimeout(() => inp.focus(), 300); }
@@ -7139,16 +7208,21 @@ async function submitPurchaseReturn() {
   if (!slip) { showToast('error', 'エラー', '対象伝票が見つかりません'); return; }
 
   const date   = document.getElementById('pr-return-date').value;
-  const reason = document.getElementById('pr-return-reason').value;
-  const note   = document.getElementById('pr-return-note').value;
+  const noteEl = document.getElementById('pr-return-note');
+  const note   = (noteEl?.value || '').trim();
   if (!date)                    { showToast('error', '入力エラー', '返品日を入力してください'); return; }
+  if (!note) {
+    showToast('error', '入力エラー', '備考を入力してください');
+    noteEl?.focus();
+    return;
+  }
   if (_prAddedItems.length === 0) { showToast('error', '選択エラー', '返品する商品を1点以上追加してください'); return; }
 
   if (window.ZaikoAPI) {
     try {
       const result = await window.ZaikoAPI.saveReturn({
         operationType: 'purchase_return', transactionDate: date, supplierCode: slip.supplier,
-        sourcePurchaseSlipNumber: slip.id, reason, notes: note,
+        sourcePurchaseSlipNumber: slip.id, reason: '', notes: note,
         productCodes: _prAddedItems.map(item => item.code),
       }, isBuyer());
       closePurchaseReturnModal();
@@ -7175,7 +7249,7 @@ async function submitPurchaseReturn() {
     serial:        it.serial,
     sku:           it.sku,
     purchasePrice: it.purchasePrice,
-    status:        '未処理',
+    status:        '処理中',
     trackingNo:    '',
   }));
 
@@ -7184,8 +7258,8 @@ async function submitPurchaseReturn() {
     supplier:   slip.supplier,
     slipId:     slip.id,
     items:      retItems,
-    reason, note,
-    status:     '未処理',
+    reason: '', note,
+    status:     '処理中',
     createdBy:  currentUser()?.name || '—',
     createdAt:  new Date().toLocaleString('ja-JP'),
     invoicePrinted: false,
@@ -7196,7 +7270,7 @@ async function submitPurchaseReturn() {
     APP_DATA.purchaseReturns.push(ret);
     requestApproval(
       'purchase_return', '仕入返品起票',
-      { retId: id, slipId: slip.id, supplier: slip.supplier, date, reason, note, record: _approvalClone(ret) },
+      { retId: id, slipId: slip.id, supplier: slip.supplier, date, note, record: _approvalClone(ret) },
       note, null
     );
     closePurchaseReturnModal();
@@ -7249,6 +7323,14 @@ function getPurchaseReturnOriginalAmountInfo(ret) {
   };
 }
 
+/** 仕入返品の処理状態は配送番号の保存有無だけで判定する。 */
+function getPurchaseReturnProcessingStatus(ret) {
+  const trackingNumber = String(
+    ret?.trackingNo || (ret?.items || []).find(item => String(item?.trackingNo || '').trim())?.trackingNo || ''
+  ).trim();
+  return trackingNumber ? '処理済' : '処理中';
+}
+
 function openPurchaseReturnDetail(retId) {
   _currentPrRetId = retId;
   _renderPurchaseReturnDetail();
@@ -7258,15 +7340,15 @@ function _renderPurchaseReturnDetail() {
   const ret = (APP_DATA.purchaseReturns||[]).find(r => r.id === _currentPrRetId);
   if (!ret) return;
 
-  const stBadge = _slipStatusBadge(ret.status || '未処理');
+  const stBadge = _slipStatusBadge(getPurchaseReturnProcessingStatus(ret));
   const purchaseAmount = getPurchaseReturnOriginalAmountInfo(ret);
   const totalAmt = purchaseAmount.subtotal;
 
-  // 明細テーブル行
-  // 配送番号入力可能条件: 明細ステータスが「処理済」の場合のみ
-  // それ以外（未処理・承認待ち・差戻し・承認済）は disabled グレーアウト
+  // 明細テーブル行。配送番号は入力後の「決定」で初めて保存・仕入返品済へ遷移する。
+  const canSaveTracking = !['承認待ち', '差戻し', '却下'].includes(ret.status);
   const itemRows = purchaseAmount.items.map((it, idx) => {
-    const isDone = it.status === '処理済';
+    const itemProcessingStatus = String(it.trackingNo || '').trim() ? '処理済' : '処理中';
+    const isDone = itemProcessingStatus === '処理済';
 
     // 行背景: 処理済はわずかにグレー
     const rowBg = isDone ? 'background:#f8fafc;' : '';
@@ -7277,34 +7359,20 @@ function _renderPurchaseReturnDetail() {
       '承認済':  `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#eff6ff;color:#2563eb;border:1px solid #93c5fd;"><i class="fa-solid fa-circle-check"></i> 承認済</span>`,
       '承認待ち':`<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffbeb;color:#d97706;border:1px solid #fcd34d;"><i class="fa-solid fa-hourglass-half"></i> 承認待ち</span>`,
       '差戻し':  `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626;border:1px solid #fca5a5;"><i class="fa-solid fa-rotate-left"></i> 差戻し</span>`,
+      '処理中':  `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;background:#fffbeb;color:#d97706;border:1px solid #fcd34d;"><i class="fa-solid fa-clock"></i> 処理中</span>`,
     };
-    const stIcon = stBadgeMap[it.status] ||
-      `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:#f1f5f9;color:#64748b;border:1px solid #cbd5e1;">未処理</span>`;
+    const stIcon = stBadgeMap[itemProcessingStatus];
 
-    // 配送番号セル
-    // 処理済 → 入力可能（白背景・通常カーソル）
-    // それ以外 → disabled（グレー背景・not-allowed カーソル）
-    let trackingCell;
-    if (isDone) {
-      trackingCell = `<input
-        class="form-control"
-        id="pr-tracking-${idx}"
-        type="text"
+    const trackingCell = `<div style="display:flex;align-items:center;gap:5px;min-width:235px;">
+      <input class="form-control" id="pr-tracking-${idx}" type="text"
         placeholder="配送番号を入力"
         value="${(it.trackingNo||'').replace(/"/g,'&quot;')}"
-        oninput="prUpdateTracking(${idx},this.value)"
-        style="font-size:11px;padding:3px 8px;width:150px;min-width:120px;">`;
-    } else {
-      trackingCell = `<input
-        class="form-control"
-        type="text"
-        placeholder="配送番号を入力"
-        value="${(it.trackingNo||'').replace(/"/g,'&quot;')}"
-        disabled
-        style="font-size:11px;padding:3px 8px;width:150px;min-width:120px;
-               background:#f1f5f9;color:#9ca3af;cursor:not-allowed;
-               border-color:#e2e8f0;">`;
-    }
+        ${canSaveTracking ? '' : 'disabled'}
+        style="font-size:12px;padding:5px 8px;width:150px;min-width:130px;
+          ${canSaveTracking ? '' : 'background:#f1f5f9;color:#9ca3af;cursor:not-allowed;border-color:#e2e8f0;'}">
+      <button type="button" class="btn btn-primary btn-sm" onclick="prConfirmTracking(${idx})"
+        ${canSaveTracking ? '' : 'disabled'}>決定</button>
+    </div>`;
 
     return `<tr id="pr-item-row-${idx}" style="${rowBg}">
       <td style="font-size:11px;"><code style="font-size:11px;">${it.code}</code></td>
@@ -7324,19 +7392,15 @@ function _renderPurchaseReturnDetail() {
       <div class="detail-row"><div class="detail-label">返品日</div><div class="detail-value">${ret.date}</div></div>
       <div class="detail-row"><div class="detail-label">仕入先</div><div class="detail-value">${getSupplierName(ret.supplier)}</div></div>
       <div class="detail-row"><div class="detail-label">ステータス</div><div class="detail-value">${stBadge}</div></div>
-      <div class="detail-row"><div class="detail-label">返品理由</div><div class="detail-value">${ret.reason||'—'}</div></div>
+      <div class="detail-row"><div class="detail-label">備考</div><div class="detail-value">${ret.note||ret.reason||'—'}</div></div>
       <div class="detail-row"><div class="detail-label">起票者</div><div class="detail-value">${ret.createdBy}</div></div>
-    </div>
-    <div class="form-group mb-20">
-      <div class="detail-label">備考</div>
-      <div style="background:var(--bg);padding:10px;border-radius:6px;font-size:12px;">${ret.note||'（なし）'}</div>
     </div>
     <table class="data-table" style="width:100%;">
       <thead><tr>
         <th>商品コード</th><th>ブランド</th><th>モデル</th><th>SKU</th>
         <th style="text-align:right;">仕入金額</th>
         <th style="text-align:center;">明細ステータス</th>
-        <th style="min-width:165px;">配送番号<span style="font-size:10px;color:#94a3b8;font-weight:normal;margin-left:4px;">（処理済のみ入力可）</span></th>
+        <th style="min-width:245px;">配送番号<span style="font-size:12px;color:#64748b;font-weight:normal;margin-left:4px;">（入力後に「決定」で保存）</span></th>
       </tr></thead>
       <tbody>${itemRows}</tbody>
       <tfoot><tr style="background:var(--bg);font-weight:bold;">
@@ -7374,66 +7438,70 @@ function _prInvoiceAndSetFlag() {
   openPurchaseReturnInvoice();
 }
 
-/** 配送番号の更新（処理済明細のみ呼ばれる） */
-async function prUpdateTracking(idx, val) {
-  const ret = (APP_DATA.purchaseReturns||[]).find(r => r.id === _currentPrRetId);
-  if (ret && ret.items[idx]) {
-    ret.items[idx].trackingNo = val;
+/** 配送番号を保存し、仕入返品対象の商品を「仕入返品済」へ遷移する共通処理。 */
+async function _savePurchaseReturnTracking(ret, rawValue) {
+  const trackingNumber = String(rawValue || '').trim();
+  if (!ret || trackingNumber === '') {
+    showToast('warning', '配送番号を入力してください', '配送番号を入力してから「決定」を押してください。');
+    return false;
+  }
+  try {
     if (ret.apiManaged && ret._id && window.ZaikoAPI?.updateReturnTracking) {
-      try {
-        await window.ZaikoAPI.updateReturnTracking(ret._id, ret.carrier || '', val);
-        showToast('success', '追跡番号を保存しました', val || '追跡番号を未設定にしました');
-      } catch (error) {
-        showToast('error', '追跡番号を保存できませんでした', error.message);
-      }
+      await window.ZaikoAPI.updateReturnTracking(ret._id, ret.carrier || '', trackingNumber);
     } else {
+      (ret.items || []).forEach(item => {
+        item.trackingNo = trackingNumber;
+        item.status = '処理済';
+      });
+      ret.trackingNo = trackingNumber;
+      ret.status = '処理済';
+      _setRecordInventoryStatus(ret, '仕入返品済');
       persistBusinessWorkflowState();
     }
+    refreshLinkedBusinessViews({ source: 'purchase-return-tracking-confirmed' });
+    showToast('success', '配送番号を保存しました', '対象商品を「仕入返品済」に変更しました。');
+    return true;
+  } catch (error) {
+    showToast('error', '配送番号を保存できませんでした', error.message);
+    return false;
   }
 }
 
-/** 伝票一覧から配送番号を更新（処理済行のみ呼ばれる） */
-async function prUpdateTrackingFromList(retId, val) {
-  const ret = (APP_DATA.purchaseReturns||[]).find(r => r.id === retId);
-  if (!ret) return;
-  // 全明細の trackingNo を同一値で更新（1伝票1配送番号の運用想定）
-  // 明細が複数ある場合は先頭のみ更新し、詳細モーダルで個別管理
-  if (ret.items && ret.items.length > 0) {
-    ret.items[0].trackingNo = val;
-    if (ret.apiManaged && ret._id && window.ZaikoAPI?.updateReturnTracking) {
-      try {
-        await window.ZaikoAPI.updateReturnTracking(ret._id, ret.carrier || '', val);
-        showToast('success', '追跡番号を保存しました', val || '追跡番号を未設定にしました');
-      } catch (error) {
-        showToast('error', '追跡番号を保存できませんでした', error.message);
-      }
-    } else {
-      persistBusinessWorkflowState();
-    }
+/** 詳細モーダルの配送番号を「決定」で保存する。 */
+async function prConfirmTracking(idx) {
+  const ret = (APP_DATA.purchaseReturns || []).find(record => record.id === _currentPrRetId);
+  const input = document.getElementById(`pr-tracking-${idx}`);
+  if (await _savePurchaseReturnTracking(ret, input?.value)) {
+    const latest = (APP_DATA.purchaseReturns || []).find(record => record.id === _currentPrRetId);
+    if (latest) openPurchaseReturnDetail(latest.id);
   }
 }
 
-/** 完了ボタン押下：全明細を処理済に変更し在庫から削除 */
+/** 伝票一覧の配送番号を「決定」で保存する。 */
+async function prConfirmTrackingFromList(retId) {
+  const ret = (APP_DATA.purchaseReturns || []).find(record => record.id === retId);
+  const input = document.getElementById(`pr-list-tracking-${retId}`);
+  if (await _savePurchaseReturnTracking(ret, input?.value)) switchSlipTab('purchasereturn');
+}
+
+/** 完了ボタン押下：全明細を処理済にし、在庫履歴を残したまま仕入返品済へ変更する。 */
 function prCompleteItems() {
   const ret = (APP_DATA.purchaseReturns||[]).find(r => r.id === _currentPrRetId);
   if (!ret) return;
-  if (!confirm('全明細を「処理済」にして在庫から削除します。よろしいですか？')) return;
+  const trackingNumber = (ret.items || []).find(item => item.trackingNo)?.trackingNo || ret.trackingNo || '';
+  if (!trackingNumber) {
+    showToast('warning', '配送番号が未保存です', '配送番号を入力し「決定」を押してから完了してください。');
+    return;
+  }
+  if (!confirm('全明細を「処理済」にし、対象商品を「仕入返品済」に変更します。よろしいですか？')) return;
 
-  let removedCount = 0;
   (ret.items||[]).forEach(it => {
-    if (it.status !== '処理済') {
-      it.status = '処理済';
-      // 在庫から削除
-      const idx = (APP_DATA.inventory||[]).findIndex(inv => inv.code === it.code);
-      if (idx !== -1) {
-        APP_DATA.inventory.splice(idx, 1);
-        removedCount++;
-      }
-    }
+    it.status = '処理済';
   });
   ret.status = '処理済';
+  _setRecordInventoryStatus(ret, '仕入返品済');
 
-  showToast('success', '処理済に更新', `${removedCount}点を在庫から削除しました`);
+  showToast('success', '処理済に更新', `${(ret.items || []).length}点を「仕入返品済」に変更しました`);
   refreshLinkedBusinessViews({ source: 'purchase-return-complete' });
   _renderPurchaseReturnDetail();
 }
@@ -7781,11 +7849,11 @@ function openPurchaseReturnInvoiceLegacy() {
         </div>
       </div>
 
-      <!-- 返品理由 -->
-      ${ret.reason || ret.note ? `
+      <!-- 備考 -->
+      ${ret.note || ret.reason ? `
       <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px 16px;margin-bottom:20px;font-size:12px;">
-        <span style="font-weight:700;color:#92400e;margin-right:8px;"><i class="fa-solid fa-triangle-exclamation"></i> 返品理由:</span>
-        <span style="color:#78350f;">${ret.reason || ''}${ret.note ? `　${ret.note}` : ''}</span>
+        <span style="font-weight:700;color:#92400e;margin-right:8px;"><i class="fa-solid fa-note-sticky"></i> 備考:</span>
+        <span style="color:#78350f;">${ret.note || ret.reason || ''}</span>
       </div>` : ''}
 
       <!-- 品目テーブル -->
@@ -7842,32 +7910,23 @@ function buildPurchaseReturnRecordTemplateHTML(ret) {
     const detail = [
       [item.brand, item.model].filter(Boolean).join(' / '),
       [item.ref && `型番: ${item.ref}`, item.serial && `シリアル: ${item.serial}`].filter(Boolean).join('　'),
-      item.sku ? `SKU: ${item.sku}` : '',
       item.accessories?.length ? `付属品: ${item.accessories.join('・')}` : '',
-      item.note ? `備考: ${item.note}` : '',
     ].filter(Boolean).join('\n') || item.code || '—';
     return { no: item.no, detail, amount: item.purchasePrice, code: item.code };
   });
   const sourceSlipId = purchaseAmount.sourcePurchase?.id || ret.slipId || '—';
-  const note = [
-    `元仕入伝票：${sourceSlipId}`,
-    ret.reason ? `返品理由：${ret.reason}` : '',
-    ret.note ? `備考：${ret.note}` : '',
-    ret.trackingNo ? `配送番号：${ret.trackingNo}` : '',
-  ].filter(Boolean).join('\n');
 
   return buildTemplateStyleSlipDocument({
     title: '仕入返品伝票',
     slipId: ret.id,
-    transactionDate: ret.date,
-    transactionDateLabel: '返品日',
+    showTransactionDate: false,
     counterpartyLabel: '仕入先',
     counterparty: supplier,
     items,
-    note,
+    showNote: false,
     formatAmount: purchaseAmount.formatAmount,
     currencyLabel: 'JPY（円）',
-    taxMode: 'none',
+    taxMode: 'standard',
     includeBank: false,
     summaryMessage: '仕入時の商品金額は下記の通りです。',
     amountCaption: '仕入金額合計',
@@ -9382,7 +9441,7 @@ function calcSalesTotal() {
 
   const netTotal  = grossTotal - excludeTotal;
   const taxFree   = isTaxFreeMode();
-  const outOfScope = _salesEntryCurrency === 'USD';
+  const outOfScope = _salesEntryCurrency !== 'JPY';
   const taxRate   = 0.10;
   const taxAmount = (taxFree || outOfScope) ? 0 : Math.floor(netTotal * taxRate);
   const grandTotal = netTotal + taxAmount;
@@ -9590,7 +9649,9 @@ function buildTemplateStyleSlipDocument(options) {
     issuedAt = null,
     issuedDateLabel = '発行日',
     showIssuedDate = true,
+    showTransactionDate = true,
     detailColumnLabel = '摘要',
+    showNote = true,
   } = options || {};
 
   const ci = getSlipCompanyInfo();
@@ -9647,7 +9708,7 @@ function buildTemplateStyleSlipDocument(options) {
       <h1 class="tpl-document-title">${_escHtml(title)}</h1>
       <div class="tpl-date-block">
         ${showIssuedDate ? `<div><span>${_escHtml(issuedDateLabel)}</span><strong>${_escHtml(issuedDate)}</strong></div>` : ''}
-        <div><span>${_escHtml(transactionDateLabel || '取引日')}</span><strong>${_escHtml(transactionDate || '—')}</strong></div>
+        ${showTransactionDate ? `<div><span>${_escHtml(transactionDateLabel || '取引日')}</span><strong>${_escHtml(transactionDate || '—')}</strong></div>` : ''}
       </div>
       <div class="tpl-parties">
         <div class="tpl-counterparty">
@@ -9707,7 +9768,7 @@ function buildTemplateStyleSlipDocument(options) {
             <tr class="tpl-grand-row"><td></td><td class="tpl-total-label" colspan="${summaryLabelColspan}">${taxFree ? '合計（免税）' : (taxable ? '合計（税込）' : '合計')}</td><td colspan="2">${formatAmount(grandTotal)}</td><td></td></tr>
           </tfoot>
         </table>
-        <div class="tpl-note-block"><strong>備考</strong><span>${note ? _escHtml(note) : '—'}</span></div>
+        ${showNote ? `<div class="tpl-note-block"><strong>備考</strong><span>${note ? _escHtml(note) : '—'}</span></div>` : ''}
         <div class="tpl-detail-company">${_escHtml(ci.companyName)}　${ci.address ? _escHtml(ci.address) : ''}</div>
       </section>`;
   }).join('<div class="tpl-page-divider">── ページ区切り ──</div>');
@@ -11899,12 +11960,18 @@ function _normalizeClientCompanyRecord(company) {
   record.buyerCode = String(record.buyerCode || '').trim().toUpperCase();
   record.supplierCode = String(record.supplierCode || '').trim().toUpperCase();
   record.tradeTypes = getClientCompanyTradeTypes(record);
+  record.regionType = record.regionType === 'overseas' ? 'overseas' : 'domestic';
+  record.closingDay = Number(record.closingDay) >= 1 && Number(record.closingDay) <= 31 ? Number(record.closingDay) : null;
+  record.isOther = Boolean(record.isOther);
   record.representative = String(record.representative || '');
   record.contactPerson = String(record.contactPerson || '');
   record.email = String(record.email || '');
   record.tel = String(record.tel || record.contact || '');
+  record.contactPhone = String(record.contactPhone || '');
+  record.postalCode = String(record.postalCode || '');
   record.address = String(record.address || '');
   record.invoice = String(record.invoice || '');
+  record.antiqueLicenseNumber = String(record.antiqueLicenseNumber || '');
   record.note = String(record.note || record.notes || '');
   record.guestId = String(record.guestId || '');
   return record;
@@ -11929,7 +11996,7 @@ function loadClientCompanyDirectory() {
       storedNextSequence = !Array.isArray(stored) ? Number(stored.nextSequence) || 0 : 0;
     }
   } catch (error) {
-    console.warn('取引先会社台帳の保存データを読み込めませんでした', error);
+    console.warn('取引先台帳の保存データを読み込めませんでした', error);
   }
   APP_DATA.clientCompanies = companies.filter((company, index, all) =>
     company.companyName && all.findIndex(candidate => candidate.id === company.id) === index);
@@ -12028,11 +12095,13 @@ function reconcileClientCompanyDirectory(options = {}) {
     if (!buyer) company.buyerCode = '';
     if (!supplier) company.supplierCode = '';
     company.tradeTypes = [buyer ? 'buyer' : '', supplier ? 'supplier' : ''].filter(Boolean);
+    company.regionType = company.regionType === 'overseas' ? 'overseas' : 'domestic';
+    company.isOther = Boolean(company.isOther);
     if (buyer) {
       const guest = (APP_DATA.guestAccounts || []).find(account => account.buyerCode === buyer.code);
       company.guestId = guest?.id || '';
     }
-    return company.tradeTypes.length > 0 || company.autoManaged !== true;
+    return company.tradeTypes.length > 0 || company.isOther || company.autoManaged !== true;
   });
   if (options.persist !== false) persistClientCompanyDirectory();
   return APP_DATA.clientCompanies;
@@ -12676,6 +12745,23 @@ function populateProductSpecMasterSelect(id, type, options = {}) {
   else if (emptyLabel !== null) select.value = '';
 }
 
+function populateBeltMaterialMasterSelect(id, options = {}) {
+  const select = document.getElementById(id);
+  if (!select) return;
+  const selected = Object.prototype.hasOwnProperty.call(options, 'selected')
+    ? String(options.selected || '')
+    : String(select.value || '');
+  const records = (APP_DATA.beltMaterialRecords || []).map(record => ({
+    code: String(record?.code || '').trim(),
+    name: String(record?.name || '').trim(),
+  })).filter(record => record.code && record.name);
+  select.innerHTML = '<option value="">-- 選択 --</option>' + records.map(record =>
+    `<option value="${_mEsc(record.name)}">${_mEsc(record.code)} — ${_mEsc(record.name)}</option>`
+  ).join('');
+  const matched = records.find(record => record.name === selected || record.code === selected);
+  select.value = matched?.name || '';
+}
+
 function _renameProductSpecReferences(type, oldCode, newCode) {
   if (!oldCode || !newCode || oldCode === newCode) return;
   const property = _productSpecConfig(type).key;
@@ -12782,20 +12868,17 @@ function refreshProductSpecMasterConsumers(type, previousCode = '', nextCode = '
 const MASTER_TABS = [
   { key: 'brand',     icon: '<i class="fa-solid fa-tag"></i>',            label: 'ブランド名',    data: () => APP_DATA.brandRecords || [] },
   { key: 'auction',   icon: '<i class="fa-solid fa-gavel"></i>',         label: 'オークション名', data: () => APP_DATA.auctionRecords || [] },
-  { key: 'supplier',  icon: '<i class="fa-solid fa-industry"></i>',       label: '仕入先',        data: () => APP_DATA.suppliers },
+  { key: 'client',    icon: '<i class="fa-solid fa-handshake"></i>',      label: '取引先会社',    data: () => APP_DATA.clientCompanies || [], adminOnly: true },
   { key: 'staff',     icon: '<i class="fa-solid fa-user"></i>',           label: '仕入担当者',    data: () => APP_DATA.staffRecords || [] },
   { key: 'material',  icon: '<i class="fa-solid fa-gem"></i>',            label: '素材',          data: () => APP_DATA.materials },
   { key: 'movement',  icon: '<i class="fa-solid fa-gears"></i>',          label: '駆動方式',      data: () => APP_DATA.movements },
   { key: 'belt',      icon: '<i class="fa-solid fa-link"></i>',           label: 'ベルト素材',    data: () => APP_DATA.beltMaterialRecords || [] },
-  { key: 'dial',      icon: '<i class="fa-regular fa-circle"></i>',       label: '文字盤',        data: () => APP_DATA.dialRecords || [] },
-  { key: 'buyer',     icon: '<i class="fa-solid fa-building"></i>',       label: '販売先',        data: () => APP_DATA.buyers },
   { key: 'accessory', icon: '<i class="fa-solid fa-box"></i>',            label: '付属品',        data: () => APP_DATA.accessoryRecords || [] },
   { key: 'condition', icon: '<i class="fa-solid fa-star"></i>',           label: 'コンディション', data: () => APP_DATA.conditions },
   { key: 'fxrate',    icon: '<i class="fa-solid fa-coins"></i>',          label: '外貨レート',    data: () => APP_DATA.fxRates || [] },
   { key: 'box',       icon: '<i class="fa-solid fa-users-gear"></i>',     label: 'ゲスト管理',    data: () => typeof getGuestManagedBuyers === 'function' ? getGuestManagedBuyers() : APP_DATA.guestAccounts },
   // ── 管理者専用タブ ──
   { key: 'password',  icon: '<i class="fa-solid fa-key"></i>',            label: 'パスワード管理',    data: () => APP_DATA.users, adminOnly: true },
-  { key: 'client',    icon: '<i class="fa-solid fa-handshake"></i>',      label: '取引先会社',        data: () => APP_DATA.clientCompanies || [], adminOnly: true },
   { key: 'company',   icon: '<i class="fa-solid fa-building-user"></i>',  label: '会社情報',          data: () => [], adminOnly: true },
   { key: 'dashboard', icon: '<i class="fa-solid fa-gauge"></i>',          label: 'ダッシュボード管理', data: () => [], adminOnly: true },
 ];
@@ -13027,7 +13110,6 @@ function _getMasterRawArray(key) {
     case 'material':  return APP_DATA.materials;
     case 'movement':  return APP_DATA.movements;
     case 'belt':      return APP_DATA.beltMaterialRecords || [];
-    case 'dial':      return APP_DATA.dialRecords || [];
     case 'buyer':     return APP_DATA.buyers;
     case 'accessory': return APP_DATA.accessoryRecords || [];
     case 'condition': return APP_DATA.conditions;
@@ -13237,17 +13319,6 @@ function _getMasterFormDef(key) {
       applyEdit: (arr, idx, vals) => { arr[idx] = { ...arr[idx], code: arr[idx].code, name: vals.name }; },
       applyDelete: (arr, idx) => { arr.splice(idx, 1); },
     },
-    dial: {
-      label: '文字盤', icon: '<i class="fa-regular fa-circle"></i>',
-      fields: [
-        { id: 'code', label: '文字盤コード', type: 'text', required: true, readonly: true, placeholder: '自動採番' },
-        { id: 'name', label: '文字盤名', type: 'text', required: true, placeholder: '例: ブラック' },
-      ],
-      getValues: (arr, idx) => ({ ...arr[idx] }),
-      applyNew: (arr, vals) => { arr.push({ code: vals.code, name: vals.name }); },
-      applyEdit: (arr, idx, vals) => { arr[idx] = { ...arr[idx], code: arr[idx].code, name: vals.name }; },
-      applyDelete: (arr, idx) => { arr.splice(idx, 1); },
-    },
     condition: {
       label: 'コンディション', icon: '<i class="fa-solid fa-star"></i>',
       fields: [
@@ -13364,7 +13435,6 @@ function showAddMasterModal(key) {
     material: { code: nextShortCode('M', APP_DATA.materials) },
     movement: { code: nextShortCode('D', APP_DATA.movements) },
     belt: { code: nextShortCode('BLT-', APP_DATA.beltMaterialRecords || []) },
-    dial: { code: nextShortCode('DIA-', APP_DATA.dialRecords || []) },
     supplier: { code: _nextTradeMasterCode('S', APP_DATA.suppliers || []) },
     buyer: { code: _nextTradeMasterCode('B', APP_DATA.buyers || []) },
   }[key] || {};
@@ -15191,7 +15261,7 @@ window.navigateTo = function(page) {
     'returns': '返品/持ち帰り',
     'stocktake': '棚卸',
     'password': 'パスワード管理',
-    'client': '取引先会社',
+    'client': '取引先',
     'company': '会社情報',
   };
 
@@ -15775,7 +15845,9 @@ async function saveAddGuest() {
     const newGuest = { id: newId, name: name || company, company, email, password, buyerCode };
     APP_DATA.guestAccounts.push(newGuest);
     if (typeof ensureBuyerForGuest === 'function') ensureBuyerForGuest(newGuest, { code: buyerCode, name: company, email });
+    reconcileClientCompanyDirectory({ persist: true });
     closeAddGuestModal(); persistPasswordMasterDirectory();
+    renderClientTable(); renderMasterClientTable();
     showToast('success', 'ゲスト登録完了', `${company} を登録しました。ゲストID: ${newId}`);
     return;
   }
@@ -15784,8 +15856,11 @@ async function saveAddGuest() {
     APP_DATA.guestAccounts.push({ id: created.guestCode, userId: created.id, name: created.displayName,
       company: created.companyName || company, email: created.email, buyerCode: created.buyerCode,
       partnerCode: created.partnerCode, active: created.isActive, password: '', apiManaged: true });
+    await window.ZaikoAPI.hydrateAdmin();
+    reconcileClientCompanyDirectory({ persist: false });
     closeAddGuestModal();
     refreshPasswordMasterDirectory();
+    renderClientTable(); renderMasterClientTable();
     showToast('success', 'ゲスト登録完了', `${company} をDBへ登録しました。ゲストID: ${created.guestCode}`);
   } catch (error) {
     showToast('error', '登録エラー', error.message);
@@ -15797,31 +15872,37 @@ async function saveAddGuest() {
 // =====================================================
 
 function _clientTradeBadge(company) {
+  const badges = [];
   const types = getClientCompanyTradeTypes(company);
-  const both = types.length === 2;
-  const color = both ? '#6d28d9' : types[0] === 'supplier' ? '#b45309' : '#0369a1';
-  const background = both ? '#f3e8ff' : types[0] === 'supplier' ? '#fef3c7' : '#e0f2fe';
-  return `<span style="display:inline-flex;align-items:center;white-space:nowrap;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:700;color:${color};background:${background};">${_mEsc(getClientCompanyTradeLabel(company))}</span>`;
+  if (types.includes('buyer')) badges.push('<span class="partner-badge partner-badge-buyer">販売先</span>');
+  if (types.includes('supplier')) badges.push('<span class="partner-badge partner-badge-supplier">仕入先</span>');
+  if (company.isOther) badges.push('<span class="partner-badge partner-badge-other">その他</span>');
+  return badges.join(' ') || '<span class="partner-badge">未設定</span>';
 }
 
-let _clientCompanyTradeFilter = 'all';
-
-function _normalizeClientCompanyTradeFilter(value) {
-  return ['all', 'buyer', 'supplier'].includes(value) ? value : 'all';
-}
+let _clientCompanyTradeFilters = new Set(['buyer', 'supplier', 'other']);
+let _clientCompanyRegionFilter = 'all';
+let _clientCompanyNameFilter = '';
 
 function _getFilteredClientCompanies() {
   const list = APP_DATA.clientCompanies || [];
-  const filter = _normalizeClientCompanyTradeFilter(_clientCompanyTradeFilter);
-  if (filter === 'all') return list;
-  return list.filter(company => getClientCompanyTradeTypes(company).includes(filter));
+  const keyword = String(_clientCompanyNameFilter || '').trim().toLocaleLowerCase('ja');
+  return list.filter(company => {
+    const companyTypes = new Set(getClientCompanyTradeTypes(company));
+    if (company.isOther) companyTypes.add('other');
+    const categoryMatches = _clientCompanyTradeFilters.size > 0 && [..._clientCompanyTradeFilters].some(type => companyTypes.has(type));
+    const regionMatches = _clientCompanyRegionFilter === 'all' || (company.regionType || 'domestic') === _clientCompanyRegionFilter;
+    const nameMatches = !keyword || [company.companyName, company.id, company.postalCode, company.address, company.invoice,
+      company.antiqueLicenseNumber, company.tel, company.contactPhone, company.email]
+      .some(value => String(value || '').toLocaleLowerCase('ja').includes(keyword));
+    return categoryMatches && regionMatches && nameMatches;
+  });
 }
 
-function _clientCompanyFilterOptions() {
-  return `
-    <option value="all"${_clientCompanyTradeFilter === 'all' ? ' selected' : ''}>すべて</option>
-    <option value="buyer"${_clientCompanyTradeFilter === 'buyer' ? ' selected' : ''}>販売先取引</option>
-    <option value="supplier"${_clientCompanyTradeFilter === 'supplier' ? ' selected' : ''}>仕入先取引</option>`;
+function _clientCompanyTradeFilterChecks(prefix) {
+  return [['buyer', '販売先'], ['supplier', '仕入先'], ['other', 'その他']].map(([value, label]) => `
+    <label><input type="checkbox" id="${prefix}ClientTrade-${value}" value="${value}"
+      ${_clientCompanyTradeFilters.has(value) ? 'checked' : ''} onchange="setClientCompanyTradeFilter('${value}', this.checked)"> ${label}</label>`).join('');
 }
 
 function _clientCompanyFilterCountText() {
@@ -15829,36 +15910,54 @@ function _clientCompanyFilterCountText() {
   return `表示 ${_getFilteredClientCompanies().length} / 全 ${total} 件`;
 }
 
-function _renderClientCompanyFilter(filterId, countId) {
+function _renderClientCompanyFilter(filterId, countId, prefix = 'm') {
   return `
-    <div role="search" aria-label="取引先会社の絞り込み" style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;padding:10px 12px;background:#fafbfc;border:1px solid var(--border);border-radius:8px;">
-      <div class="form-group" style="margin:0;min-width:190px;">
-        <label class="form-label" for="${filterId}" style="font-size:11px;margin-bottom:4px;"><i class="fa-solid fa-filter"></i> 取引区分</label>
-        <select class="form-control" id="${filterId}" onchange="setClientCompanyTradeFilter(this.value)" style="height:34px;font-size:12px;">
-          ${_clientCompanyFilterOptions()}
+    <div role="search" aria-label="取引先の絞り込み" class="partner-filter-bar">
+      <div class="form-group partner-filter-name">
+        <label class="form-label" for="${prefix}ClientNameFilter"><i class="fa-solid fa-magnifying-glass"></i> フリーワード検索</label>
+        <input class="form-control" id="${prefix}ClientNameFilter" value="${_mEsc(_clientCompanyNameFilter)}" oninput="setClientCompanyNameFilter(this.value)" placeholder="会社名・取引先コード・住所・電話・E-mail等">
+      </div>
+      <fieldset class="form-group" id="${filterId}" style="margin:0;border:0;padding:0;">
+        <legend class="form-label"><i class="fa-solid fa-filter"></i> 取引区分（複数選択可）</legend>
+        <div class="partner-filter-checks">${_clientCompanyTradeFilterChecks(prefix)}</div>
+      </fieldset>
+      <div class="form-group" style="margin:0;min-width:160px;">
+        <label class="form-label" for="${prefix}ClientRegionFilter"><i class="fa-solid fa-earth-asia"></i> 国内・海外</label>
+        <select class="form-control" id="${prefix}ClientRegionFilter" onchange="setClientCompanyRegionFilter(this.value)">
+          <option value="all"${_clientCompanyRegionFilter === 'all' ? ' selected' : ''}>すべて</option>
+          <option value="domestic"${_clientCompanyRegionFilter === 'domestic' ? ' selected' : ''}>国内</option>
+          <option value="overseas"${_clientCompanyRegionFilter === 'overseas' ? ' selected' : ''}>海外</option>
         </select>
       </div>
       <span id="${countId}" aria-live="polite" style="font-size:12px;color:var(--text-muted);font-weight:600;white-space:nowrap;">${_clientCompanyFilterCountText()}</span>
     </div>`;
 }
 
-function _renderClientCompanyRows(list, emptyMessage = '取引先会社が登録されていません') {
+function _clientGuestIssueCell(company) {
+  if (!getClientCompanyTradeTypes(company).includes('buyer')) return '<span class="text-muted">対象外</span>';
+  const issued = Boolean(company.guestId) || (APP_DATA.guestAccounts || []).some(guest => guest.buyerCode === company.buyerCode);
+  if (issued) return '<button type="button" class="btn btn-sm partner-guest-issued" disabled aria-disabled="true"><i class="fa-solid fa-check"></i> 発行済</button>';
+  return `<button type="button" class="btn btn-accent btn-sm" onclick="openGuestLoginForPartner('${_mEsc(company.id)}')"><i class="fa-solid fa-key"></i> ゲスト発行</button>`;
+}
+
+function _renderClientCompanyRows(list, emptyMessage = '取引先が登録されていません') {
   if (!list.length) {
-    return `<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--text-muted);">${_mEsc(emptyMessage)}</td></tr>`;
+    return `<tr><td colspan="13" style="text-align:center;padding:32px;color:var(--text-muted);">${_mEsc(emptyMessage)}</td></tr>`;
   }
   return list.map(company => `
     <tr data-client-id="${_mEsc(company.id)}" data-trade-types="${_mEsc(getClientCompanyTradeTypes(company).join(','))}">
-      <td><code style="font-size:11px;white-space:nowrap;">${_mEsc(company.id)}</code></td>
+      <td><code style="white-space:nowrap;">${_mEsc(company.id)}</code></td>
+      <td style="font-weight:700;">${_mEsc(company.companyName)}</td>
+      <td><span class="partner-region ${company.regionType === 'overseas' ? 'overseas' : ''}">${company.regionType === 'overseas' ? '海外' : '国内'}</span></td>
       <td>${_clientTradeBadge(company)}</td>
-      <td><code style="font-size:11px;white-space:nowrap;">${_mEsc(company.buyerCode || '—')}</code></td>
-      <td><code style="font-size:11px;white-space:nowrap;">${_mEsc(company.supplierCode || '—')}</code></td>
-      <td style="font-weight:700;min-width:170px;">${_mEsc(company.companyName)}</td>
-      <td style="font-size:12px;white-space:nowrap;">${_mEsc(company.invoice || '—')}</td>
-      <td style="font-size:12px;" title="${_mEsc(company.contactPerson || company.representative || '')}">${_mEsc(company.contactPerson || company.representative || '—')}</td>
-      <td style="font-size:12px;" title="${_mEsc(company.email || '')}">${_mEsc(company.email || '—')}</td>
-      <td style="font-size:12px;white-space:nowrap;" title="${_mEsc(company.tel || '')}">${_mEsc(company.tel || '—')}</td>
-      <td style="font-size:12px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_mEsc(company.address || '')}">${_mEsc(company.address || '—')}</td>
-      <td style="font-size:12px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_mEsc(company.note || '')}">${_mEsc(company.note || '—')}</td>
+      <td>${_mEsc(company.postalCode || '—')}</td>
+      <td class="partner-address">${_mEsc(company.address || '—')}</td>
+      <td style="white-space:nowrap;">${_mEsc(company.invoice || '—')}</td>
+      <td>${_mEsc(company.antiqueLicenseNumber || '—')}</td>
+      <td>${_mEsc(company.tel || '—')}</td>
+      <td>${_mEsc(company.contactPhone || '—')}</td>
+      <td>${_mEsc(company.email || '—')}</td>
+      <td>${_clientGuestIssueCell(company)}</td>
       <td>
         <div style="display:flex;gap:4px;white-space:nowrap;">
           <button class="btn btn-outline btn-sm" onclick="showClientModal('${company.id}')"><i class="fa-solid fa-pen"></i> 編集</button>
@@ -15870,36 +15969,34 @@ function _renderClientCompanyRows(list, emptyMessage = '取引先会社が登録
 
 const CLIENT_COMPANY_TABLE_HEADER = `
   <tr>
-    <th>取引先コード</th><th>取引区分</th><th>販売先コード</th><th>仕入先コード</th>
-    <th>会社名</th><th>インボイス番号</th><th>担当者名</th><th>メールアドレス</th>
-    <th>電話番号</th><th>住所</th><th>備考</th><th>操作</th>
+    <th>取引先コード</th><th>取引先名</th><th>国内・海外</th><th>取引区分</th>
+    <th>郵便番号</th><th>住所</th><th>インボイス番号</th><th>古物番号</th>
+    <th>代表電話番号</th><th>連絡先番号</th><th>E-mail</th><th>ゲスト</th><th>操作</th>
   </tr>`;
 
 const CLIENT_COMPANY_TABLE_COLGROUP = `
   <colgroup>
-    <col style="width:82px"><col style="width:94px"><col style="width:80px"><col style="width:80px">
-    <col style="width:160px"><col style="width:108px"><col style="width:88px"><col style="width:160px">
-    <col style="width:100px"><col style="width:145px"><col style="width:80px"><col style="width:103px">
+    <col style="width:120px"><col style="width:220px"><col style="width:95px"><col style="width:210px">
+    <col style="width:110px"><col style="width:300px"><col style="width:170px"><col style="width:250px">
+    <col style="width:150px"><col style="width:150px"><col style="width:240px"><col style="width:130px"><col style="width:120px">
   </colgroup>`;
 
 function renderClientMasterTab(area) {
   const list = _getFilteredClientCompanies();
-  const emptyMessage = _clientCompanyTradeFilter === 'all'
-    ? '取引先会社が登録されていません'
-    : '選択した取引区分の取引先会社はありません';
+  const emptyMessage = '選択した条件に一致する取引先会社はありません';
   const rows = _renderClientCompanyRows(list, emptyMessage);
 
   area.innerHTML = `
     <div class="master-content">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
-        <h3 style="font-size:15px;font-weight:bold;color:var(--primary);"><i class="fa-solid fa-handshake"></i> 取引先会社</h3>
+        <h3 style="font-size:16px;font-weight:bold;color:var(--primary);"><i class="fa-solid fa-handshake"></i> 取引先会社</h3>
         <button class="btn btn-accent btn-sm" onclick="showClientModal()"><i class="fa-solid fa-plus"></i> 新規登録</button>
       </div>
       <div style="margin-bottom:12px;padding:10px 12px;border:1px solid #bae6fd;background:#f0f9ff;border-radius:8px;font-size:12px;color:#0c4a6e;">
-        <i class="fa-solid fa-link"></i> 販売先・仕入先マスタと共通化されています。ゲスト発行先は販売先取引として自動連動します。
+        <i class="fa-solid fa-link"></i> この取引先マスタを、仕入・販売・検索・商品編集・各伝票で共通参照します。販売先と仕入先は同じ会社へ同時設定できます。
       </div>
-      ${_renderClientCompanyFilter('mClientTradeFilter', 'mClientTradeFilterCount')}
-      <div class="data-table-wrapper client-company-table-wrapper" tabindex="0" aria-label="取引先会社一覧。画面幅が狭い場合は横にスクロールできます">
+      ${_renderClientCompanyFilter('mClientTradeFilter', 'mClientTradeFilterCount', 'm')}
+      <div class="data-table-wrapper client-company-table-wrapper" tabindex="0" aria-label="取引先一覧。画面幅が狭い場合は横にスクロールできます">
         <table class="data-table client-company-table">
           ${CLIENT_COMPANY_TABLE_COLGROUP}
           <thead>${CLIENT_COMPANY_TABLE_HEADER}</thead>
@@ -15914,9 +16011,7 @@ function renderMasterClientTable() {
   const tbody = document.getElementById('mClient-tbody');
   if (!tbody) return;
   const list = _getFilteredClientCompanies();
-  const emptyMessage = _clientCompanyTradeFilter === 'all'
-    ? '取引先会社が登録されていません'
-    : '選択した取引区分の取引先会社はありません';
+  const emptyMessage = '選択した条件に一致する取引先会社はありません';
   tbody.innerHTML = _renderClientCompanyRows(list, emptyMessage);
   const count = document.getElementById('mClientTradeFilterCount');
   if (count) count.textContent = _clientCompanyFilterCountText();
@@ -16414,23 +16509,63 @@ function init_client() {
 function renderClientTable() {
   const tbody = document.getElementById('clientTableBody');
   if (!tbody) return;
+  const filterHost = document.getElementById('clientFilterHost');
+  if (filterHost && !filterHost.dataset.ready) {
+    filterHost.innerHTML = _renderClientCompanyFilter('clientTradeFilter', 'clientTradeFilterCount', 'page');
+    filterHost.dataset.ready = 'true';
+  }
+  const colgroup = document.getElementById('clientTableColgroup');
+  if (colgroup) colgroup.outerHTML = CLIENT_COMPANY_TABLE_COLGROUP;
+  const head = document.getElementById('clientTableHead');
+  if (head) head.innerHTML = CLIENT_COMPANY_TABLE_HEADER;
   const list = _getFilteredClientCompanies();
-  const emptyMessage = _clientCompanyTradeFilter === 'all'
-    ? '取引先会社が登録されていません'
-    : '選択した取引区分の取引先会社はありません';
+  const emptyMessage = '選択した条件に一致する取引先会社はありません';
   tbody.innerHTML = _renderClientCompanyRows(list, emptyMessage);
   const count = document.getElementById('clientTradeFilterCount');
   if (count) count.textContent = _clientCompanyFilterCountText();
 }
 
-function setClientCompanyTradeFilter(value) {
-  _clientCompanyTradeFilter = _normalizeClientCompanyTradeFilter(value);
-  ['mClientTradeFilter', 'clientTradeFilter'].forEach(id => {
-    const select = document.getElementById(id);
-    if (select) select.value = _clientCompanyTradeFilter;
+function setClientCompanyTradeFilter(value, checked) {
+  if (!['buyer', 'supplier', 'other'].includes(value)) return;
+  if (checked) _clientCompanyTradeFilters.add(value);
+  else _clientCompanyTradeFilters.delete(value);
+  ['m', 'page'].forEach(prefix => {
+    const checkbox = document.getElementById(`${prefix}ClientTrade-${value}`);
+    if (checkbox) checkbox.checked = Boolean(checked);
   });
   renderMasterClientTable();
   renderClientTable();
+}
+
+function setClientCompanyRegionFilter(value) {
+  _clientCompanyRegionFilter = ['all', 'domestic', 'overseas'].includes(value) ? value : 'all';
+  ['mClientRegionFilter', 'pageClientRegionFilter'].forEach(id => {
+    const select = document.getElementById(id);
+    if (select) select.value = _clientCompanyRegionFilter;
+  });
+  renderMasterClientTable();
+  renderClientTable();
+}
+
+function setClientCompanyNameFilter(value) {
+  _clientCompanyNameFilter = value || '';
+  renderMasterClientTable();
+  renderClientTable();
+}
+
+function openGuestLoginForPartner(partnerCode) {
+  const company = (APP_DATA.clientCompanies || []).find(item => item.id === partnerCode);
+  if (!company || !getClientCompanyTradeTypes(company).includes('buyer')) return;
+  const issued = Boolean(company.guestId) || (APP_DATA.guestAccounts || []).some(guest => guest.buyerCode === company.buyerCode);
+  if (issued) {
+    showToast('error', '発行済みです', '同じ取引先へゲストアカウントを二重発行することはできません');
+    return;
+  }
+  showAddGuestModal();
+  document.getElementById('addGuest-company').value = company.companyName || '';
+  document.getElementById('addGuest-name').value = company.contactPerson || company.representative || '';
+  document.getElementById('addGuest-email').value = company.email || '';
+  document.getElementById('addGuest-buyer').value = company.buyerCode || '';
 }
 
 function showClientModal(id) {
@@ -16443,25 +16578,33 @@ function showClientModal(id) {
     document.getElementById('clientModal-id').value             = c.id;
     document.getElementById('clientModal-code').value           = c.id;
     const types = getClientCompanyTradeTypes(c);
-    document.getElementById('clientModal-tradeType').value      = types.length === 2 ? 'both' : (types[0] || 'buyer');
+    document.getElementById('clientModal-roleBuyer').checked = types.includes('buyer');
+    document.getElementById('clientModal-roleSupplier').checked = types.includes('supplier');
+    document.getElementById('clientModal-roleOther').checked = Boolean(c.isOther);
+    document.getElementById('clientModal-regionDomestic').checked = (c.regionType || 'domestic') === 'domestic';
+    document.getElementById('clientModal-regionOverseas').checked = c.regionType === 'overseas';
     document.getElementById('clientModal-buyerCode').value      = c.buyerCode || '';
     document.getElementById('clientModal-supplierCode').value   = c.supplierCode || '';
     document.getElementById('clientModal-companyName').value   = c.companyName || '';
-    document.getElementById('clientModal-representative').value = c.representative || '';
-    document.getElementById('clientModal-contactPerson').value  = c.contactPerson || '';
     document.getElementById('clientModal-email').value          = c.email || '';
     document.getElementById('clientModal-tel').value            = c.tel || '';
+    document.getElementById('clientModal-contactPhone').value   = c.contactPhone || '';
+    document.getElementById('clientModal-postalCode').value     = c.postalCode || '';
     document.getElementById('clientModal-address').value        = c.address || '';
     document.getElementById('clientModal-invoice').value        = c.invoice || '';
-    document.getElementById('clientModal-note').value           = c.note || '';
+    document.getElementById('clientModal-antiqueLicense').value = c.antiqueLicenseNumber || '';
   } else {
     document.getElementById('clientModalTitle').textContent = '取引先会社 登録';
-    ['id','companyName','representative','contactPerson','email','tel','address','invoice','note'].forEach(f => {
+    ['id','companyName','email','tel','contactPhone','postalCode','address','invoice','antiqueLicense'].forEach(f => {
       const el = document.getElementById(`clientModal-${f}`);
       if (el) el.value = '';
     });
     document.getElementById('clientModal-code').value = getNextClientCompanyCode();
-    document.getElementById('clientModal-tradeType').value = 'buyer';
+    document.getElementById('clientModal-roleBuyer').checked = true;
+    document.getElementById('clientModal-roleSupplier').checked = false;
+    document.getElementById('clientModal-roleOther').checked = false;
+    document.getElementById('clientModal-regionDomestic').checked = true;
+    document.getElementById('clientModal-regionOverseas').checked = false;
     document.getElementById('clientModal-buyerCode').value = _nextTradeMasterCode('B', APP_DATA.buyers || []);
     document.getElementById('clientModal-supplierCode').value = '';
   }
@@ -16470,9 +16613,8 @@ function showClientModal(id) {
 }
 
 function clientTradeTypeChanged() {
-  const tradeType = document.getElementById('clientModal-tradeType')?.value || 'buyer';
-  const buyerEnabled = tradeType === 'buyer' || tradeType === 'both';
-  const supplierEnabled = tradeType === 'supplier' || tradeType === 'both';
+  const buyerEnabled = Boolean(document.getElementById('clientModal-roleBuyer')?.checked);
+  const supplierEnabled = Boolean(document.getElementById('clientModal-roleSupplier')?.checked);
   const buyerInput = document.getElementById('clientModal-buyerCode');
   const supplierInput = document.getElementById('clientModal-supplierCode');
   if (buyerInput) {
@@ -16491,15 +16633,27 @@ function closeClientModal() {
 
 async function saveClientModal() {
   const companyName = document.getElementById('clientModal-companyName').value.trim();
-  if (!companyName) { showToast('error', '入力エラー', '会社名を入力してください'); return; }
+  if (!companyName) { showToast('error', '入力エラー', '取引先名を入力してください'); return; }
+  const address = document.getElementById('clientModal-address').value.trim();
+  if (!address) { showToast('error', '入力エラー', '住所を入力してください'); return; }
+  const invoice = document.getElementById('clientModal-invoice').value.trim().toUpperCase();
+  if (invoice && !/^T[0-9]{13}$/.test(invoice)) {
+    showToast('error', '入力エラー', 'インボイス番号は T に続けて半角数字13桁で入力してください');
+    return;
+  }
 
   if (!APP_DATA.clientCompanies) APP_DATA.clientCompanies = [];
   const existingId = document.getElementById('clientModal-id').value;
   const companyCode = document.getElementById('clientModal-code').value.trim().toUpperCase();
-  const tradeType = document.getElementById('clientModal-tradeType').value;
   const original = existingId ? APP_DATA.clientCompanies.find(company => company.id === existingId) : null;
-  const selectedTypes = tradeType === 'both' ? ['buyer', 'supplier'] : [tradeType];
-  const tradeTypes = [...new Set([...getClientCompanyTradeTypes(original), ...selectedTypes])];
+  const tradeTypes = [];
+  if (document.getElementById('clientModal-roleBuyer').checked) tradeTypes.push('buyer');
+  if (document.getElementById('clientModal-roleSupplier').checked) tradeTypes.push('supplier');
+  const isOther = document.getElementById('clientModal-roleOther').checked;
+  if (!tradeTypes.length && !isOther) {
+    showToast('error', '入力エラー', '販売先・仕入先・その他から1つ以上選択してください');
+    return;
+  }
   if (!/^CLI-[0-9]+$/.test(companyCode)) {
     showToast('error', '取引先コードを確認してください', '取引先コードは CLI-001 の形式で自動採番されます');
     return;
@@ -16509,16 +16663,22 @@ async function saveClientModal() {
     autoManaged: original?.autoManaged ?? true,
     id: existingId || companyCode,
     tradeTypes,
+    isOther,
+    regionType: document.querySelector('input[name="clientModal-region"]:checked')?.value || 'domestic',
+    closingDay: original?.closingDay || null,
     buyerCode: tradeTypes.includes('buyer') ? document.getElementById('clientModal-buyerCode').value.trim().toUpperCase() : '',
     supplierCode: tradeTypes.includes('supplier') ? document.getElementById('clientModal-supplierCode').value.trim().toUpperCase() : '',
     companyName,
-    representative: document.getElementById('clientModal-representative').value.trim(),
-    contactPerson:  document.getElementById('clientModal-contactPerson').value.trim(),
+    representative: original?.representative || '',
+    contactPerson:  original?.contactPerson || '',
     email:          document.getElementById('clientModal-email').value.trim(),
     tel:            document.getElementById('clientModal-tel').value.trim(),
-    address:        document.getElementById('clientModal-address').value.trim(),
-    invoice:        document.getElementById('clientModal-invoice').value.trim().toUpperCase(),
-    note:           document.getElementById('clientModal-note').value.trim(),
+    contactPhone:   document.getElementById('clientModal-contactPhone').value.trim(),
+    postalCode:     document.getElementById('clientModal-postalCode').value.trim(),
+    address,
+    invoice,
+    antiqueLicenseNumber: document.getElementById('clientModal-antiqueLicense').value.trim(),
+    note:           original?.note || '',
   };
 
   const duplicateBuyer = entry.buyerCode && (APP_DATA.clientCompanies || []).some(company =>
@@ -16526,11 +16686,10 @@ async function saveClientModal() {
   const duplicateSupplier = entry.supplierCode && (APP_DATA.clientCompanies || []).some(company =>
     company.id !== entry.id && company.supplierCode === entry.supplierCode);
   if (duplicateBuyer || duplicateSupplier) {
-    showToast('error', '取引コードが重複しています', duplicateBuyer ? '販売先コードは別の取引先会社に使用されています' : '仕入先コードは別の取引先会社に使用されています');
+    showToast('error', '取引コードが重複しています', duplicateBuyer ? '販売先コードは別の取引先に使用されています' : '仕入先コードは別の取引先に使用されています');
     return;
   }
 
-  let saved;
   if (!window.ZaikoAPI) {
     applyClientCompanyToTradeMasters(entry);
     if (existingId) {
@@ -16539,31 +16698,23 @@ async function saveClientModal() {
     } else APP_DATA.clientCompanies.push(entry);
     persistSupplierMasterDirectory();
     if (typeof persistLoginDirectory === 'function') persistLoginDirectory();
-    reconcileClientCompanyDirectory({ persist: true }); closeClientModal(); renderClientTable(); renderMasterClientTable(); renderMasterTabs();
+    reconcileClientCompanyDirectory({ persist: true });
+    refreshSupplierMasterConsumers();
+    refreshBuyerMasterConsumers();
+    closeClientModal(); renderClientTable(); renderMasterClientTable(); renderMasterTabs();
+    showToast('success', existingId ? '更新完了' : '登録完了', `「${companyName}」を${existingId ? '更新' : '登録'}しました`);
     return;
   }
   try {
-    saved = await window.ZaikoAPI.savePartner(entry);
+    await window.ZaikoAPI.savePartner(entry);
   } catch (error) {
     showToast('error', '保存エラー', error.message);
     return;
   }
-  entry._id = saved.id;
-  entry.id = saved.partnerCode;
-  entry.buyerCode = saved.roles?.find(role => role.roleType === 'buyer')?.roleCode || '';
-  entry.supplierCode = saved.roles?.find(role => role.roleType === 'supplier')?.roleCode || '';
-  applyClientCompanyToTradeMasters(entry);
-
-  if (existingId) {
-    const idx = APP_DATA.clientCompanies.findIndex(x => x.id === existingId);
-    if (idx >= 0) APP_DATA.clientCompanies[idx] = entry;
-  } else {
-    APP_DATA.clientCompanies.push(entry);
-    _clientCompanyNextSequence = Math.max(_clientCompanyNextSequence, _clientCompanySequence(entry.id) + 1);
-  }
-  persistSupplierMasterDirectory();
-  if (typeof persistLoginDirectory === 'function') persistLoginDirectory();
-  reconcileClientCompanyDirectory({ persist: true });
+  await window.ZaikoAPI.hydrateAdmin();
+  reconcileClientCompanyDirectory({ persist: false });
+  refreshSupplierMasterConsumers();
+  refreshBuyerMasterConsumers();
   closeClientModal();
   renderClientTable();
   renderMasterClientTable();
@@ -16575,7 +16726,7 @@ function showClientDeleteModal(id) {
   const c = (APP_DATA.clientCompanies || []).find(x => x.id === id);
   if (!c) return;
   if (getClientCompanyTradeTypes(c).length > 0) {
-    showToast('error', '連動中の取引先会社は削除できません', '販売先または仕入先マスタで使用されています。各マスタの取引履歴を確認してください');
+    showToast('error', '連動中の取引先は削除できません', '仕入・販売または伝票で使用されています。取引履歴を確認してください');
     return;
   }
   _clientDeleteId = id;

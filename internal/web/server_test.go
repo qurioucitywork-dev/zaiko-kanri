@@ -482,6 +482,20 @@ func TestPhase7AdminCanFindCancelledProductsAndCSVExportIsAudited(t *testing.T) 
 	}
 }
 
+func TestWorkerCanLoadCancelledProductsForInventoryStatusSearch(t *testing.T) {
+	for _, role := range []string{database.RoleAdmin, database.RoleWorker} {
+		if !canViewCancelledInventory(role, "true") {
+			t.Fatalf("%s must be able to request cancelled inventory", role)
+		}
+	}
+	if canViewCancelledInventory(database.RoleGuest, "true") {
+		t.Fatal("guest must not be able to request cancelled inventory")
+	}
+	if canViewCancelledInventory(database.RoleWorker, "false") {
+		t.Fatal("worker request without includeCancelled must not include cancelled inventory")
+	}
+}
+
 func TestWorkerCancellationRoutesEnterApprovalHandler(t *testing.T) {
 	app, _ := testServer(t)
 	session, csrf := loginAs(t, app, "worker", "preview-worker-2026")

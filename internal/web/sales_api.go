@@ -53,7 +53,7 @@ func (s *Server) apiSaleCreate(w http.ResponseWriter, r *http.Request) {
 	if input.TaxRateBasisPoints == 0 && input.TaxMode == "taxable" {
 		input.TaxRateBasisPoints = 1000
 	}
-	if input.BuyerCode == "" || !validCurrency(input.DisplayCurrency) ||
+	if input.BuyerCode == "" || (input.DisplayCurrency != "JPY" && input.DisplayCurrency != "USD" && input.DisplayCurrency != "EUR" && input.DisplayCurrency != "HKD") ||
 		(input.TaxMode != "taxable" && input.TaxMode != "tax_exempt" && input.TaxMode != "out_of_scope") || len(input.Lines) == 0 || len(input.Lines) > 100 {
 		writeAPIError(w, http.StatusBadRequest, "invalid_sale", "販売先・通貨・税区分・明細を確認してください。")
 		return

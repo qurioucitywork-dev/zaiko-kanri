@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>在庫管理ツール — 管理画面</title>
-<link rel="stylesheet" href="css/style.css?v=20260815-gallery-layout">
+<link rel="stylesheet" href="css/style.css?v=20260817-purchase-return-nowrap">
 <link rel="stylesheet" href="css/market-table.css">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -177,32 +177,34 @@
 #masterContentArea { min-width: 0; overflow: hidden; }
 .client-company-table {
   width: 100%;
-  min-width: 1280px !important;
-  table-layout: fixed;
+  min-width: 1920px !important;
+  table-layout: auto;
 }
 .client-company-table thead th,
 .client-company-table tbody td {
-  padding-left: 8px;
-  padding-right: 8px;
+  padding: 10px 12px;
+  white-space: nowrap;
+  line-height: 1.35;
 }
 .client-company-table thead th {
-  white-space: normal;
-  line-height: 1.35;
   vertical-align: middle;
 }
-.client-company-table tbody td:nth-child(7),
-.client-company-table tbody td:nth-child(8),
-.client-company-table tbody td:nth-child(9),
-.client-company-table tbody td:nth-child(10),
-.client-company-table tbody td:nth-child(11) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.client-company-table .partner-address { max-width:none; overflow:visible; text-overflow:clip; }
 .client-company-table-wrapper:focus-visible {
   outline: 3px solid rgba(41, 128, 185, 0.35);
   outline-offset: -3px;
 }
+.partner-filter-bar { display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:14px;padding:14px;background:#f8fafc;border:1px solid var(--border);border-radius:10px; }
+.partner-filter-name { margin:0;min-width:300px;flex:1; }
+.partner-filter-checks { display:flex;gap:8px;flex-wrap:wrap; }
+.partner-filter-checks label,.partner-choice-row label { min-height:44px;display:inline-flex;align-items:center;gap:8px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:#fff;cursor:pointer;font-size:14px; }
+.partner-filter-checks input,.partner-choice-row input { width:18px;height:18px;accent-color:var(--primary-light); }
+.partner-form-columns { display:grid;grid-template-columns:1fr 1fr;gap:24px; }
+.partner-form-column { display:flex;flex-direction:column;gap:14px;min-width:0; }
+.partner-form-column .form-group { margin:0; }
+.partner-form-column .form-label,.partner-form-column legend { font-size:14px !important;font-weight:700; }
+.partner-form-column .form-control { min-height:44px;font-size:14px !important; }
+@media (max-width: 760px) { .partner-form-columns { grid-template-columns:1fr; } .partner-filter-name { min-width:100%; } }
 
 /* ===== 実績管理 ===== */
 .perf-date-row {
@@ -1283,24 +1285,13 @@
         </div>
         <div id="pr-selected-items-list" style="border:1px solid var(--border);border-radius:8px;overflow:hidden;min-height:48px;"></div>
       </div>
-      <!-- 返品理由・メモ -->
-      <div class="form-row cols-2" style="margin-bottom:14px;">
-        <div class="form-group">
-          <label class="form-label">返品日 <span class="required">*</span></label>
-          <input type="date" class="form-control" id="pr-return-date">
-        </div>
-        <div class="form-group">
-          <label class="form-label">返品理由</label>
-          <select class="form-control" id="pr-return-reason">
-            <option value="">-- 選択 --</option>
-            <option>商品不良</option><option>注文違い</option><option>破損</option>
-            <option>長期在庫</option><option>その他</option>
-          </select>
-        </div>
+      <div class="form-group" style="margin-bottom:14px;">
+        <label class="form-label">返品日 <span class="required">*</span></label>
+        <input type="date" class="form-control" id="pr-return-date">
       </div>
       <div class="form-group">
-        <label class="form-label">備考</label>
-        <textarea class="form-control" id="pr-return-note" rows="2" placeholder="返品の詳細や特記事項を記入"></textarea>
+        <label class="form-label">備考 <span class="required">*</span></label>
+        <textarea class="form-control" id="pr-return-note" rows="2" required aria-required="true" placeholder="返品内容や特記事項を入力してください"></textarea>
       </div>
     </div>
     <div class="modal-footer" style="flex-wrap:wrap;gap:8px;">
@@ -1459,7 +1450,7 @@
             <label class="form-label">ステータス</label>
             <select class="form-control" id="ie-status">
               <option>在庫中</option><option>委託中</option><option>売上済</option><option>出荷済</option>
-              <option>取置中</option><option>修理中</option><option>廃棄</option>
+              <option>取置中</option><option>仕入返品中</option><option>仕入返品済</option><option>修理中</option><option>廃棄</option>
             </select>
           </div>
           <div class="form-group">
@@ -1482,7 +1473,9 @@
           </div>
           <div class="form-group">
             <label class="form-label">ベルト素材</label>
-            <input class="form-control" id="ie-belt" placeholder="例: ステンレス / レザー">
+            <select class="form-control" id="ie-belt">
+              <option value="">-- 選択 --</option>
+            </select>
           </div>
           <div class="form-group">
             <label class="form-label">文字盤</label>
@@ -2195,7 +2188,7 @@
               </div>
             </div>
             <button class="btn btn-outline btn-sm" type="button" onclick="marketDownloadTemplate()" title="CSV取込テンプレートをダウンロード">
-              <i class="fa-solid fa-file-arrow-down"></i> CSVテンプレート
+              <i class="fa-solid fa-file-arrow-down"></i> 仕入登録テンプレート
             </button>
             <button class="btn btn-outline btn-sm" type="button" onclick="marketExportCSV()">
               <i class="fa-solid fa-file-export"></i> CSV出力
@@ -2313,12 +2306,13 @@
               <label class="inv-filter-label"><i class="fa-solid fa-circle-dot"></i> ステータス</label>
               <select class="form-control inv-filter-input" id="inv-f-status">
                 <option value="">すべて</option>
-                <option value="在庫中">在庫中</option>
+                <option value="在庫中" selected>在庫中</option>
                 <option value="取置中">取置中</option>
                 <option value="売上済">売上済</option>
                 <option value="委託中">委託中</option>
                 <option value="出荷済">出荷済</option>
-                <option value="仕入返品">仕入返品</option>
+                <option value="仕入返品中">仕入返品中</option>
+                <option value="仕入返品済">仕入返品済</option>
                 <option value="保留">保留</option>
               </select>
             </div>
@@ -2438,22 +2432,22 @@
         <div class="data-table-wrapper">
           <table class="data-table inv-fixed-table" id="inventoryTable">
             <colgroup>
-              <col data-inv-col="code" style="width:150px;"><!-- 管理番号 -->
-              <col data-inv-col="brand" style="width:140px;"><!-- ブランド -->
-              <col data-inv-col="model" style="width:150px;"><!-- モデル名 -->
-              <col data-inv-col="ref" style="width:130px;"><!-- 型番 -->
-              <col data-inv-col="serial" style="width:140px;"> <!-- シリアル -->
-              <col data-inv-col="supplier" style="width:150px;"> <!-- 仕入先 -->
-              <col data-inv-col="staff" style="width:100px;"> <!-- 担当者 -->
-              <col data-inv-col="purchasePrice" style="width:150px;"> <!-- 仕入金額 -->
-              <col data-inv-col="salePrice" style="width:150px;"> <!-- 売価 -->
-              <col data-inv-col="purchaseDate" style="width:120px;"> <!-- 仕入日 -->
-              <col data-inv-col="sku" style="width:150px;"> <!-- SKU -->
-              <col data-inv-col="accessories" style="width:160px;"><!-- 付属品 -->
-              <col data-inv-col="status" style="width:120px;"> <!-- ステータス -->
-              <col data-inv-col="box" style="width:70px;"> <!-- BOX -->
-              <col data-inv-col="qr" style="width:80px;"> <!-- 棚卸QR -->
-              <col data-inv-col="edit" style="width:70px;"> <!-- 編集 -->
+              <col data-inv-col="code" style="width:130px;"><!-- 管理番号 -->
+              <col data-inv-col="brand" style="width:100px;"><!-- ブランド -->
+              <col data-inv-col="model" style="width:110px;"><!-- モデル名 -->
+              <col data-inv-col="ref" style="width:100px;"><!-- 型番 -->
+              <col data-inv-col="serial" style="width:90px;"> <!-- シリアル -->
+              <col data-inv-col="supplier" style="width:90px;"> <!-- 仕入先 -->
+              <col data-inv-col="staff" style="width:80px;"> <!-- 担当者 -->
+              <col data-inv-col="purchasePrice" style="width:132px;"> <!-- 仕入金額 -->
+              <col data-inv-col="salePrice" style="width:132px;"> <!-- 売価 -->
+              <col data-inv-col="purchaseDate" style="width:90px;"> <!-- 仕入日 -->
+              <col data-inv-col="sku" style="width:90px;"> <!-- SKU -->
+              <col data-inv-col="accessories" style="width:120px;"><!-- 付属品 -->
+              <col data-inv-col="status" style="width:80px;"> <!-- ステータス -->
+              <col data-inv-col="box" style="width:50px;"> <!-- BOX -->
+              <col data-inv-col="qr" style="width:70px;"> <!-- 棚卸QR -->
+              <col data-inv-col="edit" style="width:58px;"> <!-- 編集 -->
             </colgroup>
             <thead>
               <tr>
@@ -2635,8 +2629,8 @@
           <h3><i class="fa-solid fa-table-list"></i> 登録済み仕入伝票一覧</h3>
           <span id="pe-list-count" style="font-size:12px;color:var(--text-muted);"></span>
         </div>
-        <div class="card-body" style="padding:0;overflow-x:auto;">
-          <table class="data-table">
+        <div class="card-body pe-slip-list-scroll">
+          <table class="data-table pe-slip-list-table">
             <thead>
               <tr>
                 <th>伝票番号</th>
@@ -2646,7 +2640,7 @@
                 <th>担当者</th>
                 <th>仕入区分</th>
                 <th style="text-align:right;">明細件数</th>
-                <th style="text-align:right;">仕入合計</th>
+                <th class="pe-purchase-total-heading">仕入小計 / 仕入合計</th>
                 <th style="text-align:right;">売価合計（USD）</th>
                 <th style="text-align:center;">操作</th>
                 <th style="text-align:center;">発行</th>
@@ -2799,9 +2793,9 @@
                 </div>
                 <div class="form-group">
                   <label class="form-label">ベルト素材</label>
-                  <input class="form-control" id="pu-belt" placeholder="例: ステンレス / レザー"
-                    data-fmt="full"
-                    title="半角入力は全角へ自動変換されます">
+                  <select class="form-control" id="pu-belt">
+                    <option value="">-- 選択 --</option>
+                  </select>
                 </div>
               </div>
               <div class="form-row cols-2">
@@ -2884,7 +2878,7 @@
           </div>
         </div>
         <div class="card-body">
-          <div class="form-row cols-3 mb-20" style="max-width:700px;">
+          <div class="form-row cols-3 mb-20 sales-entry-header-fields">
             <div class="form-group">
               <div class="sl-id-header">
                 <label class="form-label" for="sl-id">参照伝票番号</label>
@@ -2951,6 +2945,12 @@
                         <button type="button" class="sl-currency-btn active" id="sl-currency-usd"
                           aria-label="USDで入力" aria-pressed="true"
                           onclick="switchSalesEntryCurrency('USD')">$ USD</button>
+                        <button type="button" class="sl-currency-btn" id="sl-currency-eur"
+                          aria-label="EURで入力" aria-pressed="false"
+                          onclick="switchSalesEntryCurrency('EUR')">€ EUR</button>
+                        <button type="button" class="sl-currency-btn" id="sl-currency-hkd"
+                          aria-label="HKDで入力" aria-pressed="false"
+                          onclick="switchSalesEntryCurrency('HKD')">HK$ HKD</button>
                         <button type="button" class="sl-currency-btn" id="sl-currency-jpy"
                           aria-label="円で入力" aria-pressed="false"
                           onclick="switchSalesEntryCurrency('JPY')">¥ 円</button>
@@ -3071,6 +3071,14 @@
               <option value="">すべて</option>
             </select>
           </div>
+          <div class="form-group">
+            <label class="form-label" for="slip-filter-status"><i class="fa-solid fa-circle-half-stroke"></i> ステータス</label>
+            <select class="filter-select" id="slip-filter-status" style="height:34px;min-width:120px;">
+              <option value="processing" selected>処理中</option>
+              <option value="completed">処理済</option>
+              <option value="">すべて</option>
+            </select>
+          </div>
           <div class="form-group" style="display:flex;flex-direction:column;gap:4px;">
             <label class="form-label"><i class="fa-solid fa-magnifying-glass"></i> キーワード</label>
             <div style="display:flex;gap:6px;align-items:center;">
@@ -3085,12 +3093,15 @@
           <button class="btn btn-outline btn-sm" onclick="clearSlipFilter()" style="align-self:flex-end;">
             <i class="fa-solid fa-rotate"></i> リセット
           </button>
+          <button class="btn btn-outline btn-sm" onclick="showAllSlipList()" style="align-self:flex-end;white-space:nowrap;">
+            <i class="fa-solid fa-list"></i> 全件表示
+          </button>
         </div>
 
         <!-- 集計バー -->
         <div class="sales-summary-bar" id="slipSummaryBar" style="display:none;">
           <div class="sales-summary-item">
-            <span class="s-label">件数</span>
+            <span class="s-label" id="slipSummaryScope">表示件数 / 全件数</span>
             <span class="s-val" id="slipSummaryCount">0件</span>
           </div>
           <div class="sales-summary-item">
@@ -3452,7 +3463,7 @@
       </div>
     </div>
 
-    <!-- ===== 取引先会社 ===== -->
+    <!-- ===== 取引先 ===== -->
     <div class="page-panel page-content hidden" id="page-client">
       <div class="card">
         <div class="card-header">
@@ -3460,31 +3471,11 @@
           <button class="btn btn-accent btn-sm" onclick="showClientModal()"><i class="fa-solid fa-plus"></i> 新規登録</button>
         </div>
         <div class="card-body" style="padding:0;">
-          <div role="search" aria-label="取引先会社の絞り込み" style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:12px 16px;background:#fafbfc;border-bottom:1px solid var(--border);">
-            <div class="form-group" style="margin:0;min-width:190px;">
-              <label class="form-label" for="clientTradeFilter" style="font-size:11px;margin-bottom:4px;"><i class="fa-solid fa-filter"></i> 取引区分</label>
-              <select class="form-control" id="clientTradeFilter" onchange="setClientCompanyTradeFilter(this.value)" style="height:34px;font-size:12px;">
-                <option value="all">すべて</option>
-                <option value="buyer">販売先取引</option>
-                <option value="supplier">仕入先取引</option>
-              </select>
-            </div>
-            <span id="clientTradeFilterCount" aria-live="polite" style="font-size:12px;color:var(--text-muted);font-weight:600;white-space:nowrap;">表示 0 / 全 0 件</span>
-          </div>
-          <div class="data-table-wrapper client-company-table-wrapper" tabindex="0" aria-label="取引先会社一覧。画面幅が狭い場合は横にスクロールできます">
+          <div id="clientFilterHost"></div>
+          <div class="data-table-wrapper client-company-table-wrapper" tabindex="0" aria-label="取引先一覧。画面幅が狭い場合は横にスクロールできます">
             <table class="data-table client-company-table">
-              <colgroup>
-                <col style="width:82px"><col style="width:94px"><col style="width:80px"><col style="width:80px">
-                <col style="width:160px"><col style="width:108px"><col style="width:88px"><col style="width:160px">
-                <col style="width:100px"><col style="width:145px"><col style="width:80px"><col style="width:103px">
-              </colgroup>
-              <thead>
-                <tr>
-                  <th>取引先コード</th><th>取引区分</th><th>販売先コード</th><th>仕入先コード</th>
-                  <th>会社名</th><th>インボイス番号</th><th>担当者名</th><th>メールアドレス</th>
-                  <th>電話番号</th><th>住所</th><th>備考</th><th>操作</th>
-                </tr>
-              </thead>
+              <colgroup id="clientTableColgroup"></colgroup>
+              <thead id="clientTableHead"></thead>
               <tbody id="clientTableBody"></tbody>
             </table>
           </div>
@@ -3852,7 +3843,7 @@
     <div class="modal-overlay hidden" id="stkMismatchModal" style="z-index:1200;">
       <div class="modal-box" style="max-width:780px;width:95%;">
         <div class="modal-header">
-          <h3><i class="fa-solid fa-triangle-exclamation"></i> 不一致リスト（未処理）</h3>
+          <h3><i class="fa-solid fa-triangle-exclamation"></i> 不一致リスト</h3>
           <button class="modal-close" onclick="stkCloseMismatch()"><i class="fa-solid fa-xmark"></i></button>
         </div>
         <div class="modal-body" style="padding:0;max-height:60vh;overflow-y:auto;">
@@ -3873,7 +3864,7 @@
                 <th class="stk-th">モデル名</th>
                 <th class="stk-th">型番</th>
                 <th class="stk-th stk-th-price">仕入金額</th>
-                <th class="stk-th">ステータス</th>
+                <th class="stk-th">差異分類</th>
                 <th class="stk-th" style="text-align:center;">不一致理由</th>
               </tr>
             </thead>
@@ -4283,67 +4274,78 @@
 
 <!-- ===== 取引先会社 登録/編集モーダル ===== -->
 <div class="modal-overlay hidden" id="clientModal" style="z-index:10700;">
-  <div class="modal" style="max-width:760px;width:95%;border-radius:14px;overflow:hidden;">
+  <div class="modal" style="max-width:1040px;width:96%;border-radius:14px;overflow:hidden;">
     <div class="modal-header" style="background:linear-gradient(135deg,#7c2d12,#ea580c);color:#fff;border-bottom:none;">
       <span style="font-size:18px;"><i class="fa-solid fa-handshake"></i></span>
-      <h3 style="color:#fff;font-size:15px;" id="clientModalTitle">取引先会社 登録</h3>
+      <h3 style="color:#fff;font-size:18px;" id="clientModalTitle">取引先会社 登録</h3>
       <button class="modal-close" style="color:#fff;opacity:0.8;" onclick="closeClientModal()"><i class="fa-solid fa-xmark"></i></button>
     </div>
     <div class="modal-body" style="padding:20px;">
       <input type="hidden" id="clientModal-id">
-      <div class="form-row cols-2" style="margin-bottom:0;">
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">取引先コード</label>
-          <input type="text" class="form-control" id="clientModal-code" readonly aria-readonly="true" placeholder="自動採番" style="font-size:13px;background:#f8fafc;">
+      <div class="partner-form-columns">
+        <section class="partner-form-column" aria-label="取引先基本情報">
+          <div class="form-group">
+            <label class="form-label" for="clientModal-code">取引先コード（自動採番）</label>
+            <input type="text" class="form-control" id="clientModal-code" readonly aria-readonly="true" placeholder="自動採番" style="background:#f8fafc;">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="clientModal-companyName">取引先名 <span class="required">*</span></label>
+            <input type="text" class="form-control" id="clientModal-companyName" required placeholder="例: 株式会社○○">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="clientModal-postalCode">郵便番号</label>
+            <input type="text" inputmode="numeric" class="form-control" id="clientModal-postalCode" maxlength="8" placeholder="例: 100-0001">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="clientModal-address">住所 <span class="required">*</span></label>
+            <input type="text" class="form-control" id="clientModal-address" required placeholder="例: 東京都千代田区…">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="clientModal-invoice">インボイス番号（T＋半角数字13桁）</label>
+            <input type="text" class="form-control" id="clientModal-invoice" maxlength="14" pattern="T[0-9]{13}" placeholder="例: T1234567890123">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="clientModal-antiqueLicense">古物番号</label>
+            <input type="text" class="form-control" id="clientModal-antiqueLicense" maxlength="60" placeholder="例: 東京都公安委員会 第123456789012号">
+          </div>
+        </section>
+        <section class="partner-form-column" aria-label="取引区分と連絡先">
+          <fieldset class="form-group" style="border:0;padding:0;">
+            <legend class="form-label">国内・海外 <span class="required">*</span></legend>
+            <div class="partner-choice-row">
+              <label><input type="radio" name="clientModal-region" id="clientModal-regionDomestic" value="domestic" checked> 国内</label>
+              <label><input type="radio" name="clientModal-region" id="clientModal-regionOverseas" value="overseas"> 海外</label>
+            </div>
+          </fieldset>
+          <fieldset class="form-group" style="border:0;padding:0;">
+            <legend class="form-label">取引区分 <span class="required">*</span>（複数選択可）</legend>
+            <div class="partner-choice-row">
+              <label><input type="checkbox" id="clientModal-roleBuyer" onchange="clientTradeTypeChanged()"> 販売先</label>
+              <label><input type="checkbox" id="clientModal-roleSupplier" onchange="clientTradeTypeChanged()"> 仕入先</label>
+              <label><input type="checkbox" id="clientModal-roleOther"> その他</label>
+            </div>
+          </fieldset>
+          <div class="form-group">
+            <label class="form-label" for="clientModal-tel">代表電話番号</label>
+            <input type="tel" class="form-control" id="clientModal-tel" placeholder="例: 03-0000-0000">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="clientModal-contactPhone">連絡先番号</label>
+            <input type="tel" class="form-control" id="clientModal-contactPhone" placeholder="例: 090-0000-0000">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="clientModal-email">E-mail</label>
+            <input type="email" class="form-control" id="clientModal-email" placeholder="例: info@company.co.jp">
+          </div>
+        </section>
+        <div class="form-group hidden" aria-hidden="true">
+          <label class="form-label">販売先内部コード</label>
+          <input type="text" class="form-control" id="clientModal-buyerCode" readonly>
         </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">取引区分 <span class="required">*</span></label>
-          <select class="form-control" id="clientModal-tradeType" onchange="clientTradeTypeChanged()" style="font-size:13px;">
-            <option value="buyer">販売先取引</option>
-            <option value="supplier">仕入先取引</option>
-            <option value="both">販売先・仕入先の両方</option>
-          </select>
+        <div class="form-group hidden" aria-hidden="true">
+          <label class="form-label">仕入先内部コード</label>
+          <input type="text" class="form-control" id="clientModal-supplierCode" readonly>
         </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">販売先コード</label>
-          <input type="text" class="form-control" id="clientModal-buyerCode" readonly aria-readonly="true" placeholder="B005" style="font-size:13px;background:#f8fafc;">
-        </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">仕入先コード</label>
-          <input type="text" class="form-control" id="clientModal-supplierCode" readonly aria-readonly="true" placeholder="S006" style="font-size:13px;background:#f8fafc;">
-        </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">会社名 <span class="required">*</span></label>
-          <input type="text" class="form-control" id="clientModal-companyName" placeholder="例: 株式会社○○" style="font-size:13px;">
-        </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">代表者名</label>
-          <input type="text" class="form-control" id="clientModal-representative" placeholder="例: 田中 正雄" style="font-size:13px;">
-        </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">担当者名</label>
-          <input type="text" class="form-control" id="clientModal-contactPerson" placeholder="例: 田中 美穂" style="font-size:13px;">
-        </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">メールアドレス</label>
-          <input type="email" class="form-control" id="clientModal-email" placeholder="例: info@company.co.jp" style="font-size:13px;">
-        </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">電話番号</label>
-          <input type="text" class="form-control" id="clientModal-tel" placeholder="例: 03-0000-0000" style="font-size:13px;">
-        </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">住所</label>
-          <input type="text" class="form-control" id="clientModal-address" placeholder="例: 東京都港区…" style="font-size:13px;">
-        </div>
-        <div class="form-group" style="margin-bottom:14px;">
-          <label class="form-label" style="font-size:12px;">インボイス番号</label>
-          <input type="text" class="form-control" id="clientModal-invoice" placeholder="例: T1234567890123" style="font-size:13px;">
-        </div>
-      </div>
-      <div class="form-group" style="margin-bottom:0;">
-        <label class="form-label" style="font-size:12px;">備考</label>
-        <textarea class="form-control" id="clientModal-note" rows="2" placeholder="特記事項など" style="font-size:13px;"></textarea>
       </div>
     </div>
     <div class="modal-footer">
@@ -4915,9 +4917,9 @@
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
 <script src="js/market_table.js?v=20260803-workflow-consistency"></script>
 <script src="js/qr_inventory.js?v=20260804-stocktake-qr"></script>
-  <script src="js/app.js?v=20260816-consignment-document"></script>
+  <script src="js/app.js?v=20260817-inventory-return-status-labels"></script>
 <script src="js/consignment.js?v=20260815-consignment"></script>
 <script src="js/stocktake.js?v=20260803-workflow-consistency"></script>
-<script src="js/purchase_entry.js?v=20260815-purchase-issue"></script>
+<script src="js/purchase_entry.js?v=20260816-purchase-list-nowrap"></script>
 <script src="https://www.genspark.ai/sandbox_inspect.js"></script></body>
 </html>

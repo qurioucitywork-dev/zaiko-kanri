@@ -302,7 +302,7 @@ function openBoxLineupModal(no) {
         <td>${item.model}</td>
         <td style="font-size:11px;color:var(--text-muted);">${item.ref || '—'}</td>
         <td style="text-align:right;">${formatSalePrice(item.salePrice)}</td>
-        <td>${getStatusBadge(item.status)}</td>
+        <td>${getStatusBadge(typeof normalizeInventoryStatusLabel === 'function' ? normalizeInventoryStatusLabel(item.status) : item.status)}</td>
       </tr>`).join('');
 
     document.getElementById('boxLineupBody').innerHTML = `
@@ -395,7 +395,7 @@ function renderBoxEditCurrent(no) {
       <td>${item.model}</td>
       <td style="font-size:12px;">${item.purchaseDate || '—'}</td>
       <td style="text-align:right;">${formatSalePrice(item.salePrice)}</td>
-      <td>${getStatusBadge(item.status)}</td>
+      <td>${getStatusBadge(typeof normalizeInventoryStatusLabel === 'function' ? normalizeInventoryStatusLabel(item.status) : item.status)}</td>
       <td>
         <button class="btn btn-danger btn-sm"
           onclick="removeItemFromBox('${item.code}')"
@@ -505,7 +505,7 @@ function _renderBoxEditAddList() {
         <td>${item.model}</td>
         <td style="font-size:12px;">${item.purchaseDate || '—'}</td>
         <td style="text-align:right;">${formatSalePrice(item.salePrice)}</td>
-        <td>${getStatusBadge(item.status)}</td>
+        <td>${getStatusBadge(typeof normalizeInventoryStatusLabel === 'function' ? normalizeInventoryStatusLabel(item.status) : item.status)}</td>
         <td>${boxLabel}</td>
       </tr>`;
   }).join('');

@@ -55,7 +55,7 @@ func (s *Server) apiReturnTrackingUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	user, _ := currentUser(r.Context())
-	record, err := s.repository.UpdateReturnTracking(r.Context(), user.OrganizationID, r.PathValue("id"), input.Carrier, input.TrackingNumber)
+	record, err := s.repository.UpdateReturnTracking(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, input.Carrier, input.TrackingNumber)
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "return_not_found", "返品伝票が見つかりません。")
 		return

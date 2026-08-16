@@ -100,7 +100,7 @@ func (r *Repository) CreateShipment(ctx context.Context, input ShipmentCreateInp
 		if err != nil {
 			return err
 		}
-		rate, err := latestFX(tx, input.OrganizationID)
+		rate, err := latestFX(tx, input.OrganizationID, "USD")
 		if err != nil {
 			return err
 		}

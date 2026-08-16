@@ -73,9 +73,9 @@ func productFilterFromRequest(r *http.Request, user database.User) database.Prod
 	if sort == "" {
 		sort = "purchase_desc"
 	}
-	includeCancelled := user.Role == database.RoleAdmin &&
+	includeCancelled := (user.Role == database.RoleAdmin || user.Role == database.RoleWorker) &&
 		(r.URL.Query().Get("include_cancelled") == "1" || status == "cancelled")
-	if user.Role != database.RoleAdmin && status == "cancelled" {
+	if user.Role != database.RoleAdmin && user.Role != database.RoleWorker && status == "cancelled" {
 		status = ""
 	}
 	return database.ProductFilter{

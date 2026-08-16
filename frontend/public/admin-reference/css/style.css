@@ -2051,6 +2051,14 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
   justify-content: space-between; gap: 8px;
   margin-bottom: 5px;
 }
+.sales-entry-header-fields {
+  max-width: 980px;
+  grid-template-columns: minmax(320px, 1.35fr) minmax(210px, 1fr) minmax(240px, 1fr) !important;
+}
+.sl-id-header .form-label {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
 
 /* 「出荷なし（新規発番）」ボタン */
 .btn-no-ship {
@@ -3005,7 +3013,7 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
 .sl-table {
   table-layout: fixed;
   width: 100%;
-  min-width: 900px;
+  min-width: 1090px;
   border-collapse: collapse;
   font-size: 12px;
 }
@@ -3018,7 +3026,7 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
 .sl-table col.sl-col-ref   { width: 90px; }
 .sl-table col.sl-col-serial{ width: 90px; }
 .sl-table col.sl-col-accs  { width: 110px; }
-.sl-table col.sl-col-price { width: 176px; }
+.sl-table col.sl-col-price { width: 330px; }
 .sl-table col.sl-col-del   { width: 36px; }
 
 /* ヘッダー行 */
@@ -3035,6 +3043,7 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
 }
 .sl-thead-row th.sl-th-chk  { text-align: center; }
 .sl-thead-row th.sl-th-price { text-align: right; }
+.sl-thead-row th.sl-th-price { overflow: visible; }
 .sl-thead-row th.sl-th-del  { text-align: center; padding: 6px 4px; }
 
 /* 販売金額の入力通貨切替 */
@@ -3047,6 +3056,9 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
 }
 .sl-currency-switch {
   display: inline-flex;
+  flex-wrap: nowrap;
+  width: max-content;
+  max-width: none;
   padding: 2px;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -3054,6 +3066,7 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
 }
 .sl-currency-btn {
   min-width: 58px;
+  flex: 0 0 auto;
   min-height: 30px;
   padding: 4px 8px;
   border: 0;
@@ -3066,6 +3079,13 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
   line-height: 1;
   cursor: pointer;
   transition: background-color .18s ease, color .18s ease, box-shadow .18s ease;
+}
+@media (max-width: 980px) {
+  .sales-entry-header-fields {
+    max-width: none;
+    grid-template-columns: minmax(300px, 1.25fr) minmax(190px, 1fr) minmax(220px, 1fr) !important;
+    overflow-x: auto;
+  }
 }
 .sl-currency-btn:hover { color: var(--primary); }
 .sl-currency-btn:focus-visible {
@@ -3949,6 +3969,12 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
 .stk-row-mismatch {
   background: #fff3e0 !important;
 }
+.stk-row-unknown,
+.stk-mismatch-table .stk-row-unknown {
+  background: #fff1f2 !important;
+  box-shadow: inset 4px 0 0 #e11d48;
+}
+.stk-row-unknown td { color: #881337; }
 .stk-row-approved {
   background: #fce4ec !important;
   opacity: .8;
@@ -3973,6 +3999,7 @@ button.login-info-stat:focus-visible { outline: 3px solid rgba(41,128,185,.28); 
 .stk-state-棚卸済  { background: #dcfce7; color: #16a34a; border: 1px solid #86efac; }
 .stk-state-不一致  { background: #fff7ed; color: #c2410c; border: 1px solid #fdba74; }
 .stk-state-承認待ち{ background: #eff6ff; color: #1d4ed8; border: 1px solid #93c5fd; }
+.stk-state-不明在庫{ background: #ffe4e6; color: #be123c; border: 1px solid #fda4af; }
 
 /* ── 集計サマリー ── */
 .stk-summary-card { margin-bottom: 80px; /* FABバー分の余白 */ }
@@ -4395,6 +4422,65 @@ textarea.pu-locked {
 /* mt-16 ユーティリティ */
 .mt-16 { margin-top: 16px; }
 
+/* 登録済み仕入伝票一覧：列は折り返さず、横スクロールで全項目を確認する。 */
+.pe-slip-list-scroll {
+  padding: 0;
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+}
+.pe-slip-list-table {
+  width: max-content;
+  min-width: 1840px;
+  table-layout: auto;
+}
+.pe-slip-list-table th,
+.pe-slip-list-table td {
+  min-width: 110px;
+  padding: 10px 16px;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: keep-all;
+  line-height: 1.35;
+}
+.pe-slip-list-table th:nth-child(1),
+.pe-slip-list-table td:nth-child(1) { min-width: 150px; }
+.pe-slip-list-table th:nth-child(3),
+.pe-slip-list-table td:nth-child(3) { min-width: 190px; }
+.pe-slip-list-table th:nth-child(4),
+.pe-slip-list-table td:nth-child(4) { min-width: 180px; }
+.pe-slip-list-table th:nth-child(8),
+.pe-slip-list-table td:nth-child(8) { min-width: 300px; }
+.pe-purchase-total-heading { text-align: right; }
+.pe-purchase-total-cell { text-align: right; }
+.pe-purchase-total-stack {
+  display: grid;
+  gap: 5px;
+  min-width: 268px;
+}
+.pe-purchase-total-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+  white-space: nowrap;
+}
+.pe-purchase-total-line-grand {
+  padding-top: 5px;
+  border-top: 1px solid var(--border);
+}
+.pe-purchase-total-label {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+}
+.pe-purchase-total-value {
+  color: var(--primary);
+  font-size: 16px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
 
 /* 理由入力モーダル内の商品カード */
 .stk-reason-item-card {
@@ -4762,10 +4848,30 @@ textarea.pu-locked {
    在庫一覧 — 付属品マルチセレクト ドロップダウン
    ===================================================== */
 
+/*
+ * 検索カードの下に続く案内／結果カードよりドロップダウンを前面へ出す。
+ * カード境界でメニューが隠れないよう、開いている間だけ積層順を上げる。
+ */
+#inv-search-panel {
+  position: relative;
+  overflow: visible;
+}
+#inv-search-panel.inv-dropdown-open {
+  z-index: 40;
+}
+#inv-search-panel .card-body,
+#inv-search-panel .inv-filter-grid,
+#inv-search-panel .inv-filter-item {
+  overflow: visible;
+}
+
 /* ラッパー：position基点 */
 .inv-acc-dropdown-wrap {
   position: relative;
   width: 100%;
+}
+.inv-acc-dropdown-wrap.open {
+  z-index: 41;
 }
 
 /* トリガーボタン（既存 .inv-filter-input と高さ・見た目を揃える） */
@@ -4869,8 +4975,9 @@ textarea.pu-locked {
   top: calc(100% + 4px);
   left: 0;
   z-index: 9000;
-  min-width: 100%;
-  max-width: 280px;
+  width: 100%;
+  min-width: min(280px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
   background: var(--card-bg, #fff);
   border: 1px solid var(--border, #e2e8f0);
   border-radius: 8px;
@@ -4913,9 +5020,10 @@ textarea.pu-locked {
 
 /* チェックボックスリスト */
 .inv-acc-list {
-  max-height: 220px;
+  max-height: min(260px, calc(100vh - 220px));
   overflow-y: auto;
   padding: 4px 0;
+  overscroll-behavior: contain;
 }
 
 /* 各チェックボックス行 */
@@ -5121,10 +5229,215 @@ textarea.pu-locked {
   white-space: normal !important;
   line-height: 1.3;
 }
+
+/* Purchase-return list: keep each record compact and readable on one line. */
+.data-table-wrapper.purchase-return-list-scroll {
+  overflow-x: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior-x: contain;
+  border-radius: 0 0 12px 12px;
+}
+
+#slipTable.purchase-return-list-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+#slipTable.purchase-return-list-table th,
+#slipTable.purchase-return-list-table td {
+  padding: 12px 14px;
+  height: 68px;
+  min-width: 0;
+  vertical-align: middle;
+  white-space: nowrap !important;
+  overflow-wrap: normal;
+  word-break: keep-all;
+  line-height: 1.35;
+}
+
+#slipTable.purchase-return-list-table thead th {
+  height: 56px;
+  font-size: 14px;
+  letter-spacing: 0.01em;
+}
+
+#slipTable.purchase-return-list-table tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+#slipTable.purchase-return-list-table tbody tr:hover {
+  background: #f4f8fc;
+}
+
+#slipTable.purchase-return-list-table code {
+  display: inline-block;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap !important;
+}
+
+#slipTable.purchase-return-list-table .pr-list-select-cell {
+  width: 52px;
+  min-width: 52px;
+  padding-inline: 10px;
+  text-align: center;
+}
+
+.pr-list-checkbox {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--primary);
+}
+
+#slipTable.purchase-return-list-table .pr-list-number { width: 176px; min-width: 176px; }
+#slipTable.purchase-return-list-table .pr-list-date { width: 126px; min-width: 126px; font-variant-numeric: tabular-nums; }
+#slipTable.purchase-return-list-table .pr-list-supplier { width: 224px; min-width: 224px; }
+#slipTable.purchase-return-list-table .pr-list-count { width: 84px; min-width: 84px; text-align: center; }
+#slipTable.purchase-return-list-table .pr-list-amount {
+  width: 180px;
+  min-width: 180px;
+  text-align: right;
+  color: var(--primary);
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+#slipTable.purchase-return-list-table .pr-list-note {
+  width: 220px;
+  min-width: 220px;
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis !important;
+}
+#slipTable.purchase-return-list-table .pr-list-status { width: 112px; min-width: 112px; text-align: center; }
+#slipTable.purchase-return-list-table .pr-list-status .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 5px 12px;
+  white-space: nowrap;
+}
+#slipTable.purchase-return-list-table .pr-list-tracking { width: 330px; min-width: 330px; }
+#slipTable.purchase-return-list-table .pr-list-actions { width: 286px; min-width: 286px; text-align: center; }
+
+.pr-sort-th { cursor: pointer; user-select: none; }
+
+.pr-tracking-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 302px;
+}
+
+.pr-tracking-control .form-control {
+  width: 198px;
+  min-width: 198px;
+  min-height: 44px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+#slipTable.purchase-return-list-table .pr-tracking-control .btn,
+#slipTable.purchase-return-list-table .pr-action-buttons .btn {
+  min-height: 44px;
+  white-space: nowrap !important;
+  line-height: 1.2;
+}
+
+.pr-action-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
 .client-company-table td[style*="max-width"], .login-info-sub {
   max-width: none !important;
   overflow: visible !important;
   white-space: normal !important;
+}
+
+/* Unified business-partner master */
+.partner-choice-row {
+  display: flex;
+  align-items: center;
+  gap: 10px 18px;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  flex-wrap: wrap;
+}
+
+.partner-choice-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.partner-filter-bar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: #fafbfc;
+  border-bottom: 1px solid var(--border);
+}
+
+.partner-filter-bar .form-group { margin: 0; }
+.partner-filter-name { flex: 1 1 280px; min-width: 230px; }
+.partner-filter-bar .form-label { margin-bottom: 5px; font-size: 13px; }
+.partner-filter-bar .form-control { min-height: 40px; font-size: 14px; }
+
+.client-company-table { min-width: 1510px; table-layout: fixed; }
+.client-company-table th,
+.client-company-table td { font-size: 14px; vertical-align: middle; }
+.client-company-table th { white-space: nowrap; }
+.client-company-table .partner-address {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.partner-badge,
+.partner-region {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #475569;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.partner-badge-buyer { background: #e0f2fe; color: #0369a1; }
+.partner-badge-supplier { background: #fef3c7; color: #a16207; }
+.partner-badge-other { background: #ede9fe; color: #6d28d9; }
+.partner-region { background: #dcfce7; color: #166534; }
+.partner-region.overseas { background: #dbeafe; color: #1d4ed8; }
+.partner-guest-issued,
+.partner-guest-issued:disabled {
+  cursor: not-allowed;
+  border-color: #cbd5e1;
+  background: #e2e8f0;
+  color: #64748b;
+  opacity: 1;
 }
 
 @media (max-width: 900px) {

@@ -50,3 +50,9 @@ func TestParseImportAmount(t *testing.T) {
 		}
 	}
 }
+
+func TestAuctionHouseIsSupportedByCatalogLookup(t *testing.T) {
+	if !isCatalogLookupTable("auction_houses") {
+		t.Fatal("auction_houses must be supported by market CSV catalog lookup")
+	}
+}

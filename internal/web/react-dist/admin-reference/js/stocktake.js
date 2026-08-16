@@ -36,10 +36,97 @@ let _stkSaved = false;
 /** 棚卸完了フラグ */
 let _stkCompleted = false;
 
+/** DBへ保存される棚卸セッション。開始後の新規対象在庫は差分同期する。 */
+let _stkSession = null;
+let _stkLoading = false;
+
+const _STK_TARGET_STATUS = new Set(['在庫中', '取置中', '出荷済', '委託中', '仕入返品中']);
+
+function _stkNormalizeInventoryStatus(status) {
+  const value = String(status || '').trim();
+  if (['仕入返品中', '仕入返品'].includes(value)) return '仕入返品中';
+  if (['仕入返品済', '取消済', '取り消し', '取消'].includes(value)) return '仕入返品済';
+  return value;
+}
+
+function _stkLineToItem(line) {
+  const live = (APP_DATA.inventory || []).find(item => item.code === line.productCode) || {};
+  return {
+    ...live,
+    code: line.productCode,
+    brand: line.brand || live.brand || '—',
+    model: line.modelNumber || live.model || '—',
+    ref: line.referenceNumber || live.ref || '—',
+    serial: line.serialNumber || live.serial || '—',
+    purchasePrice: Number(line.purchasePriceMinor || live.purchasePrice || 0),
+    status: _stkNormalizeInventoryStatus(live.status || _stkStatusLabel(line.inventoryStatus)),
+    _stocktakeLine: line,
+  };
+}
+
+function _stkStatusLabel(value) {
+  return ({ in_stock:'在庫中', reserved:'取置中', shipped:'出荷済', consigned:'委託中', return_pending:'仕入返品中', cancelled:'仕入返品済' })[value] || value || '—';
+}
+
+function _stkSnapshotItems() {
+  if (!_stkSession) return [];
+  return (_stkSession.lines || [])
+    .filter(line => line.lineType === 'expected_missing')
+    .map(_stkLineToItem)
+    .filter(item => _stkNormalizeInventoryStatus(item.status) !== '仕入返品済');
+}
+
+function _stkUnknownItems() {
+  if (!_stkSession) return [];
+  return (_stkSession.lines || [])
+    .filter(line => line.lineType === 'unknown_inventory')
+    .map(_stkLineToItem)
+    .filter(item => _stkNormalizeInventoryStatus(item.status) !== '仕入返品済');
+}
+
+function _stkSyncStateFromSession() {
+  _stkState = {};
+  (_stkSession?.lines || []).forEach(line => {
+    _stkState[line.productCode] = {
+      code: line.productCode,
+      lineId: line.id,
+      lineType: line.lineType,
+      state: line.lineType === 'unknown_inventory' ? '不明在庫' : (line.resultStatus === 'verified' ? '棚卸済' : (line.reason ? '不一致' : '未処理')),
+      reason: line.reason || null,
+      note: line.note || null,
+      checkedAt: line.checkedAt ? new Date(line.checkedAt).toLocaleString('ja-JP') : null,
+      inventoryDate: _stkSession.completedAt ? String(_stkSession.completedAt).slice(0, 10) : null,
+    };
+  });
+  _stkSaved = Boolean(_stkSession?.savedAt);
+  _stkCompleted = _stkSession?.status === 'completed';
+}
+
+async function _stkLoadOrStartSession() {
+  if (!window.ZaikoAPI?.request) return null;
+  const current = await window.ZaikoAPI.request('/stocktakes/current');
+  const result = current.session ? current : await window.ZaikoAPI.request('/stocktakes/start', { method:'POST', body:'{}' });
+  const synced = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(result.session.id)}/sync`, { method:'POST', body:'{}' });
+  _stkSession = synced.session || result.session;
+  if (Number(synced.added || 0) > 0 && typeof showToast === 'function') {
+    showToast('success', '最新在庫を反映', `新規登録された在庫 ${synced.added} 点を棚卸へ追加しました。`);
+  }
+  _stkSyncStateFromSession();
+  return _stkSession;
+}
+
 /* ============================================================
    初期化
    ============================================================ */
-function initStocktake() {
+async function initStocktake() {
+  if (_stkLoading) return;
+  _stkLoading = true;
+  try {
+    await _stkLoadOrStartSession();
+  } catch (error) {
+    console.error('stocktake session load failed', error);
+    if (typeof showToast === 'function') showToast('error', '棚卸データ取得エラー', error.message || '棚卸途中データを取得できませんでした。');
+  } finally { _stkLoading = false; }
   // 既に完了している場合
   if (_stkCompleted) {
     _stkUpdateBadge('complete', '完了済み');
@@ -48,21 +135,6 @@ function initStocktake() {
     stkUpdateProgress();
     return;
   }
-
-  // 未初期化の場合のみ state を構築（途中保存は維持）
-  const codes = new Set(Object.keys(_stkState));
-  (APP_DATA.inventory || []).forEach(item => {
-    if (!codes.has(item.code)) {
-      _stkState[item.code] = {
-        code: item.code,
-        state: '未処理',
-        reason: null,
-        note: null,
-        checkedAt: null,
-        inventoryDate: null,   // ① 棚卸実施日（棚卸確定時に設定）
-      };
-    }
-  });
 
   _stkCurrentTab = 'instock';
 
@@ -100,17 +172,45 @@ function _stkOnKeydown(e) {
   if (e.key === 'Enter') stkHandleInput();
 }
 
-function stkHandleInput() {
+async function stkHandleInput() {
   const input = document.getElementById('stkCodeInput');
   if (!input) return;
   const code = input.value.trim();
   if (!code) return;
 
   const item = (APP_DATA.inventory || []).find(i => i.code === code);
-  if (!item) {
-    _stkShowPopup('warning', '該当商品がありません', `商品コード「${code}」は在庫データに存在しません。`);
-    input.select();
-    return;
+
+  if (_stkSession && window.ZaikoAPI?.request) {
+    try {
+      const result = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(_stkSession.id)}/scan`, { method:'POST', body:JSON.stringify({ code }) });
+      _stkSession = result.session;
+      _stkSyncStateFromSession();
+      stkRenderTable(); stkUpdateSummary(); stkUpdateProgress(); _stkUpdateMismatchBadge();
+      input.value = ''; input.focus();
+      if (result.result === 'cancelled_ignored') {
+        _stkShowPopup('info', '仕入返品済商品は棚卸対象外です', `管理番号「${code}」は仕入返品済のため、棚卸リスト・不一致リストには追加しません。`);
+      } else if (['unknown_added','already_unknown'].includes(result.result)) {
+        _stkShowPopup('warning', '不明在庫として追加しました', `管理番号「${code}」は棚卸対象外または未登録のため、不一致リストへ追加しました。`);
+      } else if (result.result === 'already_verified') {
+        _stkShowPopup('info', 'すでに棚卸済です', `管理番号「${code}」はすでに棚卸済です。`);
+      } else {
+        _stkShowToast(`<i class="fa-solid fa-check-circle" style="color:#16a34a;"></i> 棚卸済にしました: <b>${_esc(item?.brand || code)} ${_esc(item?.model || '')}</b>`);
+      }
+      return;
+    } catch (error) {
+      _stkShowPopup('warning', '棚卸結果を保存できません', error.message || '通信状態を確認してください。'); input.select(); return;
+    }
+  }
+
+  if (item && _stkNormalizeInventoryStatus(item.status) === '仕入返品済') {
+    _stkShowPopup('info', '仕入返品済商品は棚卸対象外です', `管理番号「${code}」は仕入返品済のため、棚卸リスト・不一致リストには追加しません。`);
+    input.value = ''; input.focus(); return;
+  }
+
+  if (!item || !_STK_TARGET_STATUS.has(_stkNormalizeInventoryStatus(item.status))) {
+    _stkState[code] = { code, state:'不明在庫', reason:'不明在庫', note:'', checkedAt:new Date().toLocaleString('ja-JP'), lineType:'unknown_inventory' };
+    _stkShowPopup('warning', '不明在庫として追加しました', `管理番号「${code}」を不一致リストへ追加しました。`);
+    input.value = ''; _stkUpdateMismatchBadge(); return;
   }
 
   // 既に棚卸済の場合
@@ -128,7 +228,7 @@ function stkHandleInput() {
   };
 
   // 対応するタブに切り替え
-  const targetTab = ['出荷済', '委託中'].includes(item.status) ? 'shipped' : 'instock';
+  const targetTab = ['出荷済', '委託中'].includes(_stkNormalizeInventoryStatus(item.status)) ? 'shipped' : 'instock';
   if (_stkCurrentTab !== targetTab) {
     const btn = document.getElementById(targetTab === 'instock' ? 'stkTabInStock' : 'stkTabShipped');
     if (btn) stkSwitchTab(targetTab, btn);
@@ -166,10 +266,10 @@ function stkRenderTable() {
   if (!tbody) return;
 
   // 現在タブのステータスで絞り込み
-  const targetStatuses = _stkCurrentTab === 'instock' ? ['在庫中', '取置中'] : ['出荷済', '委託中'];
+  const targetStatuses = _stkCurrentTab === 'instock' ? ['在庫中', '取置中', '仕入返品中'] : ['出荷済', '委託中'];
 
   // 取置中も物理在庫なので在庫中タブの棚卸対象に含める。
-  let items = (APP_DATA.inventory || []).filter(i => targetStatuses.includes(i.status));
+  let items = (_stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || [])).filter(i => targetStatuses.includes(_stkNormalizeInventoryStatus(i.status)));
 
   // 棚卸済を末尾へ
   items = [
@@ -178,8 +278,9 @@ function stkRenderTable() {
   ];
 
   // タブカウント更新
-  const inStockCount  = (APP_DATA.inventory || []).filter(i => ['在庫中', '取置中'].includes(i.status)).length;
-  const shippedCount  = (APP_DATA.inventory || []).filter(i => ['出荷済', '委託中'].includes(i.status)).length;
+  const snapshot = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
+  const inStockCount  = snapshot.filter(i => ['在庫中', '取置中', '仕入返品中'].includes(_stkNormalizeInventoryStatus(i.status))).length;
+  const shippedCount  = snapshot.filter(i => ['出荷済', '委託中'].includes(_stkNormalizeInventoryStatus(i.status))).length;
   const countInStk = document.getElementById('stkTabCountInStock');
   const countShp  = document.getElementById('stkTabCountShipped');
   if (countInStk) countInStk.textContent = inStockCount;
@@ -203,6 +304,7 @@ function _stkBuildRow(item) {
     '棚卸済' : 'stk-row-done',
     '不一致' : 'stk-row-mismatch',
     '承認待ち': 'stk-row-pending',
+    '不明在庫': 'stk-row-unknown',
   }[state] || '';
 
   // バッジ
@@ -237,6 +339,7 @@ function _stkStateIcon(state) {
     '棚卸済' : '<i class="fa-solid fa-circle-check"></i>',
     '不一致' : '<i class="fa-solid fa-triangle-exclamation"></i>',
     '承認待ち': '<i class="fa-solid fa-hourglass-half"></i>',
+    '不明在庫': '<i class="fa-solid fa-circle-plus"></i>',
   };
   return icons[state] || '';
 }
@@ -245,9 +348,9 @@ function _stkStateIcon(state) {
    進捗カウンタ更新
    ============================================================ */
 function stkUpdateProgress() {
-  const inv = APP_DATA.inventory || [];
+  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
 
-  const inStockItems  = inv.filter(i => ['在庫中', '取置中'].includes(i.status));
+  const inStockItems  = inv.filter(i => ['在庫中', '取置中', '仕入返品中'].includes(_stkNormalizeInventoryStatus(i.status)));
   const shippedItems  = inv.filter(i => ['出荷済', '委託中'].includes(i.status));
 
   const doneInStock  = inStockItems.filter(i => _stkState[i.code]?.state === '棚卸済').length;
@@ -267,9 +370,9 @@ function stkUpdateProgress() {
    集計サマリー更新
    ============================================================ */
 function stkUpdateSummary() {
-  const inv = APP_DATA.inventory || [];
+  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
 
-  const inStockItems  = inv.filter(i => ['在庫中', '取置中'].includes(i.status));
+  const inStockItems  = inv.filter(i => ['在庫中', '取置中', '仕入返品中'].includes(_stkNormalizeInventoryStatus(i.status)));
   const shippedItems  = inv.filter(i => ['出荷済', '委託中'].includes(i.status));
 
   const sum = arr => arr.reduce((s, i) => s + (i.purchasePrice || 0), 0);
@@ -322,8 +425,14 @@ function stkUpdateSummary() {
 /* ============================================================
    一時保存
    ============================================================ */
-function stkTempSave() {
-  // モック：現在の _stkState をローカルに保持（既にメモリ上にある）
+async function stkTempSave() {
+  if (_stkSession && window.ZaikoAPI?.request) {
+    try {
+      const lines = Object.values(_stkState).filter(state => state.lineId).map(state => ({ id:state.lineId, reason:state.reason || '', note:state.note || '' }));
+      const result = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(_stkSession.id)}`, { method:'PATCH', body:JSON.stringify({ lines }) });
+      _stkSession = result.session; _stkSyncStateFromSession();
+    } catch (error) { if (typeof showToast === 'function') showToast('error', '保存できませんでした', error.message); return; }
+  }
   _stkSaved = true;
   _stkUpdateBadge('saved', '途中保存');
   if (typeof showToast === 'function') {
@@ -352,17 +461,18 @@ function _stkRenderMismatchTable() {
   const tbody = document.getElementById('stkMismatchBody');
   if (!tbody) return;
 
-  const inv = APP_DATA.inventory || [];
+  const expected = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
+  const unknown = _stkSession ? _stkUnknownItems() : Object.values(_stkState).filter(s => s.lineType === 'unknown_inventory').map(s => ({ code:s.code, brand:'未登録', model:'—', ref:'—', purchasePrice:0, status:'対象外' }));
   // 管理者かどうかをここで確定する（描画中に変わらないよう1回だけ評価）
   const admin = typeof isAdmin === 'function' && isAdmin();
 
   // 棚卸済以外を表示（未処理・不一致・承認待ち）
-  const unprocessed = inv.filter(i => {
+  const unprocessed = expected.filter(i => {
     const s = _stkState[i.code]?.state || '未処理';
     return s !== '棚卸済';
   });
 
-  if (unprocessed.length === 0) {
+  if (unprocessed.length === 0 && unknown.length === 0) {
     tbody.innerHTML = `<tr><td colspan="7" class="stk-td" style="text-align:center;color:var(--text-muted);padding:20px;">未処理の商品はありません ✓</td></tr>`;
     return;
   }
@@ -370,12 +480,19 @@ function _stkRenderMismatchTable() {
   const fmt = v => typeof formatPrice === 'function'
     ? formatPrice(v) : `¥${v.toLocaleString('ja-JP')}`;
 
-  tbody.innerHTML = unprocessed.map(item => {
+  const rows = [
+    ...unprocessed.map(item => ({ item, kind:'expected' })),
+    ...unknown.map(item => ({ item, kind:'unknown' })),
+  ];
+  tbody.innerHTML = rows.map(({item, kind}) => {
     const st = _stkState[item.code] || { state: '未処理' };
-    const badge = `<span class="stk-state-badge stk-state-${st.state}">${_stkStateIcon(st.state)} ${st.state}${st.reason ? '・' + st.reason : ''}</span>`;
+    const classification = kind === 'unknown' ? '無いはずなのにある' : 'あるはずなのに無い';
+    const badge = `<span class="stk-state-badge stk-state-${st.state}">${_stkStateIcon(st.state)} ${classification}${st.reason && st.reason !== '不明在庫' ? '・' + st.reason : ''}</span>`;
 
     let btns;
-    if (st.state === '不一致') {
+    if (kind === 'unknown') {
+      btns = `<span style="font-size:12px;color:#be123c;font-weight:700;"><i class="fa-solid fa-circle-plus"></i> 不明在庫</span>`;
+    } else if (st.state === '不一致') {
       // 確定済み（管理者即時確定 or 承認済み）→ 操作不要
       btns = `<span style="font-size:11px;color:#16a34a;font-weight:600;">
                 <i class="fa-solid fa-circle-check"></i> 確定済み
@@ -395,7 +512,7 @@ function _stkRenderMismatchTable() {
         </div>`;
     }
 
-    return `<tr>
+    return `<tr class="${kind === 'unknown' ? 'stk-row-unknown' : ''}">
       <td class="stk-td stk-td-code">${_esc(item.code)}</td>
       <td class="stk-td">${_esc(item.brand || '—')}</td>
       <td class="stk-td">${_esc(item.model || '—')}</td>
@@ -408,11 +525,11 @@ function _stkRenderMismatchTable() {
 }
 
 function _stkUpdateMismatchBadge() {
-  const inv = APP_DATA.inventory || [];
+  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
   const count = inv.filter(i => {
     const s = _stkState[i.code]?.state || '未処理';
     return s === '未処理';
-  }).length;
+  }).length + (_stkSession ? _stkUnknownItems().length : Object.values(_stkState).filter(s => s.lineType === 'unknown_inventory').length);
   const badge = document.getElementById('stkMismatchBadge');
   if (!badge) return;
   badge.textContent = count;
@@ -430,7 +547,7 @@ function stkOpenReason(code, presetReason) {
   _stkReasonTargetCode = code;
   _stkSelectedReason   = presetReason || null;
 
-  const item = (APP_DATA.inventory || []).find(i => i.code === code);
+  const item = (_stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || [])).find(i => i.code === code);
   if (!item) return;
 
   // 商品詳細カード
@@ -446,7 +563,7 @@ function stkOpenReason(code, presetReason) {
       <div class="stk-ric-row"><span class="stk-ric-label">型番</span><span class="stk-ric-val">${_esc(item.ref || '—')}</span></div>
       <div class="stk-ric-row"><span class="stk-ric-label">シリアル</span><span class="stk-ric-val">${_esc(item.serial || '—')}</span></div>
       <div class="stk-ric-row"><span class="stk-ric-label">仕入金額</span><span class="stk-ric-val" style="color:var(--primary);">${fmt(item.purchasePrice || 0)}</span></div>
-      <div class="stk-ric-row"><span class="stk-ric-label">ステータス</span><span class="stk-ric-val">${_esc(item.status || '—')}</span></div>`;
+      <div class="stk-ric-row"><span class="stk-ric-label">ステータス</span><span class="stk-ric-val">${_esc(_stkNormalizeInventoryStatus(item.status) || '—')}</span></div>`;
   }
 
   // 既存の理由・備考をセット
@@ -495,7 +612,7 @@ function _stkSelectReasonUI(reason) {
   });
 }
 
-function stkConfirmReason() {
+async function stkConfirmReason() {
   if (!_stkReasonTargetCode) return;
   if (!_stkSelectedReason) {
     _stkShowPopup('warning', '理由を選択してください', '不一致理由を4つの選択肢から選んでください。');
@@ -506,7 +623,7 @@ function stkConfirmReason() {
   const note = noteEl ? noteEl.value.trim() : '';
 
   const code = _stkReasonTargetCode;
-  const item = (APP_DATA.inventory || []).find(i => i.code === code);
+  const item = (_stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || [])).find(i => i.code === code);
 
   // ④ 権限判定：isAdmin() が true なら管理者、それ以外は作業者扱い
   const admin = typeof isAdmin === 'function' && isAdmin();
@@ -555,6 +672,16 @@ function stkConfirmReason() {
     }
   }
 
+  if (_stkSession && window.ZaikoAPI?.request) {
+    try {
+      const state = _stkState[code];
+      const result = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(_stkSession.id)}`, {
+        method:'PATCH', body:JSON.stringify({ lines:[{ id:state.lineId, reason:_stkSelectedReason, note }] })
+      });
+      _stkSession = result.session; _stkSyncStateFromSession();
+    } catch (error) { if (typeof showToast === 'function') showToast('error', '不一致を保存できませんでした', error.message); return; }
+  }
+
   stkCloseReason();
   stkRenderTable();
   stkUpdateSummary();
@@ -568,7 +695,7 @@ function stkConfirmReason() {
    棚卸確定
    ============================================================ */
 function stkTryComplete() {
-  const inv = APP_DATA.inventory || [];
+  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
   const fmt = v => typeof formatPrice === 'function'
     ? formatPrice(v) : `¥${v.toLocaleString('ja-JP')}`;
 
@@ -603,7 +730,7 @@ function stkTryComplete() {
   const statsEl = document.getElementById('stkCompleteStats');
   if (statsEl) {
     statsEl.innerHTML = [
-      { label: 'システム合計（在庫中・取置中＋出荷済・委託中）', val: fmt(grandTotal) },
+      { label: 'システム合計（在庫中・取置中・出荷済・委託中・仕入返品中）', val: fmt(grandTotal) },
       { label: '棚卸済合計',                    val: fmt(doneTotal) },
       { label: '不一致合計',                    val: fmt(mismatchTotal) },
       { label: 'チェック',                      val: diff < 1 ? '✓ 一致' : '✗ 不一致' },
@@ -623,7 +750,13 @@ function stkCloseComplete() {
   if (modal) modal.classList.add('hidden');
 }
 
-function stkExecuteComplete() {
+async function stkExecuteComplete() {
+  if (_stkSession && window.ZaikoAPI?.request) {
+    try {
+      const result = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(_stkSession.id)}/complete`, { method:'POST', body:'{}' });
+      _stkSession = result.session; _stkSyncStateFromSession();
+    } catch (error) { if (typeof showToast === 'function') showToast('error', '棚卸を確定できません', error.message); return; }
+  }
   // ③ 棚卸実施日：確定ボタン押下時の現在日付（YYYY-MM-DD）
   const todayDate = _today();
 
@@ -651,7 +784,7 @@ function stkExecuteComplete() {
    CSV ダウンロード
    ============================================================ */
 function stkDownloadCSV() {
-  const inv = APP_DATA.inventory || [];
+  const inv = _stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || []);
   const fmt = v => v || '';
 
   const headers = ['商品コード','ブランド','モデル名','型番','シリアル','仕入金額','ステータス','棚卸状態','不一致理由','備考','棚卸日時'];
@@ -661,7 +794,7 @@ function stkDownloadCSV() {
       item.code, item.brand, item.model, item.ref, item.serial,
       item.purchasePrice || 0,
       item.status,
-      st.state,
+      st.state === '不明在庫' ? '無いはずなのにある（不明在庫）' : (st.state === '棚卸済' ? '実物確認済み' : 'あるはずなのに無い'),
       st.reason  || '',
       st.note    || '',
       st.checkedAt || '',
@@ -687,7 +820,7 @@ function stkDownloadCSV() {
    印刷
    ============================================================ */
 function stkPrint() {
-  const inv = APP_DATA.inventory || [];
+  const inv = _stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || []);
   const fmt = v => typeof formatPrice === 'function'
     ? formatPrice(v) : `¥${v.toLocaleString('ja-JP')}`;
 
@@ -706,7 +839,7 @@ function stkPrint() {
       <td>${_esc(item.ref   || '')}</td>
       <td>${_esc(item.serial|| '')}</td>
       <td style="text-align:right;">${fmt(item.purchasePrice || 0)}</td>
-      <td>${_esc(item.status|| '')}</td>
+      <td>${_esc(_stkNormalizeInventoryStatus(item.status) || '')}</td>
       <td style="color:${stateColor};font-weight:bold;">${st.state}${st.reason ? '（' + st.reason + '）' : ''}</td>
     </tr>`;
   }).join('');

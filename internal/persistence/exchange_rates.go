@@ -56,7 +56,11 @@ func (r *Repository) ExchangeRates(ctx context.Context, organizationID string, l
 	return records, err
 }
 
-func (r *Repository) CreateExchangeRate(ctx context.Context, organizationID, actorUserID, rate, provider string, observedAt time.Time) (ExchangeRateRecord, error) {
+func (r *Repository) CreateExchangeRate(ctx context.Context, organizationID, actorUserID, baseCurrency, rate, provider string, observedAt time.Time) (ExchangeRateRecord, error) {
+	baseCurrency = strings.ToUpper(strings.TrimSpace(baseCurrency))
+	if baseCurrency != "USD" && baseCurrency != "EUR" && baseCurrency != "HKD" {
+		return ExchangeRateRecord{}, ErrExchangeRate
+	}
 	scaled, err := parseRate(rate)
 	if err != nil {
 		return ExchangeRateRecord{}, err
@@ -75,11 +79,18 @@ func (r *Repository) CreateExchangeRate(ctx context.Context, organizationID, act
 	}
 	if err := r.db.WithContext(ctx).Exec(`INSERT INTO exchange_rate_snapshots(
 		id,organization_id,base_currency,quote_currency,rate_scaled,scale,provider,observed_at,created_by,created_at
-	) VALUES(?,?,'USD','JPY',?,100000000,?,?,?,?)`, id, organizationID, scaled, provider, observedAt,
+	) VALUES(?,?,?,'JPY',?,100000000,?,?,?,?)`, id, organizationID, baseCurrency, scaled, provider, observedAt,
 		actorUserID, now).Error; err != nil {
 		return ExchangeRateRecord{}, err
 	}
-	records, err := r.ExchangeRates(ctx, organizationID, 1)
+	var records []ExchangeRateRecord
+	err = r.db.WithContext(ctx).Table("exchange_rate_snapshots").
+		Select("id,base_currency,quote_currency,rate_scaled,scale,provider,observed_at,created_at").
+		Where("organization_id=? AND base_currency=? AND quote_currency='JPY'", organizationID, baseCurrency).
+		Order("observed_at DESC,created_at DESC").Limit(1).Scan(&records).Error
+	for index := range records {
+		records[index].Rate = formatRateValue(records[index].RateScaled, records[index].Scale)
+	}
 	if err != nil || len(records) == 0 {
 		if err == nil {
 			err = errors.New("exchange rate was not created")

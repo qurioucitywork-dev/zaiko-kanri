@@ -123,9 +123,18 @@ func (s *Server) apiExchangeRates(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiExchangeRateCreate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Rate       string `json:"rate"`
-		Provider   string `json:"provider"`
-		ObservedAt string `json:"observedAt"`
+		BaseCurrency string `json:"baseCurrency"`
+		Rate         string `json:"rate"`
+		Provider     string `json:"provider"`
+		ObservedAt   string `json:"observedAt"`
+	}
+	input.BaseCurrency = strings.ToUpper(strings.TrimSpace(input.BaseCurrency))
+	if input.BaseCurrency == "" {
+		input.BaseCurrency = "USD"
+	}
+	if input.BaseCurrency != "USD" && input.BaseCurrency != "EUR" && input.BaseCurrency != "HKD" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_rate", "USD/JPY、EUR/JPY、HKD/JPYのいずれかのレートを指定してください。")
+		return
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	decoder.DisallowUnknownFields()
@@ -143,7 +152,7 @@ func (s *Server) apiExchangeRateCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	user, _ := currentUser(r.Context())
-	record, err := s.repository.CreateExchangeRate(r.Context(), user.OrganizationID, user.ID, input.Rate, input.Provider, observedAt)
+	record, err := s.repository.CreateExchangeRate(r.Context(), user.OrganizationID, user.ID, input.BaseCurrency, input.Rate, input.Provider, observedAt)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_rate", "USD/JPYレートを確認してください。")
 		return

@@ -139,7 +139,7 @@ func (s *Server) apiProducts(w http.ResponseWriter, r *http.Request) {
 	result, err := s.repository.Products(r.Context(), user.OrganizationID, persistence.ProductFilter{
 		Query: strings.TrimSpace(r.URL.Query().Get("q")), Status: strings.TrimSpace(r.URL.Query().Get("status")),
 		Sort: strings.TrimSpace(r.URL.Query().Get("sort")), Page: page, PageSize: pageSize,
-		IncludeCancelled: r.URL.Query().Get("includeCancelled") == "true" && user.Role == database.RoleAdmin,
+		IncludeCancelled: canViewCancelledInventory(user.Role, r.URL.Query().Get("includeCancelled")),
 	})
 	if err != nil {
 		s.log.Error("load REST products", "error", err, "request_id", requestID(r.Context()))
@@ -147,6 +147,10 @@ func (s *Server) apiProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func canViewCancelledInventory(role, requested string) bool {
+	return requested == "true" && (role == database.RoleAdmin || role == database.RoleWorker)
 }
 
 func (s *Server) apiAuthenticated(permission string, next http.Handler) http.Handler {

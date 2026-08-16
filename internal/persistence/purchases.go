@@ -131,6 +131,25 @@ func (r *Repository) PurchaseSlips(ctx context.Context, organizationID string, l
 	if limit < 1 || limit > 500 {
 		limit = 100
 	}
+	records, _, err := r.PurchaseSlipsPage(ctx, organizationID, 1, limit)
+	return records, err
+}
+
+// PurchaseSlipsPage returns one deterministic page together with the total
+// number of slips.  The UI must walk every page; silently truncating at 500
+// slips makes the purchase product count diverge from the inventory count.
+func (r *Repository) PurchaseSlipsPage(ctx context.Context, organizationID string, page, pageSize int) ([]PurchaseSlipRecord, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 100
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).Table("purchase_slips").
+		Where("organization_id=?", organizationID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
 	var records []PurchaseSlipRecord
 	err := r.db.WithContext(ctx).Table("purchase_slips AS p").
 		Select(`p.id,p.slip_number,pr.role_code AS supplier_code,bp.legal_name AS supplier_name,
@@ -144,8 +163,9 @@ func (r *Repository) PurchaseSlips(ctx context.Context, organizationID string, l
 		Joins("JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
 		Where("p.organization_id=?", organizationID).
-		Order("p.purchase_date DESC,p.slip_number DESC").Limit(limit).Scan(&records).Error
-	return records, err
+		Order("p.purchase_date DESC,p.slip_number DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).Scan(&records).Error
+	return records, total, err
 }
 
 func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseID string) (PurchaseSlipRecord, error) {
