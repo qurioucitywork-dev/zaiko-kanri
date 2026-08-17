@@ -30,6 +30,8 @@ type Product struct {
 	ReferenceNumber    string     `gorm:"column:reference_number" json:"referenceNumber"`
 	SerialNumber       string     `gorm:"column:serial_number" json:"serialNumber"`
 	ProductType        string     `gorm:"column:product_type" json:"productType"`
+	ShapeID            string     `gorm:"column:shape_id" json:"shapeId"`
+	MarkingID          string     `gorm:"column:marking_id" json:"markingId"`
 	SupplierID         string     `gorm:"column:supplier_id" json:"-"`
 	BrandID            string     `gorm:"column:brand_id" json:"brandId"`
 	MaterialID         string     `gorm:"column:material_id" json:"materialId"`

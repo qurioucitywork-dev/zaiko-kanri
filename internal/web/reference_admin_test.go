@@ -12,14 +12,14 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":               "abb24d44895b9db66b2e57bfc2d0ef0039820c8056f048585d8f8310e47856d5",
+		"app.html":               "ca9a7955c02c2f17fcf7b87389caca113964952aaee5d6d64fe1228674a4cd28",
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
 		"css/market-table.css":   "7fd79f92a5b5a3a42556f862ada62ae8adb79d24e6baa158b1cd668439f3c97e",
-		"css/style.css":          "cd38ffd8be492d021b1e65eba05cc9ab2083ccf3598c3d41b13d56d0754237ea",
+		"css/style.css":          "6615aeda90270708e35e1c3e376225f8be522e4cff973df667d9ab0992162e82",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
-		"js/api_bridge.js":       "d472feb6a96c3dac2b2f24d797c15b5e2f770ae9b5ae98c363b9771c92465059",
-		"js/app.js":              "072f21340b9769f2d19a9b3882adb85ba6b65d01432d50cb793f992def75e200",
+		"js/api_bridge.js":       "50782bdd8d12ea65c82ba8245028769292babcbeb959b93074ac024f403c95fe",
+		"js/app.js":              "0f96814c84c59c3fe4dc16cfb1c0f0392fdb43ac42dcad616fbe9ca65c5055c5",
 		"js/approval.js":         "8dbab17a55bdedd9648a49186899b7d46b23df48dc173bc54adc9e2704cc2808",
 		"js/auth.js":             "a9f0cc7a928b801342241f4740c055f4f34eb208ac6ed61e25ef82191ad97c50",
 		"js/box.js":              "4ae711817115c0d62cdaa99e11920acc5ec67a0fa4d2e1879488368235840575",
@@ -28,9 +28,9 @@ func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 		"js/guest_shared.js":     "da6589099b995f457d44e2b6eeb05ac07d8ad1c7bef937f4230dd8afd2ca38e4",
 		"js/login_info.js":       "2fe90eac8cc8f1718828e95d34b2ea4f180cc5eea474348ef0d0c4796d38baad",
 		"js/market_table.js":     "e7e899605f42b05c8e06c63e90c83a8aeab6318d8f8a06e88077c219b5dc8374",
-		"js/notify.js":           "b18e2604d9c637729a339e7b0d2a9b6bb0fac85f5f106c24d9e772263e16e878",
-		"js/purchase_entry.js":   "757226a682a3d0985b06b5c954435d7dcc8116a05bb4e97f11cb8cf6af76b13a",
-		"js/stocktake.js":        "b8a460a73319c08717e46f88d7bbefff06cfa62103afa186250773753adc60e3",
+		"js/notify.js":           "edae1bc1187f3f29f87086018425aec3f628c5d342a0d8a3d22f854948cb6321",
+		"js/purchase_entry.js":   "2532acedf63eea4dfcde0ab6b7f0601f83d1caed2cef374e32b7815d803d3968",
+		"js/stocktake.js":        "bc301bc11b678138d2cf10665962a13167d4c283f0df7098c3ede868d7ddb2dd",
 		"js/consignment.js":      "c37e2b99b920f08d1b6010bc8e06f1145a8c530366fdda9740cfa9fb3b7c7bb5",
 		"js/qrcode-generator.js": "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
 		"js/jsQR.js":             "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
@@ -42,7 +42,9 @@ func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read reference asset %s: %v", name, err)
 		}
-		if got := fmt.Sprintf("%x", sha256.Sum256(content)); got != want {
+		canonical := strings.ReplaceAll(string(content), "\r\n", "\n")
+		canonical = strings.ReplaceAll(canonical, "\r", "\n")
+		if got := fmt.Sprintf("%x", sha256.Sum256([]byte(canonical))); got != want {
 			t.Errorf("reference asset %s SHA-256=%s, want %s", name, got, want)
 		}
 	}

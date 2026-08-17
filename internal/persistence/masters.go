@@ -21,6 +21,7 @@ type MasterItem struct {
 	OrganizationID string    `json:"-"`
 	Code           string    `json:"code"`
 	Name           string    `json:"name"`
+	Meaning        string    `json:"meaning,omitempty"`
 	IsActive       bool      `json:"isActive"`
 	SortOrder      int       `json:"sortOrder"`
 	CreatedAt      time.Time `json:"createdAt"`
@@ -37,6 +38,8 @@ func masterTable(kind string) (string, bool) {
 		"auction": "auction_houses", "auctions": "auction_houses",
 		"belt": "belt_materials", "belts": "belt_materials", "belt-material": "belt_materials", "belt-materials": "belt_materials",
 		"dial": "dials", "dials": "dials",
+		"shape": "product_shapes", "shapes": "product_shapes", "product-shapes": "product_shapes",
+		"marking": "markings", "markings": "markings",
 	}[strings.ToLower(strings.TrimSpace(kind))]
 	return table, ok
 }
@@ -70,7 +73,7 @@ func (r *Repository) MasterItem(ctx context.Context, organizationID, kind, id st
 	return item, result.Error
 }
 
-func (r *Repository) CreateMasterItem(ctx context.Context, organizationID, actorID, kind, code, name string, sortOrder int) (MasterItem, error) {
+func (r *Repository) CreateMasterItem(ctx context.Context, organizationID, actorID, kind, code, name, meaning string, sortOrder int) (MasterItem, error) {
 	table, ok := masterTable(kind)
 	if !ok {
 		return MasterItem{}, ErrUnsupportedMaster
@@ -88,16 +91,20 @@ func (r *Repository) CreateMasterItem(ctx context.Context, organizationID, actor
 		}
 		sortOrder = maxOrder + 10
 	}
-	query := fmt.Sprintf(`
-		INSERT INTO %s(id,organization_id,code,name,is_active,sort_order,created_by,updated_by,created_at,updated_at)
-		VALUES(?,?,?,?,TRUE,?,?,?,?,?)`, table)
-	if err := r.db.WithContext(ctx).Exec(query, id, organizationID, code, name, sortOrder, actorID, actorID, now, now).Error; err != nil {
+	columns, placeholders := "id,organization_id,code,name,is_active,sort_order,created_by,updated_by,created_at,updated_at", "?,?,?,?,TRUE,?,?,?,?,?"
+	args := []any{id, organizationID, code, name, sortOrder, actorID, actorID, now, now}
+	if table == "markings" {
+		columns, placeholders = "id,organization_id,code,name,meaning,is_active,sort_order,created_by,updated_by,created_at,updated_at", "?,?,?,?,?,TRUE,?,?,?,?,?"
+		args = []any{id, organizationID, code, name, strings.TrimSpace(meaning), sortOrder, actorID, actorID, now, now}
+	}
+	query := fmt.Sprintf("INSERT INTO %s(%s) VALUES(%s)", table, columns, placeholders)
+	if err := r.db.WithContext(ctx).Exec(query, args...).Error; err != nil {
 		return MasterItem{}, err
 	}
 	return r.MasterItem(ctx, organizationID, kind, id)
 }
 
-func (r *Repository) UpdateMasterItem(ctx context.Context, organizationID, actorID, kind, id string, name *string, isActive *bool, sortOrder *int) (MasterItem, error) {
+func (r *Repository) UpdateMasterItem(ctx context.Context, organizationID, actorID, kind, id string, name, meaning *string, isActive *bool, sortOrder *int) (MasterItem, error) {
 	table, ok := masterTable(kind)
 	if !ok {
 		return MasterItem{}, ErrUnsupportedMaster
@@ -105,6 +112,9 @@ func (r *Repository) UpdateMasterItem(ctx context.Context, organizationID, actor
 	updates := map[string]any{"updated_by": actorID, "updated_at": time.Now().UTC()}
 	if name != nil {
 		updates["name"] = *name
+	}
+	if meaning != nil && table == "markings" {
+		updates["meaning"] = strings.TrimSpace(*meaning)
 	}
 	if isActive != nil {
 		updates["is_active"] = *isActive

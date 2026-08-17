@@ -36,7 +36,7 @@ let _stkSaved = false;
 /** 棚卸完了フラグ */
 let _stkCompleted = false;
 
-/** DBへ保存される棚卸セッション。開始後の新規対象在庫は差分同期する。 */
+/** DBへ保存される棚卸セッション。開始ボタン押下時点の対象在庫を固定する。 */
 let _stkSession = null;
 let _stkLoading = false;
 
@@ -105,14 +105,18 @@ function _stkSyncStateFromSession() {
 async function _stkLoadOrStartSession() {
   if (!window.ZaikoAPI?.request) return null;
   const current = await window.ZaikoAPI.request('/stocktakes/current');
-  const result = current.session ? current : await window.ZaikoAPI.request('/stocktakes/start', { method:'POST', body:'{}' });
-  const synced = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(result.session.id)}/sync`, { method:'POST', body:'{}' });
-  _stkSession = synced.session || result.session;
-  if (Number(synced.added || 0) > 0 && typeof showToast === 'function') {
-    showToast('success', '最新在庫を反映', `新規登録された在庫 ${synced.added} 点を棚卸へ追加しました。`);
-  }
+  _stkSession = current.session || null;
   _stkSyncStateFromSession();
   return _stkSession;
+}
+
+async function stkStartSession() {
+  if (_stkSession || !window.ZaikoAPI?.request) return;
+  const result = await window.ZaikoAPI.request('/stocktakes/start', { method:'POST', body:'{}' });
+  _stkSession = result.session;
+  _stkSyncStateFromSession();
+  await initStocktake();
+  showToast('success', '棚卸を開始しました', '開始時点の対象データを固定しました。');
 }
 
 /* ============================================================
@@ -127,6 +131,13 @@ async function initStocktake() {
     console.error('stocktake session load failed', error);
     if (typeof showToast === 'function') showToast('error', '棚卸データ取得エラー', error.message || '棚卸途中データを取得できませんでした。');
   } finally { _stkLoading = false; }
+  const startButton = document.getElementById('stkStartButton');
+  if (startButton) startButton.classList.toggle('hidden', Boolean(_stkSession));
+  const sessionLabel = document.getElementById('stkSessionLabel');
+  if (sessionLabel && _stkSession) {
+    const scanner = (APP_DATA.users || []).find(user => user.id === _stkSession.startedBy)?.name || _stkSession.startedBy;
+    sessionLabel.textContent = `実施日: ${String(_stkSession.startedAt).slice(0,10)} / スキャン担当者: ${scanner}`;
+  }
   // 既に完了している場合
   if (_stkCompleted) {
     _stkUpdateBadge('complete', '完了済み');
@@ -287,7 +298,7 @@ function stkRenderTable() {
   if (countShp)   countShp.textContent  = shippedCount;
 
   if (items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="11" class="stk-td" style="text-align:center;color:var(--text-muted);padding:24px;">データがありません</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="13" class="stk-td" style="text-align:center;color:var(--text-muted);padding:24px;">データがありません</td></tr>`;
     return;
   }
 
@@ -317,6 +328,7 @@ function _stkBuildRow(item) {
   const price = typeof formatPrice === 'function'
     ? formatPrice(item.purchasePrice || 0)
     : `¥${(item.purchasePrice || 0).toLocaleString('ja-JP')}`;
+  const scanner = (APP_DATA.users || []).find(user => user.id === _stkSession?.startedBy)?.name || _stkSession?.startedBy || '—';
 
   return `<tr class="${rowClass}" data-code="${_esc(item.code)}">
     <td class="stk-td stk-td-status">${badgeHtml}</td>
@@ -330,6 +342,8 @@ function _stkBuildRow(item) {
     <td class="stk-td stk-td-price">${price}</td>
     <td class="stk-td">${_esc(item.purchaseDate || '—')}</td>
     <td class="stk-td stk-td-inventory-date${st.inventoryDate ? ' stk-date-set' : ''}">${_esc(st.inventoryDate || '—')}</td>
+    <td class="stk-td">${_esc(item._stocktakeLine?.shipmentIssuedAt ? new Date(item._stocktakeLine.shipmentIssuedAt).toLocaleString('ja-JP') : '—')}</td>
+    <td class="stk-td">${_esc(scanner)}</td>
   </tr>`;
 }
 
@@ -469,11 +483,12 @@ function _stkRenderMismatchTable() {
   // 棚卸済以外を表示（未処理・不一致・承認待ち）
   const unprocessed = expected.filter(i => {
     const s = _stkState[i.code]?.state || '未処理';
-    return s !== '棚卸済';
+    return s !== '棚卸済' && !i._stocktakeLine?.resolvedAt;
   });
+  const visibleUnknown = unknown.filter(i => !i._stocktakeLine?.resolvedAt);
 
-  if (unprocessed.length === 0 && unknown.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="stk-td" style="text-align:center;color:var(--text-muted);padding:20px;">未処理の商品はありません ✓</td></tr>`;
+  if (unprocessed.length === 0 && visibleUnknown.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="8" class="stk-td" style="text-align:center;color:var(--text-muted);padding:20px;">未処理の商品はありません ✓</td></tr>`;
     return;
   }
 
@@ -482,7 +497,7 @@ function _stkRenderMismatchTable() {
 
   const rows = [
     ...unprocessed.map(item => ({ item, kind:'expected' })),
-    ...unknown.map(item => ({ item, kind:'unknown' })),
+    ...visibleUnknown.map(item => ({ item, kind:'unknown' })),
   ];
   tbody.innerHTML = rows.map(({item, kind}) => {
     const st = _stkState[item.code] || { state: '未処理' };
@@ -513,6 +528,7 @@ function _stkRenderMismatchTable() {
     }
 
     return `<tr class="${kind === 'unknown' ? 'stk-row-unknown' : ''}">
+      <td class="stk-td" style="text-align:center"><input type="checkbox" class="stk-resolve-check" value="${_esc(st.lineId || '')}" aria-label="${_esc(item.code)}を確定"></td>
       <td class="stk-td stk-td-code">${_esc(item.code)}</td>
       <td class="stk-td">${_esc(item.brand || '—')}</td>
       <td class="stk-td">${_esc(item.model || '—')}</td>
@@ -522,6 +538,16 @@ function _stkRenderMismatchTable() {
       <td class="stk-td">${btns}</td>
     </tr>`;
   }).join('');
+}
+
+async function stkResolveSelectedMismatches() {
+  const resolvedIds = [...document.querySelectorAll('.stk-resolve-check:checked')].map(el => el.value).filter(Boolean);
+  if (!resolvedIds.length) { showToast('info', '不一致確定', '確定する項目を選択してください。'); return; }
+  const result = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(_stkSession.id)}`, {
+    method: 'PATCH', body: JSON.stringify({ lines: [], resolvedIds }),
+  });
+  _stkSession = result.session; _stkSyncStateFromSession(); _stkRenderMismatchTable(); _stkUpdateMismatchBadge();
+  showToast('success', '不一致を確定しました', `${resolvedIds.length}件を不一致リストから除外しました。`);
 }
 
 function _stkUpdateMismatchBadge() {

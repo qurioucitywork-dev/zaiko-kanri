@@ -23,6 +23,7 @@ type StocktakeSession struct {
 	SavedAt        time.Time       `gorm:"column:saved_at" json:"savedAt"`
 	CompletedBy    string          `gorm:"column:completed_by" json:"completedBy,omitempty"`
 	CompletedAt    *time.Time      `gorm:"column:completed_at" json:"completedAt,omitempty"`
+	InventoryDate  *DateString     `gorm:"column:inventory_date;type:date" json:"inventoryDate,omitempty"`
 	CreatedAt      time.Time       `gorm:"column:created_at" json:"createdAt"`
 	UpdatedAt      time.Time       `gorm:"column:updated_at" json:"updatedAt"`
 	Lines          []StocktakeLine `gorm:"foreignKey:SessionID" json:"lines"`
@@ -48,6 +49,8 @@ type StocktakeLine struct {
 	Reason             string     `gorm:"column:reason" json:"reason"`
 	Note               string     `gorm:"column:note" json:"note"`
 	CheckedAt          *time.Time `gorm:"column:checked_at" json:"checkedAt,omitempty"`
+	ShipmentIssuedAt   *time.Time `gorm:"column:shipment_issued_at" json:"shipmentIssuedAt,omitempty"`
+	ResolvedAt         *time.Time `gorm:"column:resolved_at" json:"resolvedAt,omitempty"`
 	CreatedAt          time.Time  `gorm:"column:created_at" json:"createdAt"`
 	UpdatedAt          time.Time  `gorm:"column:updated_at" json:"updatedAt"`
 }
@@ -104,7 +107,20 @@ func (r *Repository) StartStocktake(ctx context.Context, organizationID, actorUs
 				SerialNumber: product.SerialNumber, PurchasePriceMinor: product.CostAmountMinor, CreatedAt: now, UpdatedAt: now})
 		}
 		if len(lines) > 0 {
-			return tx.CreateInBatches(&lines, 200).Error
+			if err := tx.CreateInBatches(&lines, 200).Error; err != nil {
+				return err
+			}
+			if !tx.Migrator().HasTable("shipment_lines") || !tx.Migrator().HasTable("shipment_slips") {
+				return nil
+			}
+			return tx.Exec(`UPDATE stocktake_lines SET shipment_issued_at = (
+				SELECT MAX(ss.created_at) FROM shipment_lines sl
+				JOIN shipment_slips ss ON ss.id=sl.shipment_slip_id
+				WHERE sl.product_id=stocktake_lines.product_id AND ss.organization_id=?
+			) WHERE session_id=? AND EXISTS (
+				SELECT 1 FROM shipment_lines sl JOIN shipment_slips ss ON ss.id=sl.shipment_slip_id
+				WHERE sl.product_id=stocktake_lines.product_id AND ss.organization_id=?
+			)`, organizationID, session.ID, organizationID).Error
 		}
 		return nil
 	})
@@ -261,7 +277,7 @@ func (r *Repository) ScanStocktake(ctx context.Context, organizationID, sessionI
 	return session, message, err
 }
 
-func (r *Repository) SaveStocktake(ctx context.Context, organizationID, sessionID string, updates map[string]struct{ Reason, Note string }) (StocktakeSession, error) {
+func (r *Repository) SaveStocktake(ctx context.Context, organizationID, sessionID string, updates map[string]struct{ Reason, Note string }, resolvedIDs []string) (StocktakeSession, error) {
 	now := time.Now().UTC()
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&StocktakeSession{}).Where("id = ? AND organization_id = ? AND status = ?", sessionID, organizationID, "in_progress").Updates(map[string]any{"saved_at": now, "updated_at": now})
@@ -274,6 +290,12 @@ func (r *Repository) SaveStocktake(ctx context.Context, organizationID, sessionI
 		for id, update := range updates {
 			if err := tx.Model(&StocktakeLine{}).Where("id = ? AND session_id = ? AND organization_id = ?", id, sessionID, organizationID).
 				Updates(map[string]any{"reason": strings.TrimSpace(update.Reason), "note": strings.TrimSpace(update.Note), "updated_at": now}).Error; err != nil {
+				return err
+			}
+		}
+		if len(resolvedIDs) > 0 {
+			if err := tx.Model(&StocktakeLine{}).Where("session_id=? AND organization_id=? AND id IN ?", sessionID, organizationID, resolvedIDs).
+				Updates(map[string]any{"resolved_at": now, "updated_at": now}).Error; err != nil {
 				return err
 			}
 		}
@@ -302,7 +324,7 @@ func (r *Repository) CompleteStocktake(ctx context.Context, organizationID, sess
 		if unresolved > 0 {
 			return fmt.Errorf("%d expected items have no discrepancy reason", unresolved)
 		}
-		return tx.Model(&StocktakeSession{}).Where("id = ?", sessionID).Updates(map[string]any{"status": "completed", "completed_by": actorUserID, "completed_at": now, "saved_at": now, "updated_at": now}).Error
+		return tx.Model(&StocktakeSession{}).Where("id = ?", sessionID).Updates(map[string]any{"status": "completed", "completed_by": actorUserID, "completed_at": now, "inventory_date": now.Format("2006-01-02"), "saved_at": now, "updated_at": now}).Error
 	})
 	if err != nil {
 		return session, err

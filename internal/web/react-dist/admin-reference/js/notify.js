@@ -56,6 +56,26 @@ async function markRead(ntfId) {
   updateNotifyBadge();
 }
 
+// ── 通知項目を開く ──
+async function openNotification(ntfId) {
+  const ntf = APP_DATA.notifications.find(n => n.id === ntfId);
+  if (!ntf) return;
+
+  await markRead(ntfId);
+
+  const isApprovalRequest = ntf.type === 'approval_request'
+    || ntf.type === 'approval.requested'
+    || ntf.targetType === 'approval_request';
+  if (isApprovalRequest && typeof isAdmin === 'function' && isAdmin()) {
+    const panel = document.getElementById('notifyPanel');
+    if (panel) panel.classList.add('hidden');
+    navigateTo('approval');
+    return;
+  }
+
+  renderNotifyList();
+}
+
 // ── すべて既読 ──
 async function markAllRead() {
   const uid = currentUserId();
@@ -117,7 +137,7 @@ function renderNotifyList() {
          </button>`
       : '';
 
-    return `<div class="notify-item ${n.read ? '' : 'unread'}" onclick="markRead('${n.id}');renderNotifyList();">
+    return `<div class="notify-item ${n.read ? '' : 'unread'}" role="button" tabindex="0" data-notification-id="${n.id}" onclick="openNotification('${n.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openNotification('${n.id}');}">
       <div class="notify-icon">${typeIcon}</div>
       <div class="notify-content">
         <div class="notify-title">${n.title}</div>

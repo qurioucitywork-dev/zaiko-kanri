@@ -65,12 +65,24 @@ func (r *Repository) SeedPreviewMasters(ctx context.Context) error {
 				{"DIA-001", "ブラック"}, {"DIA-002", "ホワイト"}, {"DIA-003", "シルバー"},
 				{"DIA-004", "ブルー"}, {"DIA-005", "グリーン"},
 			},
+			"product_shapes": {{"SHP-001", "腕時計"}, {"SHP-002", "懐中時計"}, {"SHP-003", "置時計"}},
 		}
 		for table, items := range catalogs {
 			for index, item := range items {
 				if err := seedCatalogItem(tx, table, organizationID, adminID, item, index+1); err != nil {
 					return err
 				}
+			}
+		}
+		for index, item := range []struct{ Code, Symbol, Meaning string }{
+			{"MRK-001", "♡", "ハート"}, {"MRK-002", "☆", "スター"},
+			{"MRK-003", "♧", "クラブ"}, {"MRK-004", "♤", "スペード"},
+		} {
+			now := time.Now().UTC()
+			if err := tx.Exec(`INSERT INTO markings(id,organization_id,code,name,meaning,is_active,sort_order,created_by,updated_by,created_at,updated_at)
+				VALUES(?,?,?,?,?,TRUE,?,?,?,?,?) ON CONFLICT (organization_id,code) DO NOTHING`,
+				"master_markings_"+item.Code, organizationID, item.Code, item.Symbol, item.Meaning, index+1, adminID, adminID, now, now).Error; err != nil {
+				return err
 			}
 		}
 
@@ -193,7 +205,7 @@ func (r *Repository) SeedPreviewMasters(ctx context.Context) error {
 func seedCatalogItem(tx *gorm.DB, table, organizationID, actorID string, item catalogSeed, sortOrder int) error {
 	allowed := map[string]bool{
 		"brands": true, "materials": true, "movements": true, "product_conditions": true, "accessories": true,
-		"auction_houses": true, "belt_materials": true, "dials": true,
+		"auction_houses": true, "belt_materials": true, "dials": true, "product_shapes": true,
 	}
 	if !allowed[table] {
 		return fmt.Errorf("unsupported catalog table %q", table)

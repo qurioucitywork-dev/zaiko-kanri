@@ -426,6 +426,31 @@ select.form-control {
   border-radius: var(--radius);
 }
 
+.inventory-table-wrapper {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+}
+
+.inventory-table-wrapper:focus-visible {
+  outline: 2px solid var(--primary-light);
+  outline-offset: -2px;
+}
+
+#inventoryTable th,
+#inventoryTable td {
+  white-space: nowrap;
+}
+
+#inventoryTable [data-inv-col="marking"] {
+  padding-left: 6px;
+  padding-right: 6px;
+  text-align: center;
+}
+
 .data-table {
   width: 100%;
   border-collapse: collapse;

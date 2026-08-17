@@ -21,6 +21,8 @@ var masterCodePatterns = map[string]*regexp.Regexp{
 	"belt": regexp.MustCompile(`^BLT-[0-9]{3,}$`), "belts": regexp.MustCompile(`^BLT-[0-9]{3,}$`),
 	"belt-material": regexp.MustCompile(`^BLT-[0-9]{3,}$`), "belt-materials": regexp.MustCompile(`^BLT-[0-9]{3,}$`),
 	"dial": regexp.MustCompile(`^DIA-[0-9]{3,}$`), "dials": regexp.MustCompile(`^DIA-[0-9]{3,}$`),
+	"shape": regexp.MustCompile(`^SHP-[0-9]{3,}$`), "shapes": regexp.MustCompile(`^SHP-[0-9]{3,}$`), "product-shapes": regexp.MustCompile(`^SHP-[0-9]{3,}$`),
+	"marking": regexp.MustCompile(`^MRK-[0-9]{3,}$`), "markings": regexp.MustCompile(`^MRK-[0-9]{3,}$`),
 }
 
 func (s *Server) apiMasterItems(w http.ResponseWriter, r *http.Request) {
@@ -58,6 +60,7 @@ func (s *Server) apiMasterCreate(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Code      string `json:"code"`
 		Name      string `json:"name"`
+		Meaning   string `json:"meaning"`
 		SortOrder int    `json:"sortOrder"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
@@ -73,7 +76,7 @@ func (s *Server) apiMasterCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := currentUser(r.Context())
-	item, err := s.repository.CreateMasterItem(r.Context(), user.OrganizationID, user.ID, kind, input.Code, input.Name, input.SortOrder)
+	item, err := s.repository.CreateMasterItem(r.Context(), user.OrganizationID, user.ID, kind, input.Code, input.Name, input.Meaning, input.SortOrder)
 	if err != nil {
 		s.log.Error("create master", "error", err, "kind", kind, "request_id", requestID(r.Context()))
 		writeAPIError(w, http.StatusConflict, "master_conflict", "同じコードが既に登録されています。")
@@ -100,6 +103,7 @@ func (s *Server) apiMasterUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	var input struct {
 		Name      *string `json:"name"`
+		Meaning   *string `json:"meaning"`
 		IsActive  *bool   `json:"isActive"`
 		SortOrder *int    `json:"sortOrder"`
 	}
@@ -117,7 +121,15 @@ func (s *Server) apiMasterUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		input.Name = &trimmed
 	}
-	if input.Name == nil && input.IsActive == nil && input.SortOrder == nil {
+	if input.Meaning != nil {
+		trimmed := strings.TrimSpace(*input.Meaning)
+		if len([]rune(trimmed)) > 200 {
+			writeAPIError(w, http.StatusBadRequest, "invalid_master", "意味は200文字以内で指定してください。")
+			return
+		}
+		input.Meaning = &trimmed
+	}
+	if input.Name == nil && input.Meaning == nil && input.IsActive == nil && input.SortOrder == nil {
 		writeAPIError(w, http.StatusBadRequest, "empty_update", "変更項目を指定してください。")
 		return
 	}
@@ -127,7 +139,7 @@ func (s *Server) apiMasterUpdate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "master_item_not_found", "マスタ項目が見つかりません。")
 		return
 	}
-	item, err := s.repository.UpdateMasterItem(r.Context(), user.OrganizationID, user.ID, kind, r.PathValue("id"), input.Name, input.IsActive, input.SortOrder)
+	item, err := s.repository.UpdateMasterItem(r.Context(), user.OrganizationID, user.ID, kind, r.PathValue("id"), input.Name, input.Meaning, input.IsActive, input.SortOrder)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "master_update_failed", "マスタを更新できませんでした。")
 		return

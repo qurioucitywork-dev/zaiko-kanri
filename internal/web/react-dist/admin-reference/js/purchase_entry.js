@@ -870,6 +870,8 @@ function peOpenProductModal(lineId) {
   _pepSetField('pep-material', detail.material || '');
   _pepSetField('pep-movement', detail.movement || '');
   _pepSetField('pep-condition',detail.condition|| '');
+  _pepSetField('pep-shape', detail.shape || '');
+  _pepSetField('pep-marking', detail.marking || '');
   _pepSetField('pep-belt',     detail.belt     || '');
   _pepSetField('pep-dial',     detail.dial     || '');
   _pepSetField('pep-note',     detail.note     || '');
@@ -948,6 +950,8 @@ function _pepFillSelects(selectedBrand = '') {
       condEl.innerHTML += `<option value="${c.code}">${_escHtml(c.name)}</option>`;
     });
   }
+  populateProductSpecMasterSelect('pep-shape', 'shape', { selected: detail.shape || '', labelMode: 'name' });
+  populateProductSpecMasterSelect('pep-marking', 'marking', { selected: detail.marking || '', labelMode: 'name' });
   // BOX（毎回再描画して最新の BOX 一覧を反映）
   const boxEl = document.getElementById('pep-box');
   if (boxEl) {
@@ -1052,6 +1056,8 @@ function peSaveProduct() {
     material:    document.getElementById('pep-material')?.value || '',
     movement:    document.getElementById('pep-movement')?.value || '',
     condition:   document.getElementById('pep-condition')?.value|| '',
+    shape:       document.getElementById('pep-shape')?.value || '',
+    marking:     document.getElementById('pep-marking')?.value || '',
     belt:        document.getElementById('pep-belt')?.value     || '',
     dial:        document.getElementById('pep-dial')?.value     || '',
     note:        document.getElementById('pep-note')?.value     || '',

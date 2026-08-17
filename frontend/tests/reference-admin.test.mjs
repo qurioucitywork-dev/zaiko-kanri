@@ -179,11 +179,22 @@ const { document } = window;
 
 assert.deepEqual(runtimeErrors, [], `reference boot emitted errors: ${runtimeErrors.map(String).join("\n")}`);
 assert.equal(typeof window.navigateTo, "function", "navigateTo must be globally callable");
+assert.equal(typeof window.openNotification, "function", "notification items must be globally actionable");
 assert.equal(typeof window.showItemDetail, "function", "showItemDetail must be globally callable");
 assert.ok(window.doAppLogin("admin", "admin123"), "reference admin login must succeed");
 assert.equal(window.currentRole(), "admin");
 assert.equal(window.currentUser()?.name, "管理者");
 window.applyRoleUI();
+
+const approvalNotification = window.eval("APP_DATA.notifications.find((item) => item.type === 'approval_request')");
+assert.ok(approvalNotification, "admin preview data must include an approval notification");
+document.getElementById("notifyPanel").classList.remove("hidden");
+await window.openNotification(approvalNotification.id);
+assert.equal(document.getElementById("page-approval").classList.contains("hidden"), false,
+  "an approval notification must navigate administrators to approval management");
+assert.equal(document.getElementById("notifyPanel").classList.contains("hidden"), true,
+  "opening an approval notification must close the notification panel");
+window.navigateTo("dashboard");
 
 const pages = [
   "dashboard",
@@ -1079,9 +1090,8 @@ assert.match(appSource, /clientCompanyCode,/u, "shipping slips must retain the c
 
 window.navigateTo("inventory");
 window.execInventorySearch();
-const firstInventoryCells = [...document.querySelectorAll("#inventoryTableBody tr:first-child td")];
-assert.equal(firstInventoryCells[7].textContent.trim(), "¥850,000", "inventory purchase price must stay JPY");
-assert.equal(firstInventoryCells[8].textContent.trim(), "$7,613", "inventory sale price must display USD");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePrice"]').textContent.trim(), "¥850,000", "inventory purchase price must stay JPY");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), "$7,613", "inventory sale price must display USD");
 assert.match(document.querySelector("#page-inventory thead").textContent, /売価（USD）/u);
 assert.equal(document.getElementById("inv-purchase-jpy").getAttribute("aria-pressed"), "true");
 assert.equal(document.getElementById("inv-sale-usd").getAttribute("aria-pressed"), "true");
@@ -1095,9 +1105,8 @@ assert.equal(document.getElementById("inv-column-trigger").getAttribute("aria-ex
 
 window.switchInventoryPriceCurrency("purchase", "USD");
 window.switchInventoryPriceCurrency("sale", "JPY");
-const switchedInventoryCells = [...document.querySelectorAll("#inventoryTableBody tr:first-child td")];
-assert.equal(switchedInventoryCells[7].textContent.trim(), "$5,484", "purchase price must convert from JPY to USD using the master rate");
-assert.equal(switchedInventoryCells[8].textContent.trim(), "¥1,180,015", "sale price must convert from USD to JPY using the master rate");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePrice"]').textContent.trim(), "$5,484", "purchase price must convert from JPY to USD using the master rate");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), "¥1,180,015", "sale price must convert from USD to JPY using the master rate");
 assert.equal(document.getElementById("inv-purchase-usd").getAttribute("aria-pressed"), "true");
 assert.equal(document.getElementById("inv-sale-jpy").getAttribute("aria-pressed"), "true");
 assert.match(document.getElementById("inv-purchase-heading").textContent, /USD/u);
@@ -1161,7 +1170,7 @@ serialVisibility.checked = false;
 window._invColumnVisibilityChanged(serialVisibility);
 assert.equal(document.querySelector('th[data-inv-col="serial"]').classList.contains("inv-col-hidden"), true);
 assert.equal(document.querySelector('#inventoryTableBody td[data-inv-col="serial"]').classList.contains("inv-col-hidden"), true);
-assert.equal(document.getElementById("inv-column-count").textContent, "15/16");
+assert.equal(document.getElementById("inv-column-count").textContent, "15/17");
 
 const purchaseVisibility = document.querySelector('#inv-column-panel input[value="purchasePrice"]');
 const saleVisibility = document.querySelector('#inv-column-panel input[value="salePrice"]');
@@ -1172,14 +1181,15 @@ window._invColumnVisibilityChanged(saleVisibility);
 assert.equal(document.querySelector('th[data-inv-col="purchasePrice"]').classList.contains("inv-col-hidden"), true);
 assert.equal(document.querySelector('th[data-inv-col="salePrice"]').classList.contains("inv-col-hidden"), true);
 window._invShowAllColumns();
-assert.equal(document.getElementById("inv-column-count").textContent, "16/16");
+assert.equal(document.getElementById("inv-column-count").textContent, "17/17");
 assert.equal(document.querySelectorAll("#inventoryTable .inv-col-hidden").length, 0);
 
 assert.equal(typeof window.openInventoryQr, "function", "inventory QR display must be globally callable");
 assert.equal(typeof window.printAllInventoryQrLabels, "function", "bulk inventory QR printing must be globally callable");
-assert.equal(document.querySelectorAll('#inventoryTableBody button[onclick*="openInventoryQr"]').length,
-  inventory.filter((item) => item.status === "在庫中").slice(0, 10).length,
-  "every displayed inventory row must expose its own stocktake QR");
+assert.equal(document.querySelectorAll('#inventoryTableBody button[onclick*="openInventoryQr"]').length, 0,
+  "the inventory list must not expose stocktake QR controls after product tags replace them");
+assert.equal(document.querySelector('button[onclick="printAllInventoryQrLabels()"]'), null,
+  "the inventory list must not expose bulk stocktake QR printing");
 window.openInventoryQr(inventory[0].code);
 assert.equal(document.getElementById("inventoryQrModal").classList.contains("hidden"), false, "inventory QR modal must open");
 assert.equal(document.getElementById("inventoryQrCode").textContent, inventory[0].code);
@@ -1351,6 +1361,10 @@ assert.equal(typeof window.persistBusinessWorkflowState, "function");
 window.navigateTo("sales-list");
 window.switchSlipTab("purchase");
 assert.equal(document.getElementById("slip-filter-status").value, "processing", "document status search must default to processing");
+document.getElementById("slip-filter-status").value = "";
+window.execSlipFilter();
+assert.match(document.getElementById("slipListBody").textContent, new RegExp(savedSinglePurchaseSlip.id),
+  "searching with the all-status option must render all matching slips");
 window.showAllSlipList();
 assert.match(document.getElementById("slipListBody").textContent, new RegExp(savedSinglePurchaseSlip.id), "purchase registration must appear in the purchase-slip tab without an extra search");
 

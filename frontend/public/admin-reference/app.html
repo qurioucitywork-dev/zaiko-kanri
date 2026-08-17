@@ -1471,6 +1471,8 @@
             <label class="form-label">駆動方式</label>
             <select class="form-control" id="ie-movement"></select>
           </div>
+          <div class="form-group"><label class="form-label">形状</label><select class="form-control" id="ie-shape"></select></div>
+          <div class="form-group"><label class="form-label">マーキング</label><select class="form-control" id="ie-marking"></select></div>
           <div class="form-group">
             <label class="form-label">ベルト素材</label>
             <select class="form-control" id="ie-belt">
@@ -2095,7 +2097,7 @@
         </div>
       </div>
 
-      <div class="card mb-20" id="market-search-panel">
+      <div class="card mb-20" id="market-search-panel" onkeydown="searchPanelEnter(event,'marketApplyFilters')">
         <div class="card-header" style="padding-bottom:12px;">
           <h3><i class="fa-solid fa-magnifying-glass-chart"></i> 相場検索</h3>
           <div class="card-actions">
@@ -2224,7 +2226,7 @@
     <!-- ===== 在庫一覧 ===== -->
     <div class="page-panel page-content hidden" id="page-inventory">
       <!-- ===== 検索パネル ===== -->
-      <div class="card mb-20" id="inv-search-panel">
+      <div class="card mb-20" id="inv-search-panel" onkeydown="searchPanelEnter(event,'execInventorySearch')">
         <div class="card-header" style="padding-bottom:12px;">
           <h3><i class="fa-solid fa-magnifying-glass"></i> 在庫検索</h3>
           <div class="card-actions">
@@ -2382,7 +2384,7 @@
       </div>
 
       <!-- ===== 検索結果エリア（検索後に表示） ===== -->
-      <div id="inv-result-area" class="card" style="display:none;overflow:hidden;">
+      <div id="inv-result-area" class="card" style="display:none;overflow:visible;">
         <div class="card-header">
           <h3><i class="fa-solid fa-box-archive"></i> 在庫一覧</h3>
           <div class="card-actions">
@@ -2393,7 +2395,7 @@
                 aria-controls="inv-column-panel">
                 <i class="fa-solid fa-table-columns"></i>
                 <span>表示項目</span>
-                <span class="inv-column-count" id="inv-column-count">16/16</span>
+                <span class="inv-column-count" id="inv-column-count">16/17</span>
               </button>
               <div class="inv-column-panel" id="inv-column-panel" role="group" aria-label="在庫一覧の表示項目">
                 <div class="inv-column-panel-header">
@@ -2401,21 +2403,22 @@
                   <button type="button" onclick="_invShowAllColumns()">すべて表示</button>
                 </div>
                 <div class="inv-column-list">
+                  <label><input type="checkbox" value="sku" onchange="_invColumnVisibilityChanged(this)">SKU</label>
+                  <label><input type="checkbox" value="marking" checked onchange="_invColumnVisibilityChanged(this)">マーク</label>
                   <label><input type="checkbox" value="code" checked onchange="_invColumnVisibilityChanged(this)">管理番号</label>
+                  <label><input type="checkbox" value="purchaseDate" checked onchange="_invColumnVisibilityChanged(this)">仕入日</label>
                   <label><input type="checkbox" value="brand" checked onchange="_invColumnVisibilityChanged(this)">ブランド</label>
-                  <label><input type="checkbox" value="model" checked onchange="_invColumnVisibilityChanged(this)">モデル名</label>
                   <label><input type="checkbox" value="ref" checked onchange="_invColumnVisibilityChanged(this)">型番</label>
+                  <label><input type="checkbox" value="model" checked onchange="_invColumnVisibilityChanged(this)">モデル名</label>
                   <label><input type="checkbox" value="serial" checked onchange="_invColumnVisibilityChanged(this)">シリアル</label>
+                  <label><input type="checkbox" value="accessories" checked onchange="_invColumnVisibilityChanged(this)">付属品</label>
+                  <label><input type="checkbox" value="purchasePrice" checked onchange="_invColumnVisibilityChanged(this)">仕入金額</label>
                   <label><input type="checkbox" value="supplier" checked onchange="_invColumnVisibilityChanged(this)">仕入先</label>
                   <label><input type="checkbox" value="staff" checked onchange="_invColumnVisibilityChanged(this)">担当者</label>
-                  <label><input type="checkbox" value="purchasePrice" checked onchange="_invColumnVisibilityChanged(this)">仕入金額</label>
                   <label><input type="checkbox" value="salePrice" checked onchange="_invColumnVisibilityChanged(this)">売価</label>
-                  <label><input type="checkbox" value="purchaseDate" checked onchange="_invColumnVisibilityChanged(this)">仕入日</label>
-                  <label><input type="checkbox" value="sku" checked onchange="_invColumnVisibilityChanged(this)">SKU</label>
-                  <label><input type="checkbox" value="accessories" checked onchange="_invColumnVisibilityChanged(this)">付属品</label>
                   <label><input type="checkbox" value="status" checked onchange="_invColumnVisibilityChanged(this)">ステータス</label>
                   <label><input type="checkbox" value="box" checked onchange="_invColumnVisibilityChanged(this)">BOX</label>
-                  <label><input type="checkbox" value="qr" checked onchange="_invColumnVisibilityChanged(this)">棚卸QR</label>
+                  <label><input type="checkbox" value="shape" checked onchange="_invColumnVisibilityChanged(this)">形状</label>
                   <label><input type="checkbox" value="edit" checked onchange="_invColumnVisibilityChanged(this)">編集</label>
                 </div>
                 <div class="inv-column-panel-note" id="inv-column-panel-note">チェックを外した項目は一覧から非表示になります</div>
@@ -2424,35 +2427,24 @@
             <button class="btn btn-outline btn-sm" onclick="exportInventoryCSV()">
               <i class="fa-solid fa-file-export"></i> CSV出力
             </button>
-            <button class="btn btn-outline btn-sm" onclick="printAllInventoryQrLabels()">
-              <i class="fa-solid fa-qrcode"></i> 棚卸QR一括印刷
-            </button>
           </div>
         </div>
-        <div class="data-table-wrapper">
+        <div class="data-table-wrapper inventory-table-wrapper" tabindex="0" aria-label="在庫一覧。横にスクロールしてすべての項目を確認できます">
           <table class="data-table inv-fixed-table" id="inventoryTable">
             <colgroup>
-              <col data-inv-col="code" style="width:130px;"><!-- 管理番号 -->
-              <col data-inv-col="brand" style="width:100px;"><!-- ブランド -->
-              <col data-inv-col="model" style="width:110px;"><!-- モデル名 -->
-              <col data-inv-col="ref" style="width:100px;"><!-- 型番 -->
-              <col data-inv-col="serial" style="width:90px;"> <!-- シリアル -->
-              <col data-inv-col="supplier" style="width:90px;"> <!-- 仕入先 -->
-              <col data-inv-col="staff" style="width:80px;"> <!-- 担当者 -->
-              <col data-inv-col="purchasePrice" style="width:132px;"> <!-- 仕入金額 -->
-              <col data-inv-col="salePrice" style="width:132px;"> <!-- 売価 -->
-              <col data-inv-col="purchaseDate" style="width:90px;"> <!-- 仕入日 -->
-              <col data-inv-col="sku" style="width:90px;"> <!-- SKU -->
-              <col data-inv-col="accessories" style="width:120px;"><!-- 付属品 -->
-              <col data-inv-col="status" style="width:80px;"> <!-- ステータス -->
-              <col data-inv-col="box" style="width:50px;"> <!-- BOX -->
-              <col data-inv-col="qr" style="width:70px;"> <!-- 棚卸QR -->
-              <col data-inv-col="edit" style="width:58px;"> <!-- 編集 -->
+              <col data-inv-col="sku" style="width:90px;"><col data-inv-col="marking" style="width:42px;">
+              <col data-inv-col="code" style="width:130px;"><col data-inv-col="purchaseDate" style="width:90px;">
+              <col data-inv-col="brand" style="width:100px;"><col data-inv-col="ref" style="width:100px;"><col data-inv-col="model" style="width:110px;">
+              <col data-inv-col="serial" style="width:90px;"><col data-inv-col="accessories" style="width:120px;">
+              <col data-inv-col="purchasePrice" style="width:132px;"><col data-inv-col="supplier" style="width:90px;"><col data-inv-col="staff" style="width:80px;">
+              <col data-inv-col="salePrice" style="width:132px;"><col data-inv-col="status" style="width:80px;"><col data-inv-col="box" style="width:50px;">
+              <col data-inv-col="shape" style="width:90px;"><col data-inv-col="edit" style="width:58px;">
             </colgroup>
             <thead>
               <tr>
-                <th data-inv-col="code">管理番号</th><th data-inv-col="brand">ブランド</th><th data-inv-col="model">モデル名</th><th data-inv-col="ref">型番</th>
-                <th data-inv-col="serial">シリアル</th><th data-inv-col="supplier">仕入先</th><th data-inv-col="staff">担当者</th>
+                <th data-inv-col="sku">SKU</th><th data-inv-col="marking" aria-label="マーク" title="マーク">◆</th>
+                <th data-inv-col="code">管理番号</th><th data-inv-col="purchaseDate">仕入日</th><th data-inv-col="brand">ブランド</th><th data-inv-col="ref">型番</th><th data-inv-col="model">モデル名</th>
+                <th data-inv-col="serial">シリアル</th><th data-inv-col="accessories">付属品</th>
                 <th data-inv-col="purchasePrice">
                   <div class="inv-price-column-head">
                     <span id="inv-purchase-heading">仕入金額（JPY）</span>
@@ -2466,6 +2458,7 @@
                     </div>
                   </div>
                 </th>
+                <th data-inv-col="supplier">仕入先</th><th data-inv-col="staff">担当者</th>
                 <th data-inv-col="salePrice">
                   <div class="inv-price-column-head">
                     <span id="inv-sale-heading">売価（USD）</span>
@@ -2479,8 +2472,6 @@
                     </div>
                   </div>
                 </th>
-                <th data-inv-col="purchaseDate">仕入日</th>
-                <th data-inv-col="sku">SKU</th><th data-inv-col="accessories">付属品</th>
                 <th data-inv-col="status" id="inv-status-sort-th" aria-sort="none">
                   <button type="button" class="inv-status-sort-btn" id="inv-status-sort-btn"
                     onclick="toggleInventoryStatusSort()"
@@ -2489,7 +2480,7 @@
                     <i class="fa-solid fa-sort" id="inv-status-sort-icon" aria-hidden="true"></i>
                   </button>
                 </th>
-                <th data-inv-col="box">BOX</th><th data-inv-col="qr">棚卸QR</th><th data-inv-col="edit">編集</th>
+                <th data-inv-col="box">BOX</th><th data-inv-col="shape">形状</th><th data-inv-col="edit">編集</th>
               </tr>
             </thead>
             <tbody id="inventoryTableBody"></tbody>
@@ -2667,6 +2658,8 @@
               <!-- 既存商品バナー（在庫ヒット時に表示） -->
               <div id="pu-existing-banner" role="alert" aria-live="polite"></div>
               <div class="form-row cols-3">
+                <div class="form-group"><label class="form-label">形状</label><select class="form-control" id="pu-shape"><option value="">-- 選択 --</option></select></div>
+                <div class="form-group"><label class="form-label">マーキング</label><select class="form-control" id="pu-marking"><option value="">-- 選択 --</option></select></div>
                 <div class="form-group">
                   <label class="form-label" for="pu-code">管理番号 <span class="required">*</span></label>
                   <div class="management-code-input-row product-management-code-row">
@@ -3056,7 +3049,7 @@
         </div>
 
         <!-- フィルタバー -->
-        <div class="sales-filter-row" id="slipFilterRow">
+        <div class="sales-filter-row" id="slipFilterRow" onkeydown="searchPanelEnter(event,'execSlipFilter')">
           <div class="form-group">
             <label class="form-label"><i class="fa-regular fa-calendar"></i> 開始日</label>
             <input type="date" class="form-control" id="slip-filter-from" style="width:148px;">
@@ -3084,7 +3077,7 @@
             <div style="display:flex;gap:6px;align-items:center;">
               <input type="text" class="form-control" id="slip-filter-keyword"
                 placeholder="伝票番号・商品コード・ブランド…" style="width:210px;"
-                onkeydown="if(event.key==='Enter')execSlipFilter()">
+                >
               <button class="btn btn-primary btn-sm" onclick="execSlipFilter()" style="white-space:nowrap;">
                 <i class="fa-solid fa-magnifying-glass"></i> 絞り込む
               </button>
@@ -3687,6 +3680,7 @@
         <div class="card-header">
           <h3><i class="fa-solid fa-qrcode"></i> QRコード / 管理番号入力</h3>
           <div style="display:flex;align-items:center;gap:10px;">
+            <button class="btn btn-primary btn-sm" id="stkStartButton" onclick="stkStartSession()"><i class="fa-solid fa-play"></i> 棚卸開始</button>
             <span id="stkSessionLabel" style="font-size:11px;color:var(--text-muted);"></span>
             <span id="stkStatusBadge" class="stk-session-badge stk-session-none">未開始</span>
           </div>
@@ -3745,6 +3739,7 @@
               <col class="stk-col-price">
               <col class="stk-col-date">
               <col class="stk-col-inventory-date">
+              <col><col>
             </colgroup>
             <thead>
               <tr>
@@ -3759,6 +3754,7 @@
                 <th class="stk-th stk-th-price">仕入金額</th>
                 <th class="stk-th stk-th-date">仕入日</th>
                 <th class="stk-th stk-th-inventory-date">棚卸実施日</th>
+                <th class="stk-th">出荷伝票起票日時</th><th class="stk-th">スキャン担当者</th>
               </tr>
             </thead>
             <tbody id="stkTableBody"></tbody>
@@ -3849,6 +3845,7 @@
         <div class="modal-body" style="padding:0;max-height:60vh;overflow-y:auto;">
           <table class="stk-table stk-mismatch-table" id="stkMismatchTable">
             <colgroup>
+              <col style="width:45px;">
               <col style="width:120px;">
               <col style="width:110px;">
               <col style="width:130px;">
@@ -3859,6 +3856,7 @@
             </colgroup>
             <thead>
               <tr>
+                <th class="stk-th">選択</th>
                 <th class="stk-th">商品コード</th>
                 <th class="stk-th">ブランド</th>
                 <th class="stk-th">モデル名</th>
@@ -3872,6 +3870,7 @@
           </table>
         </div>
         <div class="modal-footer">
+          <button class="btn btn-primary" onclick="stkResolveSelectedMismatches()"><i class="fa-solid fa-check"></i> 選択項目を確定</button>
           <button class="btn btn-outline" onclick="stkCloseMismatch()">閉じる</button>
         </div>
       </div>
@@ -4520,6 +4519,8 @@
     <div class="modal-body" id="peProductModalBody">
       <!-- 商品詳細セクション（画像除く）-->
       <div class="form-row cols-3">
+        <div class="form-group"><label class="form-label">形状</label><select class="form-control" id="pep-shape"><option value="">-- 選択 --</option></select></div>
+        <div class="form-group"><label class="form-label">マーキング</label><select class="form-control" id="pep-marking"><option value="">-- 選択 --</option></select></div>
         <div class="form-group">
           <label class="form-label">商品コード <span class="auto-tag">自動</span></label>
           <input class="form-control auto-filled" id="pep-code" readonly>
@@ -4913,7 +4914,7 @@
 <script src="js/auth.js?v=20260803-workflow-consistency"></script>
 <script src="js/api_bridge.js?v=20260815-sales-consignment-link"></script>
 <script src="js/approval.js?v=20260803-workflow-consistency"></script>
-<script src="js/notify.js?v=20260803-workflow-consistency"></script>
+<script src="js/notify.js?v=20260817-approval-notification-link"></script>
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
 <script src="js/market_table.js?v=20260803-workflow-consistency"></script>
 <script src="js/qr_inventory.js?v=20260804-stocktake-qr"></script>

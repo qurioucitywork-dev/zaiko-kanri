@@ -1207,17 +1207,27 @@ let _invSearched = false;
  */
 let _invAccFilterState = [];
 
+/** 検索パネル内の入力・選択項目でEnterを押した時、対応する検索を1回だけ実行する。 */
+function searchPanelEnter(event, callbackName) {
+  if (event.key !== 'Enter' || event.isComposing || event.repeat) return;
+  const target = event.target;
+  if (!target || !['INPUT', 'SELECT'].includes(target.tagName) || target.type === 'button') return;
+  const callback = window[callbackName];
+  if (typeof callback !== 'function') return;
+  event.preventDefault();
+  callback();
+}
+
 const INV_COLUMN_KEYS = [
-  'code', 'brand', 'model', 'ref', 'serial', 'supplier', 'staff',
-  'purchasePrice', 'salePrice', 'purchaseDate', 'sku', 'accessories',
-  'status', 'box', 'qr', 'edit',
+  'sku', 'marking', 'code', 'purchaseDate', 'brand', 'ref', 'model', 'serial', 'accessories',
+  'purchasePrice', 'supplier', 'staff', 'salePrice', 'status', 'box', 'shape', 'edit',
 ];
 const INV_COLUMN_WIDTHS = {
-  code: 130, brand: 100, model: 110, ref: 100, serial: 90,
+  code: 130, brand: 100, shape: 90, marking: 42, model: 110, ref: 100, serial: 90,
   supplier: 90, staff: 80, purchasePrice: 132, salePrice: 132,
-  purchaseDate: 90, sku: 90, accessories: 120, status: 80, box: 50, qr: 70, edit: 58,
+  purchaseDate: 90, sku: 90, accessories: 120, status: 80, box: 50, edit: 58,
 };
-const _invVisibleColumns = new Set(INV_COLUMN_KEYS);
+const _invVisibleColumns = new Set(INV_COLUMN_KEYS.filter(key => key !== 'sku'));
 let _invPurchaseCurrency = 'JPY';
 let _invSaleCurrency = 'USD';
 
@@ -1896,27 +1906,22 @@ function renderInventoryTable() {
         : '—';
       return `
         <tr style="cursor:pointer;" onclick="showItemDetail('${item.code}')">
+          <td data-inv-col="sku" style="font-size:12px;">${skuVal}</td>
+          <td data-inv-col="marking" style="text-align:center;font-size:18px;line-height:1;" title="${(() => { const x = APP_DATA.markingRecords?.find(v => v.code === item.marking); return x?.meaning || ''; })()}">${APP_DATA.markingRecords?.find(v => v.code === item.marking)?.name || '—'}</td>
           <td data-inv-col="code"><code style="font-size:11px;color:var(--primary-light);">${item.code}</code></td>
+          <td data-inv-col="purchaseDate" style="font-size:12px;white-space:nowrap;">${item.purchaseDate || '—'}</td>
           <td data-inv-col="brand" style="font-weight:500;">${item.brand}</td>
-          <td data-inv-col="model">${item.model}</td>
           <td data-inv-col="ref" style="font-size:12px;">${item.ref    || '—'}</td>
+          <td data-inv-col="model">${item.model}</td>
           <td data-inv-col="serial" style="font-size:12px;font-family:monospace;">${item.serial  || '—'}</td>
+          <td data-inv-col="accessories" style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${accText}">${accText}</td>
+          <td data-inv-col="purchasePrice" style="font-weight:bold;">${formatInventoryPurchasePrice(item)}</td>
           <td data-inv-col="supplier" style="font-size:12px;">${getSupplierName(item.supplier)}</td>
           <td data-inv-col="staff" style="font-size:12px;">${item.staff  || '—'}</td>
-          <td data-inv-col="purchasePrice" style="font-weight:bold;">${formatInventoryPurchasePrice(item)}</td>
           <td data-inv-col="salePrice" style="font-weight:bold;color:var(--success);">${item.salePrice ? formatInventorySalePrice(item.salePrice) : '—'}</td>
-          <td data-inv-col="purchaseDate" style="font-size:12px;white-space:nowrap;">${item.purchaseDate || '—'}</td>
-          <td data-inv-col="sku" style="font-size:12px;">${skuVal}</td>
-          <td data-inv-col="accessories" style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${accText}">${accText}</td>
           <td data-inv-col="status">${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</td>
           <td data-inv-col="box">${_buildBoxBadge(item.boxNo)}</td>
-          <td data-inv-col="qr">
-            <button class="btn btn-outline btn-sm inventory-qr-row-btn" style="white-space:nowrap;padding:3px 8px;"
-                    onclick="event.stopPropagation();openInventoryQr('${item.code}')"
-                    aria-label="管理番号 ${item.code} の棚卸QRを表示" title="棚卸用QRコードを表示">
-              <i class="fa-solid fa-qrcode"></i>
-            </button>
-          </td>
+          <td data-inv-col="shape">${APP_DATA.shapeRecords?.find(x => x.code === item.shape)?.name || '—'}</td>
           <td data-inv-col="edit">
             <button class="btn btn-primary btn-sm" style="white-space:nowrap;padding:3px 8px;" onclick="event.stopPropagation();openItemEdit('${item.code}')">
               <i class="fa-solid fa-pen-to-square"></i>
@@ -2354,6 +2359,8 @@ function openItemEdit(code) {
   populateProductSpecMasterSelect('ie-movement', 'movement', {
     emptyLabel: '-- 選択 --', selected: item.movement, extraCodes: [item.movement], labelMode: 'code-name',
   });
+  populateProductSpecMasterSelect('ie-shape', 'shape', { selected: item.shape, labelMode: 'name' });
+  populateProductSpecMasterSelect('ie-marking', 'marking', { selected: item.marking, labelMode: 'name' });
   populateBeltMaterialMasterSelect('ie-belt', { selected: item.belt || item.beltMaterial || '' });
 
   // スタッフ
@@ -2441,6 +2448,8 @@ async function saveItemEdit() {
     condition:     document.getElementById('ie-condition').value,
     material:      document.getElementById('ie-material').value,
     movement:      document.getElementById('ie-movement').value,
+    shape:         document.getElementById('ie-shape').value,
+    marking:       document.getElementById('ie-marking').value,
     belt:          document.getElementById('ie-belt').value,
     dial:          document.getElementById('ie-dial').value,
     purchasePrice: getPriceValue(document.getElementById('ie-purchasePrice')),
@@ -3255,6 +3264,8 @@ function initPurchaseForm() {
 
   populateProductSpecMasterSelect('pu-material', 'material', { emptyLabel: '-- 選択 --', labelMode: 'code-name' });
   populateProductSpecMasterSelect('pu-movement', 'movement', { emptyLabel: '-- 選択 --', labelMode: 'code-name' });
+  populateProductSpecMasterSelect('pu-shape', 'shape', { emptyLabel: '-- 選択 --', labelMode: 'name' });
+  populateProductSpecMasterSelect('pu-marking', 'marking', { emptyLabel: '-- 選択 --', labelMode: 'name' });
   populateBeltMaterialMasterSelect('pu-belt');
 
   populateConditionMasterSelect('pu-condition', {
@@ -3537,6 +3548,7 @@ async function savePurchase() {
         serialNumber: document.getElementById('pu-serial')?.value || '', productType: '腕時計',
         materialCode: document.getElementById('pu-material')?.value || '',
         movementCode: document.getElementById('pu-movement')?.value || '',
+        shapeCode: document.getElementById('pu-shape')?.value || '', markingCode: document.getElementById('pu-marking')?.value || '',
         conditionCode: document.getElementById('pu-condition')?.value || '', accessoryCodes,
         beltText: document.getElementById('pu-belt')?.value || '',
         dialText: document.getElementById('pu-dial')?.value || '',
@@ -4525,13 +4537,6 @@ function filterSlipList() {
     // フォールスルーして全データを収集（hasFilter チェックをスキップ）
   } else if (!_slipFilterState.executed) {
     // 未実行状態（ページ初期表示・タブ切替後）は白紙
-    renderSlipList(null);
-    return;
-  }
-
-  // フィルター未入力 & 全件表示でないなら白紙（通常の絞り込み時）
-  const hasFilter = from || to || party || status || keyword;
-  if (!_slipFilterState.showAll && !hasFilter) {
     renderSlipList(null);
     return;
   }
@@ -12697,6 +12702,8 @@ function refreshBuyerMasterConsumers(previousCode = '', nextCode = '') {
 const PRODUCT_SPEC_MASTER_STORAGE_KEY = 'inv_product_spec_master_v1';
 
 function _productSpecConfig(type) {
+  if (type === 'shape') return { key: 'shape', plural: 'shapeRecords', label: '形状', codePattern: /^SHP-[0-9]+$/ };
+  if (type === 'marking') return { key: 'marking', plural: 'markingRecords', label: 'マーキング', codePattern: /^MRK-[0-9]+$/ };
   return type === 'movement'
     ? { key: 'movement', plural: 'movements', label: '駆動方式', codePattern: /^D[0-9]+$/ }
     : { key: 'material', plural: 'materials', label: '素材', codePattern: /^M[0-9]+$/ };
@@ -12872,6 +12879,8 @@ const MASTER_TABS = [
   { key: 'staff',     icon: '<i class="fa-solid fa-user"></i>',           label: '仕入担当者',    data: () => APP_DATA.staffRecords || [] },
   { key: 'material',  icon: '<i class="fa-solid fa-gem"></i>',            label: '素材',          data: () => APP_DATA.materials },
   { key: 'movement',  icon: '<i class="fa-solid fa-gears"></i>',          label: '駆動方式',      data: () => APP_DATA.movements },
+  { key: 'shape',     icon: '<i class="fa-regular fa-clock"></i>',       label: '形状',          data: () => APP_DATA.shapeRecords || [] },
+  { key: 'marking',   icon: '<i class="fa-regular fa-heart"></i>',       label: 'マーキング',    data: () => APP_DATA.markingRecords || [] },
   { key: 'belt',      icon: '<i class="fa-solid fa-link"></i>',           label: 'ベルト素材',    data: () => APP_DATA.beltMaterialRecords || [] },
   { key: 'accessory', icon: '<i class="fa-solid fa-box"></i>',            label: '付属品',        data: () => APP_DATA.accessoryRecords || [] },
   { key: 'condition', icon: '<i class="fa-solid fa-star"></i>',           label: 'コンディション', data: () => APP_DATA.conditions },
@@ -13019,12 +13028,13 @@ function switchMasterTab(key) {
   } else {
     tableHtml = `
       <table class="data-table">
-        <thead><tr><th>コード</th><th>名称</th><th>操作</th></tr></thead>
+        <thead><tr><th>コード</th><th>${key === 'marking' ? '記号' : '名称'}</th>${key === 'marking' ? '<th>意味</th>' : ''}<th>操作</th></tr></thead>
         <tbody>
           ${data.map((d, idx) => `
             <tr>
               <td><code style="font-size:11px;">${_mEsc(d.code || '—')}</code></td>
               <td>${_mEsc(d.name || d)}</td>
+              ${key === 'marking' ? `<td>${_mEsc(d.meaning || '—')}</td>` : ''}
               <td><div style="display:flex;gap:4px;">
                 <button class="btn btn-outline btn-sm" onclick="showEditMasterModal('${key}',${idx})"><i class="fa-solid fa-pen"></i> 編集</button>
                 <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="showDeleteMasterModal('${key}',${idx})"><i class="fa-solid fa-trash"></i> 削除</button>
@@ -13110,6 +13120,8 @@ function _getMasterRawArray(key) {
     case 'material':  return APP_DATA.materials;
     case 'movement':  return APP_DATA.movements;
     case 'belt':      return APP_DATA.beltMaterialRecords || [];
+	case 'shape':     return APP_DATA.shapeRecords || [];
+	case 'marking':   return APP_DATA.markingRecords || [];
     case 'buyer':     return APP_DATA.buyers;
     case 'accessory': return APP_DATA.accessoryRecords || [];
     case 'condition': return APP_DATA.conditions;
@@ -13319,6 +13331,18 @@ function _getMasterFormDef(key) {
       applyEdit: (arr, idx, vals) => { arr[idx] = { ...arr[idx], code: arr[idx].code, name: vals.name }; },
       applyDelete: (arr, idx) => { arr.splice(idx, 1); },
     },
+	shape: {
+	  label: '形状', icon: '<i class="fa-regular fa-clock"></i>',
+	  fields: [{ id: 'code', label: '形状コード', type: 'text', required: true, readonly: true }, { id: 'name', label: '形状名', type: 'text', required: true, placeholder: '例: 腕時計' }],
+	  getValues: (arr, idx) => ({ ...arr[idx] }), applyNew: (arr, vals) => arr.push(vals),
+	  applyEdit: (arr, idx, vals) => { arr[idx] = { ...arr[idx], name: vals.name }; }, applyDelete: (arr, idx) => arr.splice(idx, 1),
+	},
+	marking: {
+	  label: 'マーキング', icon: '<i class="fa-regular fa-heart"></i>',
+	  fields: [{ id: 'code', label: 'マーキングコード', type: 'text', required: true, readonly: true }, { id: 'name', label: '記号', type: 'text', required: true, placeholder: '例: ♡' }, { id: 'meaning', label: '意味', type: 'text', required: false, placeholder: '例: ハート' }],
+	  getValues: (arr, idx) => ({ ...arr[idx] }), applyNew: (arr, vals) => arr.push(vals),
+	  applyEdit: (arr, idx, vals) => { arr[idx] = { ...arr[idx], name: vals.name, meaning: vals.meaning }; }, applyDelete: (arr, idx) => arr.splice(idx, 1),
+	},
     condition: {
       label: 'コンディション', icon: '<i class="fa-solid fa-star"></i>',
       fields: [
@@ -13435,6 +13459,8 @@ function showAddMasterModal(key) {
     material: { code: nextShortCode('M', APP_DATA.materials) },
     movement: { code: nextShortCode('D', APP_DATA.movements) },
     belt: { code: nextShortCode('BLT-', APP_DATA.beltMaterialRecords || []) },
+	shape: { code: nextShortCode('SHP-', APP_DATA.shapeRecords || []) },
+	marking: { code: nextShortCode('MRK-', APP_DATA.markingRecords || []) },
     supplier: { code: _nextTradeMasterCode('S', APP_DATA.suppliers || []) },
     buyer: { code: _nextTradeMasterCode('B', APP_DATA.buyers || []) },
   }[key] || {};
@@ -13601,12 +13627,12 @@ async function saveMasterEdit() {
     }
   }
 
-  if (key === 'belt' || key === 'dial') {
-    const label = key === 'belt' ? 'ベルト素材' : '文字盤';
-    const pattern = key === 'belt' ? /^BLT-[0-9]+$/ : /^DIA-[0-9]+$/;
+  if (key === 'belt' || key === 'dial' || key === 'shape' || key === 'marking') {
+    const label = key === 'belt' ? 'ベルト素材' : key === 'dial' ? '文字盤' : key === 'shape' ? '形状' : 'マーキング';
+    const pattern = key === 'belt' ? /^BLT-[0-9]+$/ : key === 'dial' ? /^DIA-[0-9]+$/ : key === 'shape' ? /^SHP-[0-9]+$/ : /^MRK-[0-9]+$/;
     vals.code = vals.code.toUpperCase();
     if (!pattern.test(vals.code)) {
-      showToast('error', `${label}コードを確認してください`, `${key === 'belt' ? 'BLT-001' : 'DIA-001'} の形式で自動採番されます`);
+      showToast('error', `${label}コードを確認してください`, `${key === 'belt' ? 'BLT-001' : key === 'dial' ? 'DIA-001' : key === 'shape' ? 'SHP-001' : 'MRK-001'} の形式で自動採番されます`);
       return;
     }
     if (mode === 'edit' && vals.code !== arr[idx].code) {

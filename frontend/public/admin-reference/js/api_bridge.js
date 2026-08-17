@@ -127,6 +127,8 @@
     assign('auctions', 'auctionRecords');
     assign('belt-materials', 'beltMaterialRecords');
     assign('dials', 'dialRecords');
+	assign('product-shapes', 'shapeRecords');
+	assign('markings', 'markingRecords');
   }
 
   function applyPartners(partners) {
@@ -239,6 +241,8 @@
       material: masterCode(masters.materials?.items, product.materialId),
       movement: masterCode(masters.movements?.items, product.movementId),
       condition: masterCode(masters.conditions?.items, product.conditionId) || product.condition,
+	  shape: masterCode(masters['product-shapes']?.items, product.shapeId),
+	  marking: masterCode(masters.markings?.items, product.markingId),
       accessories: String(product.accessories || '').split(',').map(value => value.trim()).filter(Boolean).map(code =>
         masters.accessories?.items?.find(item => item.code === code)?.name || code),
       belt: product.beltText || '', dial: product.dialText || '', braceletQty: product.braceletQuantity || null,
@@ -435,7 +439,7 @@
     state.user = me.user;
     if (typeof setSession === 'function') setSession(sessionPayload(me));
 
-    const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials'];
+    const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials', 'product-shapes', 'markings'];
     const masterResults = {};
     await Promise.all(masterKeys.map(async key => { masterResults[key] = await optional(`/masters/${key}`); }));
     const [products, partners, users, staff, purchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, settings, company, rates, dashboard] = await Promise.all([
@@ -739,12 +743,12 @@
 
   async function saveMasterRecord(key, current, values, mode) {
     const masterKinds = { brand: 'brands', material: 'materials', movement: 'movements',
-      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials' };
+      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials', shape: 'product-shapes', marking: 'markings' };
     const kind = masterKinds[key];
     if (kind) {
       const result = mode === 'add'
-        ? await request(`/masters/${kind}`, { method: 'POST', body: JSON.stringify({ code: values.code, name: values.name }) })
-        : await request(`/masters/${kind}/${encodeURIComponent(current.id)}`, { method: 'PATCH', body: JSON.stringify({ name: values.name }) });
+        ? await request(`/masters/${kind}`, { method: 'POST', body: JSON.stringify({ code: values.code, name: values.name, meaning: values.meaning || '' }) })
+        : await request(`/masters/${kind}/${encodeURIComponent(current.id)}`, { method: 'PATCH', body: JSON.stringify({ name: values.name, meaning: values.meaning || '' }) });
       await hydrateAdmin();
       return { record: result };
     }
@@ -787,7 +791,7 @@
 
   async function deactivateMasterRecord(key, current) {
     const masterKinds = { brand: 'brands', material: 'materials', movement: 'movements',
-      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials' };
+      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials', shape: 'product-shapes', marking: 'markings' };
     const kind = masterKinds[key];
     if (kind) {
       await request(`/masters/${kind}/${encodeURIComponent(current.id)}`, {
@@ -910,7 +914,7 @@
         sku: line.sku || '',
         brandCode: resolvedBrandCode,
         modelNumber: detail.model || '', referenceNumber: detail.ref || '', serialNumber: detail.serial || '',
-        productType: 'watch', materialCode: detail.material || '', movementCode: detail.movement || '',
+        productType: '', shapeCode: detail.shape || '', markingCode: detail.marking || '', materialCode: detail.material || '', movementCode: detail.movement || '',
         conditionCode: detail.condition || '', accessoryCodes,
         beltText: detail.belt || '', dialText: detail.dial || '', braceletQuantity: detail.braceletQty || null,
         unitCostMinor: Math.round(Number(line.purchasePrice) || 0), costCurrency: purchaseCurrency,
@@ -1042,6 +1046,7 @@
     const result = await request(`/products/${encodeURIComponent(item._id)}`, { method: 'PATCH', body: JSON.stringify({
       brandCode, modelNumber: values.model || '', referenceNumber: values.ref || '', serialNumber: values.serial || '',
       materialCode: values.material || '', movementCode: values.movement || '', conditionCode: values.condition || '',
+	  shapeCode: values.shape || '', markingCode: values.marking || '',
       supplierCode: values.supplier || '', staffCode, purchaseDate: values.purchaseDate,
       costAmountMinor: Math.round(Number(values.purchasePrice) || 0), costCurrency: 'JPY',
       baseSalePriceMinor: Math.round(Number(values.salePrice) || 0), baseSaleCurrency: 'USD',

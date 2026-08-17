@@ -36,6 +36,8 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 		ReferenceNumber       string   `json:"referenceNumber"`
 		SerialNumber          string   `json:"serialNumber"`
 		ProductType           string   `json:"productType"`
+		ShapeCode             string   `json:"shapeCode"`
+		MarkingCode           string   `json:"markingCode"`
 		MaterialCode          string   `json:"materialCode"`
 		MovementCode          string   `json:"movementCode"`
 		ConditionCode         string   `json:"conditionCode"`
@@ -75,7 +77,7 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 		OrganizationID: user.OrganizationID, ActorUserID: user.ID, SupplierCode: input.SupplierCode,
 		StaffCode: input.StaffCode, PurchaseDate: input.PurchaseDate, SKU: input.SKU, BrandCode: input.BrandCode,
 		ModelNumber: input.ModelNumber, ReferenceNumber: input.ReferenceNumber, SerialNumber: input.SerialNumber,
-		ProductType: input.ProductType, MaterialCode: input.MaterialCode, MovementCode: input.MovementCode,
+		ProductType: input.ProductType, ShapeCode: input.ShapeCode, MarkingCode: input.MarkingCode, MaterialCode: input.MaterialCode, MovementCode: input.MovementCode,
 		ConditionCode: input.ConditionCode, AccessoryCodes: input.AccessoryCodes, CostAmountMinor: input.CostAmountMinor,
 		BeltText: input.BeltText, DialText: input.DialText, BraceletQuantity: input.BraceletQuantity,
 		CostCurrency: input.CostCurrency, BaseSalePriceMinor: input.BaseSalePriceMinor,

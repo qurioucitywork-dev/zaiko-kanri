@@ -19,6 +19,8 @@ type ProductUpdateInput struct {
 	MaterialCode          *string   `json:"materialCode"`
 	MovementCode          *string   `json:"movementCode"`
 	ConditionCode         *string   `json:"conditionCode"`
+	ShapeCode             *string   `json:"shapeCode"`
+	MarkingCode           *string   `json:"markingCode"`
 	SupplierCode          *string   `json:"supplierCode"`
 	StaffCode             *string   `json:"staffCode"`
 	PurchaseDate          *string   `json:"purchaseDate"`
@@ -72,6 +74,8 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 			{input.MaterialCode, "materials", "material_id"},
 			{input.MovementCode, "movements", "movement_id"},
 			{input.ConditionCode, "product_conditions", "condition_id"},
+			{input.ShapeCode, "product_shapes", "shape_id"},
+			{input.MarkingCode, "markings", "marking_id"},
 		} {
 			if field.value == nil {
 				continue
@@ -83,6 +87,9 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 			updates[field.column] = nullIfEmpty(id)
 			if field.table == "product_conditions" {
 				updates["condition_text"] = name
+			}
+			if field.table == "product_shapes" && name != "" {
+				updates["product_type"] = name
 			}
 		}
 		if input.SupplierCode != nil {

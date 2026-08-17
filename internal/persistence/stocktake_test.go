@@ -68,7 +68,7 @@ func TestStocktakeSnapshotScanAndPersistence(t *testing.T) {
 	}
 	session, err = repo.SaveStocktake(ctx, "org", session.ID, map[string]struct{ Reason, Note string }{
 		missing.ID: {Reason: "紛失", Note: "保管場所を確認中"},
-	})
+	}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

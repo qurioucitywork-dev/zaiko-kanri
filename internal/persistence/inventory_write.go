@@ -31,6 +31,8 @@ type SingleProductInput struct {
 	ReferenceNumber       string
 	SerialNumber          string
 	ProductType           string
+	ShapeCode             string
+	MarkingCode           string
 	MaterialCode          string
 	MovementCode          string
 	ConditionCode         string
@@ -82,6 +84,14 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			return err
 		}
 		conditionID, conditionName, err := lookupCatalog(tx, "product_conditions", input.OrganizationID, input.ConditionCode, false)
+		if err != nil {
+			return err
+		}
+		shapeID, shapeName, err := lookupCatalog(tx, "product_shapes", input.OrganizationID, input.ShapeCode, false)
+		if err != nil {
+			return err
+		}
+		markingID, _, err := lookupCatalog(tx, "markings", input.OrganizationID, input.MarkingCode, false)
 		if err != nil {
 			return err
 		}
@@ -142,7 +152,10 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 		}
 		productType := strings.TrimSpace(input.ProductType)
 		if productType == "" {
-			productType = "腕時計"
+			productType = shapeName
+			if productType == "" {
+				productType = "腕時計"
+			}
 		}
 		convertedCostJPY, fxRateID, fxRateScaled, fxScale, err := purchaseCostSnapshot(
 			tx, input.OrganizationID, input.CostAmountMinor, 1, input.CostCurrency)
@@ -152,12 +165,12 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 		if err := tx.Exec(`
 			INSERT INTO purchase_slip_lines(
 				id,purchase_slip_id,line_number,quantity,unit_cost_minor,cost_currency,base_sale_price_minor,
-				base_sale_currency,brand_id,material_id,movement_id,condition_id,brand_text,model_number,
+				base_sale_currency,brand_id,material_id,movement_id,condition_id,shape_id,marking_id,brand_text,model_number,
 				reference_number,serial_number,product_type,sku,generated_product_count,converted_total_jpy,
 				fx_rate_snapshot_id,fx_rate_scaled,fx_scale,created_at
-			) VALUES(?,?,1,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)`,
+			) VALUES(?,?,1,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)`,
 			lineID, purchaseID, input.CostAmountMinor, input.CostCurrency, input.BaseSalePriceMinor,
-			input.BaseSaleCurrency, brandID, nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID),
+			input.BaseSaleCurrency, brandID, nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), nullIfEmpty(shapeID), nullIfEmpty(markingID),
 			brandName, strings.TrimSpace(input.ModelNumber), strings.TrimSpace(input.ReferenceNumber),
 			strings.TrimSpace(input.SerialNumber), productType, strings.TrimSpace(input.SKU), convertedCostJPY,
 			fxRateID, fxRateScaled, fxScale, now).Error; err != nil {
@@ -166,13 +179,13 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 		if err := tx.Exec(`
 			INSERT INTO products(
 				id,organization_id,product_code,sku,brand,brand_id,model_number,reference_number,serial_number,product_type,
-				material_id,movement_id,condition_id,supplier_id,supplier_role_id,purchase_staff_profile_id,purchase_slip_line_id,
+				material_id,movement_id,condition_id,shape_id,marking_id,supplier_id,supplier_role_id,purchase_staff_profile_id,purchase_slip_line_id,
 				purchase_date,cost_amount_minor,cost_currency,base_sale_price_minor,base_sale_currency,inventory_status,
 				publication_status,condition_text,accessories,belt_text,dial_text,bracelet_quantity,notes,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'in_stock','private',?,?,?,?,?,?,?,?)`,
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'in_stock','private',?,?,?,?,?,?,?,?)`,
 			productID, input.OrganizationID, productCode, strings.TrimSpace(input.SKU), brandName, brandID,
 			strings.TrimSpace(input.ModelNumber), strings.TrimSpace(input.ReferenceNumber), strings.TrimSpace(input.SerialNumber), productType,
-			nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), supplierRoleID, supplierRoleID, staffID, lineID,
+			nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), nullIfEmpty(shapeID), nullIfEmpty(markingID), supplierRoleID, supplierRoleID, staffID, lineID,
 			date, input.CostAmountMinor, input.CostCurrency, input.BaseSalePriceMinor, input.BaseSaleCurrency,
 			conditionName, strings.Join(accessoryNames, ", "), strings.TrimSpace(input.BeltText), strings.TrimSpace(input.DialText),
 			input.BraceletQuantity, strings.TrimSpace(input.Notes), now, now).Error; err != nil {

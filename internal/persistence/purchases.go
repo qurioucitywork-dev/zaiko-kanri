@@ -34,6 +34,8 @@ type PurchaseLineInput struct {
 	ReferenceNumber       string   `json:"referenceNumber"`
 	SerialNumber          string   `json:"serialNumber"`
 	ProductType           string   `json:"productType"`
+	ShapeCode             string   `json:"shapeCode"`
+	MarkingCode           string   `json:"markingCode"`
 	MaterialCode          string   `json:"materialCode"`
 	MovementCode          string   `json:"movementCode"`
 	ConditionCode         string   `json:"conditionCode"`
@@ -77,6 +79,8 @@ type PurchaseLineRecord struct {
 	ReferenceNumber       string     `json:"referenceNumber"`
 	SerialNumber          string     `json:"serialNumber"`
 	ProductType           string     `json:"productType"`
+	ShapeCode             string     `json:"shapeCode"`
+	MarkingCode           string     `json:"markingCode"`
 	SKU                   string     `json:"sku"`
 	AccessoryCodes        []string   `gorm:"-" json:"accessoryCodes"`
 	BeltText              string     `json:"beltText"`
@@ -197,7 +201,7 @@ func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseI
 		Select(`l.id,l.line_number,l.quantity,l.unit_cost_minor,l.cost_currency,l.base_sale_price_minor,
 			l.base_sale_currency,COALESCE(b.code,'') AS brand_code,l.brand_text AS brand_name,
 			COALESCE(m.code,'') AS material_code,COALESCE(mv.code,'') AS movement_code,
-			COALESCE(c.code,'') AS condition_code,l.model_number,l.reference_number,l.serial_number,
+			COALESCE(c.code,'') AS condition_code,COALESCE(ps.code,'') AS shape_code,COALESCE(mk.code,'') AS marking_code,l.model_number,l.reference_number,l.serial_number,
 			l.product_type,l.sku,l.accessory_codes::TEXT AS accessory_codes_json,l.belt_text,l.dial_text,
 			l.bracelet_quantity,l.notes,l.generated_product_count,l.converted_total_jpy,
 			COALESCE(l.fx_rate_snapshot_id,'') AS fx_rate_snapshot_id,COALESCE(l.fx_rate_scaled,0) AS fx_rate_scaled,
@@ -206,6 +210,8 @@ func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseI
 		Joins("LEFT JOIN materials m ON m.id=l.material_id").
 		Joins("LEFT JOIN movements mv ON mv.id=l.movement_id").
 		Joins("LEFT JOIN product_conditions c ON c.id=l.condition_id").
+		Joins("LEFT JOIN product_shapes ps ON ps.id=l.shape_id").
+		Joins("LEFT JOIN markings mk ON mk.id=l.marking_id").
 		Joins("LEFT JOIN exchange_rate_snapshots fx ON fx.id=l.fx_rate_snapshot_id").
 		Where("l.purchase_slip_id=?", purchaseID).Order("l.line_number").Scan(&rows).Error; err != nil {
 		return PurchaseSlipRecord{}, err
@@ -300,6 +306,14 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 			if err != nil {
 				return err
 			}
+			shapeID, shapeName, err := lookupCatalog(tx, "product_shapes", input.OrganizationID, line.ShapeCode, false)
+			if err != nil {
+				return err
+			}
+			markingID, _, err := lookupCatalog(tx, "markings", input.OrganizationID, line.MarkingCode, false)
+			if err != nil {
+				return err
+			}
 			_, _, err = lookupAccessories(tx, input.OrganizationID, line.AccessoryCodes)
 			if err != nil {
 				return err
@@ -311,7 +325,10 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 			}
 			productType := strings.TrimSpace(line.ProductType)
 			if productType == "" {
-				productType = "腕時計"
+				productType = shapeName
+				if productType == "" {
+					productType = "腕時計"
+				}
 			}
 			costCurrency := strings.ToUpper(strings.TrimSpace(line.CostCurrency))
 			convertedCostJPY, fxRateID, fxRateScaled, fxScale, err := purchaseCostSnapshot(
@@ -321,13 +338,13 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 			}
 			if err := tx.Exec(`INSERT INTO purchase_slip_lines(
 				id,purchase_slip_id,line_number,quantity,unit_cost_minor,cost_currency,base_sale_price_minor,
-				base_sale_currency,brand_id,material_id,movement_id,condition_id,brand_text,model_number,
+				base_sale_currency,brand_id,material_id,movement_id,condition_id,shape_id,marking_id,brand_text,model_number,
 				reference_number,serial_number,product_type,sku,accessory_codes,notes,belt_text,dial_text,bracelet_quantity,duplicate_serial_reason,
 				generated_product_count,converted_total_jpy,fx_rate_snapshot_id,fx_rate_scaled,fx_scale,created_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSONB),?,?,?,?,?,0,?,?,?,?,?)`, lineID, purchaseID, index+1,
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSONB),?,?,?,?,?,0,?,?,?,?,?)`, lineID, purchaseID, index+1,
 				line.Quantity, line.UnitCostMinor, costCurrency,
 				line.BaseSalePriceMinor, strings.ToUpper(strings.TrimSpace(line.BaseSaleCurrency)), nullIfEmpty(brandID),
-				nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), brandName,
+				nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), nullIfEmpty(shapeID), nullIfEmpty(markingID), brandName,
 				strings.TrimSpace(line.ModelNumber), strings.TrimSpace(line.ReferenceNumber), serial, productType,
 				strings.TrimSpace(line.SKU), string(accessoryJSON), strings.TrimSpace(line.Notes), strings.TrimSpace(line.BeltText),
 				strings.TrimSpace(line.DialText), line.BraceletQuantity,
@@ -367,17 +384,17 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 			return ErrPurchaseState
 		}
 		type line struct {
-			ID, SKU, BrandID, BrandText, ModelNumber, ReferenceNumber, SerialNumber, ProductType string
-			MaterialID, MovementID, ConditionID, CostCurrency, BaseSaleCurrency                  string
-			AccessoryCodesJSON, Notes, BeltText, DialText, DuplicateSerialReason                 string
-			BraceletQuantity                                                                     *int
-			Quantity                                                                             int
-			UnitCostMinor, BaseSalePriceMinor                                                    int64
+			ID, SKU, BrandID, BrandText, ModelNumber, ReferenceNumber, SerialNumber, ProductType    string
+			MaterialID, MovementID, ConditionID, ShapeID, MarkingID, CostCurrency, BaseSaleCurrency string
+			AccessoryCodesJSON, Notes, BeltText, DialText, DuplicateSerialReason                    string
+			BraceletQuantity                                                                        *int
+			Quantity                                                                                int
+			UnitCostMinor, BaseSalePriceMinor                                                       int64
 		}
 		var lines []line
 		if err := tx.Raw(`SELECT id,sku,COALESCE(brand_id,'') AS brand_id,brand_text,model_number,reference_number,serial_number,product_type,
 			COALESCE(material_id,'') AS material_id,COALESCE(movement_id,'') AS movement_id,
-			COALESCE(condition_id,'') AS condition_id,cost_currency,base_sale_currency,
+			COALESCE(condition_id,'') AS condition_id,COALESCE(shape_id,'') AS shape_id,COALESCE(marking_id,'') AS marking_id,cost_currency,base_sale_currency,
 			accessory_codes::TEXT AS accessory_codes_json,notes,belt_text,dial_text,bracelet_quantity,
 			duplicate_serial_reason,quantity,
 			unit_cost_minor,base_sale_price_minor
@@ -413,14 +430,14 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 				productCode := slip.PurchaseDate.Format("20060102") + fmt.Sprintf("%03d", sequence)
 				if err := tx.Exec(`INSERT INTO products(
 					id,organization_id,product_code,sku,brand,brand_id,model_number,reference_number,serial_number,
-					product_type,material_id,movement_id,condition_id,supplier_id,supplier_role_id,
+					product_type,material_id,movement_id,condition_id,shape_id,marking_id,supplier_id,supplier_role_id,
 					purchase_staff_profile_id,purchase_slip_line_id,purchase_date,cost_amount_minor,cost_currency,
 					base_sale_price_minor,base_sale_currency,inventory_status,publication_status,condition_text,
 					accessories,belt_text,dial_text,bracelet_quantity,notes,created_at,updated_at
-				) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'in_stock','private',?,?,?,?,?,?,?,?)`,
+				) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'in_stock','private',?,?,?,?,?,?,?,?)`,
 					productID, organizationID, productCode, item.SKU, item.BrandText, nullIfEmpty(item.BrandID), item.ModelNumber,
 					item.ReferenceNumber, item.SerialNumber, item.ProductType, nullIfEmpty(item.MaterialID),
-					nullIfEmpty(item.MovementID), nullIfEmpty(item.ConditionID), slip.SupplierRoleID,
+					nullIfEmpty(item.MovementID), nullIfEmpty(item.ConditionID), nullIfEmpty(item.ShapeID), nullIfEmpty(item.MarkingID), slip.SupplierRoleID,
 					slip.SupplierRoleID, nullIfEmpty(slip.PurchaseStaffProfileID), item.ID, slip.PurchaseDate,
 					item.UnitCostMinor, item.CostCurrency, item.BaseSalePriceMinor, item.BaseSaleCurrency,
 					conditionName, strings.Join(accessoryNames, ", "), item.BeltText, item.DialText,

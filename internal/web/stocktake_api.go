@@ -73,7 +73,8 @@ func (s *Server) apiScanStocktake(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiSaveStocktake(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
 	var input struct {
-		Lines []struct{ ID, Reason, Note string } `json:"lines"`
+		Lines       []struct{ ID, Reason, Note string } `json:"lines"`
+		ResolvedIDs []string                            `json:"resolvedIds"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_stocktake", "入力内容を確認してください。")
@@ -85,7 +86,7 @@ func (s *Server) apiSaveStocktake(w http.ResponseWriter, r *http.Request) {
 			updates[line.ID] = struct{ Reason, Note string }{line.Reason, line.Note}
 		}
 	}
-	session, err := s.repository.SaveStocktake(r.Context(), user.OrganizationID, r.PathValue("id"), updates)
+	session, err := s.repository.SaveStocktake(r.Context(), user.OrganizationID, r.PathValue("id"), updates, input.ResolvedIDs)
 	if errors.Is(err, persistence.ErrStocktakeNotFound) {
 		writeAPIError(w, http.StatusNotFound, "stocktake_not_found", "進行中の棚卸がありません。")
 		return
