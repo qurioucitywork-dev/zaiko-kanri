@@ -39,7 +39,12 @@ func migrationCatalog() ([]schemaMigration, error) {
 			return nil, fmt.Errorf("read PostgreSQL migration %s: %w", path, readErr)
 		}
 		version := strings.TrimSuffix(entry.Name(), ".up.sql")
-		sum := sha256.Sum256(contents)
+		// Git may check text files out with CRLF on Windows. Migration identity
+		// must remain stable across operating systems, so hash canonical LF bytes
+		// while executing the checked-out SQL unchanged.
+		canonicalContents := strings.ReplaceAll(string(contents), "\r\n", "\n")
+		canonicalContents = strings.ReplaceAll(canonicalContents, "\r", "\n")
+		sum := sha256.Sum256([]byte(canonicalContents))
 		migrations = append(migrations, schemaMigration{
 			Version: version, Path: path, SQL: string(contents), Checksum: hex.EncodeToString(sum[:]),
 		})
