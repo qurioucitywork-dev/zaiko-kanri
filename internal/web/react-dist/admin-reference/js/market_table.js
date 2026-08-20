@@ -142,7 +142,7 @@ function _marketPopulateAuctionEditSelect(selectedCode = '', selectedName = '') 
   const selected = _marketAuctionRecord(selectedCode) || _marketAuctionRecord(selectedName);
   select.innerHTML = '<option value="">-- オークションを選択 --</option>' +
     _marketAuctionRecords().map(record =>
-      `<option value="${_marketEscapeAttr(record.code)}">${_marketEscape(record.code)} — ${_marketEscape(record.name)}</option>`).join('');
+      `<option value="${_marketEscapeAttr(record.code)}">${_marketEscape(record.name)}</option>`).join('');
   select.value = selected?.code || '';
 }
 
@@ -552,7 +552,7 @@ function marketImportCsvText(text, fileName = 'CSVファイル') {
   const headers = rows[0].map(_marketNormalizeHeader);
   const columns = _marketResolveColumns(headers);
   if (columns.brand < 0 || columns.model < 0 || columns.auctionCode < 0) {
-    showToast('error', 'CSV取込エラー', '「ブランド」「モデル名」「オークションコード」列が必要です');
+    showToast('error', 'CSV取込エラー', '「ブランドコード」「モデル」「オークションコード」列が必要です');
     return { imported: 0, skipped: rows.length - 1 };
   }
 
@@ -562,7 +562,9 @@ function marketImportCsvText(text, fileName = 'CSVファイル') {
 
   rows.slice(1).forEach(values => {
     const value = key => columns[key] >= 0 ? String(values[columns[key]] ?? '').trim() : '';
-    const brand = value('brand');
+    const brandValue = value('brand');
+    const brandRecord = (APP_DATA.brandRecords || []).find(record => record.code === brandValue || record.name === brandValue);
+    const brand = brandRecord?.name || '';
     const model = value('model');
     const auction = _marketAuctionRecord(value('auctionCode'));
     if (!brand || !model || !auction) {
@@ -572,19 +574,19 @@ function marketImportCsvText(text, fileName = 'CSVファイル') {
 
     stagedRows.push({
       importDate: _marketNormalizeDate(value('importDate')) || today,
-      brandCode: typeof getBrandCodeByName === 'function' ? getBrandCodeByName(brand) : '',
+      brandCode: brandRecord?.code || (typeof getBrandCodeByName === 'function' ? getBrandCodeByName(brand) : ''),
       brand,
       model,
       ref: value('ref'),
-      material: value('material'),
-      movement: value('movement'),
-      condition: value('condition'),
+      material: _marketResolveProductSpec('material', value('material')),
+      movement: _marketResolveProductSpec('movement', value('movement')),
+      condition: typeof resolveConditionCode === 'function' ? resolveConditionCode(value('condition')) : value('condition'),
       auctionCode: auction.code,
       auctionName: auction.name,
       marketPriceJpy: Math.max(0, _marketParseNumber(value('marketPriceJpy')))
         || Math.round(Math.max(0, _marketParseNumber(value('marketPriceUsdLegacy'), true)) * getMarketUsdRate()),
       sku: value('sku'),
-      accessories: _marketParseAccessories(value('accessories')),
+      accessories: _marketParseAccessories(value('accessories')).map(code => (APP_DATA.accessoryRecords || []).find(record => record.code === code || record.name === code)?.name || code),
       note: value('note'),
       sourceFile: fileName,
     });
@@ -731,17 +733,17 @@ function marketParseCSV(text) {
 function _marketResolveColumns(headers) {
   const aliases = {
     importDate: ['オークション開催日', '開催日', '取り込み日付', '取込日付', '取込日', 'importdate', 'import_date'],
-    brand: ['ブランド', 'brand'],
-    model: ['モデル名', 'モデル', 'model'],
+    brand: ['ブランドコード', 'ブランド', 'brand'],
+    model: ['モデル', 'モデル名', 'model'],
     ref: ['型番', 'ref', 'reference'],
-    material: ['素材', 'material'],
-    movement: ['駆動方式', 'ムーブメント', 'movement'],
-    condition: ['コンディション', '状態', 'condition'],
+    material: ['素材コード', '素材', 'material'],
+    movement: ['駆動方式コード', '駆動方式', 'ムーブメント', 'movement'],
+    condition: ['コンディションコード', 'コンディション', '状態', 'condition'],
     auctionCode: ['オークションコード', 'auctioncode', 'auction_code'],
     marketPriceJpy: ['落札価格jpy', '落札価格', '相場価格jpy', 'marketpricejpy', 'market_price_jpy'],
     marketPriceUsdLegacy: ['相場価格usd', 'marketpriceusd', 'market_price_usd'],
     sku: ['sku'],
-    accessories: ['付属品', 'accessories'],
+    accessories: ['付属品コード', '付属品', 'accessories'],
     note: ['備考', 'notes', 'note'],
   };
   return Object.fromEntries(Object.entries(aliases).map(([key, candidates]) => [
@@ -817,11 +819,11 @@ function _marketShowImportSummary(fileName, imported, skipped) {
 function marketExportCSV() {
   const rows = _marketFilteredRows();
   const output = [
-    ['オークション開催日', 'ブランド', 'モデル名', '型番', '素材', '駆動方式', 'コンディション', 'オークションコード', '落札価格（JPY）', 'SKU', '付属品', '備考'],
+    ['オークション開催日', 'ブランドコード', 'モデル', '型番', '素材コード', '駆動方式コード', 'コンディションコード', 'オークションコード', '落札価格（JPY）', 'SKU', '付属品コード', '備考'],
     ...rows.map(row => [
-      row.importDate, row.brand, row.model, row.ref || '',
-      getProductSpecName('material', row.material), getProductSpecName('movement', row.movement), getConditionName(row.condition),
-      row.auctionCode || '', row.marketPriceJpy || 0, row.sku || '', (row.accessories || []).join('・'), row.note || '',
+      row.importDate, row.brandCode || getBrandCodeByName(row.brand), row.model, row.ref || '',
+      row.material || '', row.movement || '', row.condition || '',
+      row.auctionCode || '', row.marketPriceJpy || 0, row.sku || '', (row.accessories || []).map(name => (APP_DATA.accessoryRecords || []).find(record => record.name === name || record.code === name)?.code || name).join('・'), row.note || '',
     ]),
   ];
   const csv = output.map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
@@ -833,22 +835,26 @@ function marketExportCSV() {
 }
 
 function marketDownloadTemplate() {
-  const header = ['オークション開催日', 'ブランド', 'モデル名', '型番', '素材', '駆動方式', 'コンディション', 'オークションコード', '落札価格（JPY）', 'SKU', '付属品', '備考'];
+  const header = ['オークション開催日', 'ブランドコード', 'モデル', '型番', '素材コード', '駆動方式コード', 'コンディションコード', 'オークションコード', '落札価格（JPY）', 'SKU', '付属品コード', '備考'];
   const auction = (APP_DATA.auctionRecords || [])[0] || {};
   const brand = (APP_DATA.brandRecords || [])[0] || {};
+  const material = (getProductSpecMasterRecords('material') || [])[0] || {};
+  const movement = (getProductSpecMasterRecords('movement') || [])[0] || {};
+  const condition = (getConditionMasterRecords() || [])[0] || {};
+  const accessory = (APP_DATA.accessoryRecords || [])[0] || {};
   const sample = [
-    _marketToday(), brand.name || 'ロレックス', 'サブマリーナ', '116610LN',
-    'ステンレス', '自動巻き', '美品', auction.code || '', 1200000,
-    `MARKET-SAMPLE-${_marketToday().replace(/-/g, '')}-001`, 'BOX・GUARANTEE',
+    _marketToday(), brand.code || '', 'サブマリーナ', '116610LN',
+    material.code || '', movement.code || '', condition.code || '', auction.code || '', 1200000,
+    `MARKET-SAMPLE-${_marketToday().replace(/-/g, '')}-001`, accessory.code || '',
     '入力例：必要に応じて変更してください',
   ];
   const rows = [header, sample];
   const csv = rows.map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
   const anchor = document.createElement('a');
   anchor.href = URL.createObjectURL(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }));
-  anchor.download = '相場表_取込テンプレート.csv';
+  anchor.download = '相場表テンプレート.csv';
   anchor.click();
-  showToast('info', 'テンプレート', '入力例1行付きの相場CSV取込テンプレートをダウンロードしました');
+  showToast('info', '相場表テンプレート', '入力例1行付きの相場表テンプレートをダウンロードしました');
   return { filename: anchor.download, rows };
 }
 

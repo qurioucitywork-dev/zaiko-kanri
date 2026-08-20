@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -23,6 +24,7 @@ func (s *Server) apiShipmentTrackingUpdate(w http.ResponseWriter, r *http.Reques
 	var input struct {
 		Carrier        string `json:"carrier"`
 		TrackingNumber string `json:"trackingNumber"`
+		Confirmed      bool   `json:"confirmed"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	decoder.DisallowUnknownFields()
@@ -47,6 +49,7 @@ func (s *Server) apiReturnTrackingUpdate(w http.ResponseWriter, r *http.Request)
 	var input struct {
 		Carrier        string `json:"carrier"`
 		TrackingNumber string `json:"trackingNumber"`
+		Confirmed      bool   `json:"confirmed"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	decoder.DisallowUnknownFields()
@@ -55,12 +58,16 @@ func (s *Server) apiReturnTrackingUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	user, _ := currentUser(r.Context())
-	record, err := s.repository.UpdateReturnTracking(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, input.Carrier, input.TrackingNumber)
+	record, err := s.repository.UpdateReturnTracking(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, input.Carrier, input.TrackingNumber, input.Confirmed)
 	if err != nil {
+		if errors.Is(err, persistence.ErrReturnState) {
+			writeAPIError(w, http.StatusConflict, "invalid_return_state", "配送番号を入力してから確定してください。")
+			return
+		}
 		writeAPIError(w, http.StatusNotFound, "return_not_found", "返品伝票が見つかりません。")
 		return
 	}
-	after, _ := json.Marshal(map[string]string{"carrier": record.Carrier, "trackingNumber": record.TrackingNumber})
+	after, _ := json.Marshal(map[string]any{"carrier": record.Carrier, "trackingNumber": record.TrackingNumber, "confirmed": input.Confirmed})
 	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: user.OrganizationID, ActorUserID: user.ID,
 		TargetType: "return_slip", TargetID: record.ID, Action: "return.tracking.updated", AfterJSON: string(after),
 		Result: "success", IPAddress: clientIP(r), UserAgent: r.UserAgent(), RequestID: requestID(r.Context())})
@@ -153,7 +160,7 @@ func (s *Server) csvExportData(r *http.Request, organizationID, kind string) (cs
 				break
 			}
 		}
-		return csvExportData{DocumentType: kind, Headers: []string{"商品コード", "SKU", "ブランド", "モデル", "リファレンス", "シリアル", "仕入日", "仕入先", "原価", "原価通貨", "売価", "売価通貨", "在庫状態"}, Rows: rows}, nil
+		return csvExportData{DocumentType: kind, Headers: []string{"管理番号", "SKU", "ブランド", "モデル", "型番", "シリアル", "仕入日", "仕入先", "原価", "原価通貨", "売価", "売価通貨", "ステータス"}, Rows: rows}, nil
 	case "market":
 		items, err := s.repository.MarketPrices(r.Context(), organizationID, 1000)
 		if err != nil {
@@ -165,7 +172,7 @@ func (s *Server) csvExportData(r *http.Request, organizationID, kind string) (cs
 				item.ReferenceNumber, item.SerialNumber, item.ConditionCode, strconv.FormatInt(item.PurchasePriceMinor, 10),
 				item.PurchaseCurrency, strconv.FormatInt(item.MarketPriceMinor, 10), item.MarketCurrency, item.SupplierCode, item.Source})
 		}
-		return csvExportData{DocumentType: "market", Headers: []string{"取込日", "ブランドコード", "ブランド", "モデル", "リファレンス", "シリアル", "コンディション", "仕入価格", "仕入通貨", "相場価格", "相場通貨", "仕入先コード", "取込元"}, Rows: rows}, nil
+		return csvExportData{DocumentType: "market", Headers: []string{"取込日", "ブランドコード", "ブランド", "モデル", "型番", "シリアル", "コンディションコード", "原価", "原価通貨", "相場価格", "相場通貨", "仕入先コード", "取込元"}, Rows: rows}, nil
 	case "purchases":
 		items, err := s.repository.PurchaseSlips(r.Context(), organizationID, 500)
 		if err != nil {
@@ -190,7 +197,7 @@ func (s *Server) csvExportData(r *http.Request, organizationID, kind string) (cs
 			rows = append(rows, []string{item.SlipNumber, string(item.PurchaseDate), item.SupplierCode, item.SupplierName, item.StaffCode,
 				strconv.Itoa(units), strconv.FormatInt(totalJPY, 10), strconv.FormatInt(totalUSD, 10), item.Status, item.Notes})
 		}
-		return csvExportData{DocumentType: "purchase", Headers: []string{"仕入伝票番号", "仕入日", "仕入先コード", "仕入先", "担当者コード", "点数", "合計JPY", "合計USD", "状態", "備考"}, Rows: rows}, nil
+		return csvExportData{DocumentType: "purchase", Headers: []string{"仕入伝票番号", "仕入日", "仕入先コード", "仕入先", "バイヤーコード", "点数", "合計JPY", "合計USD", "ステータス", "備考"}, Rows: rows}, nil
 	case "sales":
 		items, err := s.repository.SaleSlips(r.Context(), organizationID, 500)
 		if err != nil {

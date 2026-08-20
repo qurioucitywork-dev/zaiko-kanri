@@ -5,13 +5,13 @@
 </div>
 <div class="detail-grid">
   <section class="card">
-    <div class="card-header"><div><h3>商品情報</h3><p>商品コードは変更できません</p></div></div>
+    <div class="card-header"><div><h3>商品情報</h3><p>管理番号は変更できません</p></div></div>
     <dl class="data-grid">
-      <div><dt>商品コード</dt><dd>{{.Product.ProductCode}}</dd></div><div><dt>SKU</dt><dd>{{if .Product.SKU}}{{.Product.SKU}}{{else}}—{{end}}</dd></div>
+      <div><dt>管理番号</dt><dd>{{.Product.ProductCode}}</dd></div><div><dt>SKU</dt><dd>{{if .Product.SKU}}{{.Product.SKU}}{{else}}—{{end}}</dd></div>
       <div><dt>ブランド</dt><dd>{{.Product.Brand}}</dd></div><div><dt>型番</dt><dd>{{if .Product.ModelNumber}}{{.Product.ModelNumber}}{{else}}—{{end}}</dd></div>
-      <div><dt>シリアル番号</dt><dd>{{if .Product.SerialNumber}}{{.Product.SerialNumber}}{{else}}未入力{{end}}</dd></div><div><dt>商品種別</dt><dd>{{.Product.ProductType}}</dd></div>
+      <div><dt>シリアル</dt><dd>{{if .Product.SerialNumber}}{{.Product.SerialNumber}}{{else}}未入力{{end}}</dd></div><div><dt>形状</dt><dd>{{.Product.ProductType}}</dd></div>
       <div><dt>仕入先</dt><dd>{{.Product.SupplierName}}</dd></div><div><dt>仕入日</dt><dd>{{.Product.PurchaseDate}}</dd></div>
-      <div><dt>原価</dt><dd class="money">{{formatMoney .Product.CostAmountMinor .Product.CostCurrency}}</dd></div><div><dt>売価（USD）</dt><dd class="money">{{formatMoney .Product.BaseSalePriceMinor "USD"}}</dd></div>
+      <div><dt>原価</dt><dd class="money">{{formatMoney .Product.CostAmountMinor .Product.CostCurrency}}</dd></div><div><dt>売価</dt><dd class="money">{{formatMoney .Product.BaseSalePriceMinor "USD"}}</dd></div>
       <div><dt>参考換算価格</dt><dd class="money">{{if .Product.RateAvailable}}{{formatMoney .Product.ReferencePriceMinor .Product.ReferenceCurrency}}{{else}}為替未登録{{end}}</dd></div>
       <div><dt>参考粗利・利益率</dt><dd class="money">{{if .Product.RateAvailable}}{{formatMoney .Product.GrossProfitMinor .Product.GrossProfitCurrency}} / {{formatPercent .Product.MarginBasisPoints}}{{else}}—{{end}}</dd></div>
       <div><dt>換算レート日時</dt><dd>{{if .Product.RateAvailable}}{{formatTime .Product.ExchangeRateObservedAt}}{{else}}—{{end}}</dd></div>

@@ -73,6 +73,36 @@ func (s *Server) apiShipmentConfirm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, record)
 }
 
+func (s *Server) apiShipmentReturnScan(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Code string `json:"code"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.Code) == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_product_code", "商品管理番号を読み取ってください。")
+		return
+	}
+	user, _ := currentUser(r.Context())
+	result, err := s.repository.ReturnShipmentProduct(r.Context(), user.OrganizationID, r.PathValue("id"), input.Code, user.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, persistence.ErrShipmentNotFound):
+			writeAPIError(w, http.StatusNotFound, "shipment_not_found", "出荷伝票が見つかりません。")
+		case errors.Is(err, persistence.ErrShipmentProductNotFound):
+			writeAPIError(w, http.StatusNotFound, "shipment_product_not_found", "この出荷伝票に含まれない商品です。")
+		case errors.Is(err, persistence.ErrShipmentState):
+			writeAPIError(w, http.StatusConflict, "shipment_not_confirmed", "確定済みの出荷伝票だけ返却処理できます。")
+		case errors.Is(err, persistence.ErrShipmentReturnState):
+			writeAPIError(w, http.StatusConflict, "shipment_return_state", "この商品は出荷済ではないため在庫中へ変更できません。")
+		default:
+			writeAPIError(w, http.StatusInternalServerError, "shipment_return_failed", "返却処理を完了できませんでした。")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func writeShipmentError(w http.ResponseWriter, err error) {
 	status, code, message := http.StatusConflict, "shipment_failed", "出荷伝票を処理できませんでした。"
 	switch {

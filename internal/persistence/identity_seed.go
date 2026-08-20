@@ -37,12 +37,12 @@ type previewIdentitySeed struct {
 }
 
 var previewIdentitySeeds = []previewIdentitySeed{
-	{ID: "usr_admin", Username: "admin", Display: "管理者", Email: "admin@watch-premium.example", Role: database.RoleAdmin, StaffID: "staff_admin", StaffCode: "STF-000"},
-	{ID: "usr_worker", Username: "worker", Display: "山本 太郎", Email: "worker@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker", StaffCode: "STF-001"},
-	{ID: "usr_worker2", Username: "worker2", Display: "佐藤 花子", Email: "worker2@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker2", StaffCode: "STF-002"},
-	{ID: "usr_worker3", Username: "worker3", Display: "鈴木 一郎", Email: "worker3@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker3", StaffCode: "STF-003"},
-	{ID: "usr_worker4", Username: "worker4", Display: "田中 美香", Email: "worker4@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker4", StaffCode: "STF-004"},
-	{ID: "usr_worker5", Username: "worker5", Display: "伊藤 健司", Email: "worker5@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker5", StaffCode: "STF-005"},
+	{ID: "usr_admin", Username: "admin", Display: "管理者", Email: "admin@watch-premium.example", Role: database.RoleAdmin, StaffID: "staff_admin", StaffCode: "BUY-000"},
+	{ID: "usr_worker", Username: "worker", Display: "山本 太郎", Email: "worker@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker", StaffCode: "BUY-001"},
+	{ID: "usr_worker2", Username: "worker2", Display: "佐藤 花子", Email: "worker2@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker2", StaffCode: "BUY-002"},
+	{ID: "usr_worker3", Username: "worker3", Display: "鈴木 一郎", Email: "worker3@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker3", StaffCode: "BUY-003"},
+	{ID: "usr_worker4", Username: "worker4", Display: "田中 美香", Email: "worker4@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker4", StaffCode: "BUY-004"},
+	{ID: "usr_worker5", Username: "worker5", Display: "伊藤 健司", Email: "worker5@watch-premium.example", Role: database.RoleWorker, StaffID: "staff_worker5", StaffCode: "BUY-005"},
 }
 
 // SeedPreviewIdentity seeds only development identities. It never overwrites

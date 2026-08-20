@@ -6,6 +6,19 @@
     purchasing: '仕入中', in_stock: '在庫中', reserved: '取置中', return_pending: '仕入返品中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '仕入返品済',
     draft: '未処理', confirmed: '処理済', pending: '未対応', approved: '承認済', rejected: '却下', returned: '差戻し',
   };
+  const approvalActionLabel = value => ({
+    'purchase.confirm': '仕入伝票の確定',
+    'purchase.confirmed': '仕入伝票の確定',
+    'sales.confirm': '売上伝票の確定',
+    'sales.confirmed': '売上伝票の確定',
+    'shipment.confirm': '出荷伝票の確定',
+    'shipment.confirmed': '出荷伝票の確定',
+    'consignment.confirm': '委託伝票の確定',
+    'purchase.update': '仕入伝票の修正',
+    'sales.update': '売上伝票の修正',
+    'shipment.update': '出荷伝票の修正',
+    'stocktake.mismatch': '棚卸不一致の確定',
+  })[String(value || '')] || String(value || '承認申請');
 
   async function request(path, options = {}) {
     const headers = { Accept: 'application/json', ...(options.headers || {}) };
@@ -273,8 +286,14 @@
       staff: staffName, staffCode: record.staffCode, note: record.notes,
       rawStatus: record.status, status: statusLabel[record.status] || record.status,
       purchaseTaxMode: record.purchaseTaxMode === 'overseas' ? 'overseas' : 'domestic',
+      purchaseCurrency: record.purchaseTaxMode === 'overseas'
+        ? (record.lines?.[0]?.costCurrency || 'USD') : 'JPY',
+      registrationPurchaseCurrency: record.lines?.[0]?.costCurrency || 'JPY',
+      registrationPurchaseJpyRate: Number(record.lines?.[0]?.fxRateScaled) > 0 && Number(record.lines?.[0]?.fxScale) > 0
+        ? Number(record.lines[0].fxRateScaled) / Number(record.lines[0].fxScale) : 1,
       taxRateBasisPoints: record.purchaseTaxMode === 'overseas' ? 0 : 1000,
       registeredAt: record.createdAt, issuedAt: record.issuedAt || null, issuedBy: record.issuedBy || null,
+      paidAt: record.paidAt || null, paidBy: record.paidBy || null,
       revisions: [], apiManaged: true,
       lines: (record.lines || []).map(line => {
         // purchaseSlipLineId is the stable DB link. Keep the original line snapshot for audit,
@@ -324,10 +343,13 @@
     const rate = Number(record.fxRateScaled) > 0 && Number(record.fxScale) > 0
       ? Number(record.fxRateScaled) / Number(record.fxScale)
       : Number(state.latestRate || 155);
-    const inputCurrency = record.displayCurrency === 'JPY' ? 'JPY' : 'USD';
-    const toUSD = amount => inputCurrency === 'JPY'
-      ? Math.round((Number(amount) || 0) / rate)
-      : Number(amount) || 0;
+    const inputCurrency = ['JPY', 'USD', 'HKD', 'EUR'].includes(record.displayCurrency) ? record.displayCurrency : 'USD';
+    const toUSD = amount => {
+      const value = Number(amount) || 0;
+      if (inputCurrency === 'USD') return value;
+      if (inputCurrency === 'JPY') return Math.round(value / rate);
+      return Math.round(value * rate / Number(state.latestRate || 155));
+    };
     const sourceMatch = String(record.notes || '').match(/^(出荷|委託)伝票:\s*(\S+)/mu);
     const sourceDocumentType = sourceMatch?.[1] === '出荷'
       ? 'shipment'
@@ -340,6 +362,7 @@
       fxRateSnapshotId: record.fxRateSnapshotId || '',
       fxRateScaled: Number(record.fxRateScaled) || 0, fxScale: Number(record.fxScale) || 0,
       issuedAt: record.issuedAt || null, issuedBy: record.issuedBy || null,
+      paidAt: record.paidAt || null, paidBy: record.paidBy || null,
       taxFree: record.taxMode === 'tax_exempt' && inputCurrency !== 'USD',
       total: toUSD(record.subtotalMinor), taxAmount: toUSD(record.taxAmountMinor),
       grandTotal: toUSD(record.totalMinor), totalJpy: record.convertedTotalJpy,
@@ -355,9 +378,7 @@
         ref: line.referenceNumber || '', serial: line.serialNumber || '',
         accessories: String(line.accessories || '').split(',').map(value => value.trim()).filter(Boolean).map(code =>
           APP_DATA.accessoryRecords?.find(item => item.code === code)?.name || code),
-        salePrice: line.saleCurrency === 'JPY'
-          ? Math.round((Number(line.unitPriceMinor) || 0) / rate)
-          : Number(line.unitPriceMinor) || 0,
+        salePrice: toUSD(line.unitPriceMinor),
         inputAmount: Number(line.unitPriceMinor) || 0,
         inputCurrency: line.saleCurrency,
         currency: line.saleCurrency, subtotal: line.subtotalMinor,
@@ -442,14 +463,23 @@
     const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials', 'product-shapes', 'markings'];
     const masterResults = {};
     await Promise.all(masterKeys.map(async key => { masterResults[key] = await optional(`/masters/${key}`); }));
-    const [products, partners, users, staff, purchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, settings, company, rates, dashboard] = await Promise.all([
+    const [products, partners, users, staff, purchases, deletedPurchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, settings, company, rates, dashboard] = await Promise.all([
       fetchAllPages('/products?includeCancelled=true'), optional('/partners?includeInactive=true'),
-      optional('/users?includeInactive=true'), optional('/purchase-staff'), fetchAllPages('/purchases'), optional('/market-prices?limit=1000'),
+      optional('/users?includeInactive=true'), optional('/purchase-staff'), fetchAllPages('/purchases'), fetchAllPages('/purchases-deleted'), optional('/market-prices?limit=1000'),
       optional('/boxes'), optional('/purchase-requests'), optional('/notifications?limit=500'), optional('/approvals'),
       optional('/sales?limit=500'), optional('/shipments?limit=500'), optional('/consignments?limit=500'), optional('/returns?limit=500'),
       optional('/settings'), optional('/company'), optional('/exchange-rates?limit=100'), optional('/dashboard?months=24'),
     ]);
-    const latestRate = Number(rates?.items?.[0]?.rate || 155);
+    // The endpoint mixes currencies in timestamp order. Selecting items[0] as
+    // USD made a newly updated HKD rate (19.80) appear as USD/JPY.
+    const latestRatesByCurrency = {};
+    for (const record of rates?.items || []) {
+      const code = String(record.baseCurrency || '').toUpperCase();
+      if (!['USD', 'HKD', 'EUR'].includes(code) || latestRatesByCurrency[code]) continue;
+      const rate = Number(record.rate);
+      if (Number.isFinite(rate) && rate > 0) latestRatesByCurrency[code] = rate;
+    }
+    const latestRate = Number(latestRatesByCurrency.USD || 155);
     state.latestRate = latestRate;
     applyMasters(masterResults);
     applyPartners(partners?.items);
@@ -484,6 +514,18 @@
       throw error;
     }
     APP_DATA.purchaseSlips = purchaseViews;
+    APP_DATA.deletedPurchaseSlips = (deletedPurchases?.items || []).map(record => ({
+      _id: record.id,
+      id: record.slipNumber,
+      type: '仕入伝票',
+      date: record.purchaseDate,
+      supplier: record.supplierCode,
+      supplierName: record.supplierName,
+      staff: (users?.items || staff?.items || []).find(user => user.staffCode === record.staffCode)?.displayName || record.staffCode,
+      deletedAt: record.cancelledAt || record.updatedAt,
+      reason: record.cancelReason || '伝票一覧から削除',
+      archived: true,
+    }));
     APP_DATA.sales = saleDetails.map(saleView);
     APP_DATA.shipments = shipmentDetails.map(shipmentView);
     APP_DATA.consignments = consignmentDetails.map(consignmentView);
@@ -497,12 +539,15 @@
       const items = (record.lines || []).map(line => {
         const inventory = inventoryByCode.get(line.productCode) || {};
         const saleLine = sourceSaleLines.get(line.productCode) || {};
-        const purchaseReturnStatus = record.trackingNumber ? '処理済' : '処理中';
+        const trackingConfirmed = Boolean(record.trackingConfirmedAt);
+        const purchaseReturnStatus = trackingConfirmed ? '処理済' : '処理中';
         return { code: line.productCode, brand: line.brand, model: line.modelNumber,
           ref: inventory.ref || '', serial: inventory.serial || '',
           salePrice: Number(saleLine.unitPriceMinor || inventory.salePrice || 0),
           purchasePrice: line.costCurrency === 'USD' ? Math.round(line.costAmountMinor * latestRate) : line.costAmountMinor,
           trackingNo: record.trackingNumber || '',
+          trackingConfirmed,
+          trackingConfirmedAt: record.trackingConfirmedAt || '',
           status: record.operationType === 'purchase_return'
             ? purchaseReturnStatus
             : (record.status === 'confirmed' ? '処理済' : (pendingApprovalTargetIds.has(record.id) ? '承認待ち' : '未処理')) };
@@ -511,9 +556,11 @@
         _id: record.id, id: record.slipNumber, date: record.transactionDate, buyer: record.buyerCode,
         supplier: record.supplierCode, slipId: record.sourcePurchaseSlipNumber || sourceSale?.slipNumber || '',
         carrier: record.carrier || '', trackingNo: record.trackingNumber || '',
+        trackingConfirmed: Boolean(record.trackingConfirmedAt),
+        trackingConfirmedAt: record.trackingConfirmedAt || '',
         status: pendingApprovalTargetIds.has(record.id) ? '承認待ち' : (statusLabel[record.status] || record.status),
         processingStatus: record.operationType === 'purchase_return'
-          ? (record.trackingNumber ? '処理済' : '処理中')
+          ? (record.trackingConfirmedAt ? '処理済' : '処理中')
           : '',
         reason: record.reason, note: record.notes, createdBy: 'DB連動', createdAt: record.createdAt,
         returnType: record.operationType, total: items.reduce((sum, item) => sum + item.salePrice, 0),
@@ -560,7 +607,7 @@
       };
     });
     APP_DATA.approvalRequests = (approvals?.items || []).map(record => ({ id: record.id, buyerId: record.requestedBy,
-      buyerName: record.requesterName, type: record.approvalType, typeLabel: record.requestedAction,
+      buyerName: record.requesterName, type: record.approvalType, typeLabel: approvalActionLabel(record.requestedAction || record.approvalType),
       detail: { targetType: record.targetType, targetId: record.targetId }, status: record.status,
       note: record.decisionNote, createdAt: record.requestedAt, apiManaged: true }));
     APP_DATA.notifications = (notifications?.items || []).map(record => ({ id: record.id, toUserId: state.user.id,
@@ -580,7 +627,17 @@
         representative: company.representativeName, bankName: bank.bankName || '', branchName: bank.branchName || '',
         accountType: bank.accountType || '', accountNumber: bank.accountNumber || '', accountHolder: bank.accountHolder || '' };
     }
-    APP_DATA.fxRates = [{ code: 'USD', name: 'USドル', rate: latestRate }, ...(APP_DATA.fxRates || []).filter(item => item.code !== 'USD')];
+    const existingRates = new Map((APP_DATA.fxRates || []).map(item => [item.code, item]));
+    APP_DATA.fxRateHistory = (rates?.items || []).map(record => ({
+      id: record.id, code: record.baseCurrency, rate: Number(record.rate),
+      observedAt: record.observedAt, createdAt: record.createdAt,
+      provider: record.provider || '手動入力',
+    }));
+    APP_DATA.fxRates = ['USD', 'HKD', 'EUR'].map(code => ({
+      ...(existingRates.get(code) || {}), code,
+      name: ({ USD: 'USドル', HKD: '香港ドル', EUR: 'ユーロ' })[code],
+      rate: Number(latestRatesByCurrency[code] || existingRates.get(code)?.rate || (code === 'USD' ? 155 : 1)),
+    }));
     APP_DATA.apiDashboard = dashboard?.dashboard || null;
     state.hydrated = true;
     document.documentElement.dataset.apiConnected = 'true';
@@ -710,9 +767,8 @@
   }
 
   async function saveExchangeRate(code, rate) {
-    if (code !== 'USD') throw new Error('現在DBで使用する基準通貨はUSD/JPYです。');
     const result = await request('/exchange-rates', { method: 'POST', body: JSON.stringify({
-      rate: String(rate), provider: '管理画面手入力', observedAt: new Date().toISOString(),
+      baseCurrency: code, rate: String(rate), provider: '管理画面手入力', observedAt: new Date().toISOString(),
     }) });
     state.latestRate = Number(result.rate || rate);
     await hydrateAdmin();
@@ -883,6 +939,26 @@
     return { record, approval };
   }
 
+  async function returnShipmentProduct(shipment, code) {
+    const shipmentID = shipment?._id || shipment?.id;
+    if (!shipmentID) throw new Error('返却対象の出荷伝票が見つかりません。');
+    const result = await request(`/shipments/${encodeURIComponent(shipmentID)}/return-scan`, {
+      method: 'POST', body: JSON.stringify({ code }),
+    });
+    await hydrateAdmin();
+    return result;
+  }
+
+  async function returnConsignmentProduct(consignment, code) {
+    const consignmentID = consignment?._id || consignment?.id;
+    if (!consignmentID) throw new Error('返却対象の委託伝票が見つかりません。');
+    const result = await request(`/consignments/${encodeURIComponent(consignmentID)}/return-scan`, {
+      method: 'POST', body: JSON.stringify({ code }),
+    });
+    await hydrateAdmin();
+    return result;
+  }
+
   async function saveConsignment(payload) {
     const record = await request('/consignments', { method: 'POST', body: JSON.stringify(payload) });
     await hydrateAdmin();
@@ -901,7 +977,8 @@
 
   async function savePurchaseSlip(slip, requireApproval) {
     const staffCode = APP_DATA.staffRecords?.find(item => item.name === slip.staff)?.code || slip.staff || '';
-    const purchaseCurrency = slip.purchaseTaxMode === 'overseas' ? 'USD' : 'JPY';
+    const purchaseCurrency = slip.purchaseTaxMode === 'overseas'
+      ? (String(slip.purchaseCurrency || '').toUpperCase() === 'HKD' ? 'HKD' : 'USD') : 'JPY';
     const lines = (slip.lines || []).map(line => {
       const detail = line.productDetail || {};
       const resolvedBrandCode = typeof getBrandCodeByName === 'function'
@@ -949,12 +1026,35 @@
     return record;
   }
 
+  async function markPurchasePaid(slip) {
+    const purchaseID = slip?._id || slip?.id;
+    if (!purchaseID) throw new Error('入金確認対象の仕入伝票が見つかりません。');
+    const record = await request(`/purchases/${encodeURIComponent(purchaseID)}/paid`, { method:'POST', body:'{}' });
+    await hydrateAdmin();
+    return record;
+  }
+
+  async function deletePurchaseSlip(slip) {
+    const purchaseID = slip?._id || slip?.id;
+    if (!purchaseID) throw new Error('削除対象の仕入伝票が見つかりません。');
+    await request(`/purchases/${encodeURIComponent(purchaseID)}`, { method:'DELETE' });
+    await hydrateAdmin();
+  }
+
   async function issueSaleSlip(slip) {
     const saleID = slip?._id || slip?.id;
     if (!saleID) throw new Error('発行対象の売上伝票が見つかりません。');
     const record = await request(`/sales/${encodeURIComponent(saleID)}/issue`, {
       method: 'POST', body: '{}',
     });
+    await hydrateAdmin();
+    return record;
+  }
+
+  async function markSalePaid(slip) {
+    const saleID = slip?._id || slip?.id;
+    if (!saleID) throw new Error('入金確認対象の売上伝票が見つかりません。');
+    const record = await request(`/sales/${encodeURIComponent(saleID)}/paid`, { method:'POST', body:'{}' });
     await hydrateAdmin();
     return record;
   }
@@ -1025,9 +1125,9 @@
     return result;
   }
 
-  async function updateReturnTracking(id, carrier, trackingNumber) {
+  async function updateReturnTracking(id, carrier, trackingNumber, confirmed = false) {
     const result = await request(`/returns/${encodeURIComponent(id)}/tracking`, {
-      method: 'PATCH', body: JSON.stringify({ carrier: carrier || '', trackingNumber: trackingNumber || '' }),
+      method: 'PATCH', body: JSON.stringify({ carrier: carrier || '', trackingNumber: trackingNumber || '', confirmed: Boolean(confirmed) }),
     });
     await hydrateAdmin();
     return result;
@@ -1044,6 +1144,7 @@
       APP_DATA.accessoryRecords?.find(record => record.name === name)?.code || name).filter(Boolean);
     const statusCode = Object.entries(statusLabel).find(([, label]) => label === values.status)?.[0] || values.status;
     const result = await request(`/products/${encodeURIComponent(item._id)}`, { method: 'PATCH', body: JSON.stringify({
+      productCode: values.code || item.code,
       brandCode, modelNumber: values.model || '', referenceNumber: values.ref || '', serialNumber: values.serial || '',
       materialCode: values.material || '', movementCode: values.movement || '', conditionCode: values.condition || '',
 	  shapeCode: values.shape || '', markingCode: values.marking || '',
@@ -1127,6 +1228,6 @@
     changePassword, setUserActive, queuePasswordReset, saveCompany, saveDashboardSettings,
     getAdminAccessCode, rotateAdminAccessCode, verifyAdminAccessCode, createUser,
     createGuestWithPartner, savePartner, saveMasterRecord, deactivateMasterRecord, createSingleProduct, appendProductImages,
-    createApproval, decideApproval, saveSale, saveShipment, saveConsignment, savePurchaseSlip, issuePurchaseSlip, issueSaleSlip, issueConsignmentSlip, saveBoxes, importMarketCSV, saveReturn,
+    createApproval, decideApproval, saveSale, saveShipment, returnShipmentProduct, saveConsignment, returnConsignmentProduct, savePurchaseSlip, issuePurchaseSlip, markPurchasePaid, deletePurchaseSlip, issueSaleSlip, markSalePaid, issueConsignmentSlip, saveBoxes, importMarketCSV, saveReturn,
     updateProduct, updateProductImages, updateMarketPrice, updateShipmentTracking, updateReturnTracking, recordDocumentEvent };
 })();

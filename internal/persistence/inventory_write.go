@@ -17,11 +17,13 @@ var (
 	ErrMasterCodeNotFound    = errors.New("master code not found")
 	ErrDuplicateSerialReason = errors.New("duplicate serial reason is required")
 	ErrPurchaseDateMismatch  = errors.New("product purchase date must match its purchase slip")
+	ErrDuplicateProductCode  = errors.New("duplicate product code")
 )
 
 type SingleProductInput struct {
 	OrganizationID        string
 	ActorUserID           string
+	ProductCode           string
 	SupplierCode          string
 	StaffCode             string
 	PurchaseDate          string
@@ -116,9 +118,23 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 		if err != nil {
 			return err
 		}
-		productSequence, err := nextProductSequence(tx, input.OrganizationID, date, now)
-		if err != nil {
-			return err
+		productCode := strings.TrimSpace(input.ProductCode)
+		if productCode == "" {
+			productSequence, err := nextProductSequence(tx, input.OrganizationID, date, now)
+			if err != nil {
+				return err
+			}
+			productCode = date.Format("20060102") + fmt.Sprintf("%03d", productSequence)
+		} else {
+			var duplicates int64
+			if err := tx.Table("products").Where(
+				"organization_id = ? AND UPPER(BTRIM(product_code)) = ?",
+				input.OrganizationID, strings.ToUpper(productCode)).Count(&duplicates).Error; err != nil {
+				return err
+			}
+			if duplicates > 0 {
+				return ErrDuplicateProductCode
+			}
 		}
 		purchaseID, err := database.NewID("pur")
 		if err != nil {
@@ -139,7 +155,6 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 		result.PurchaseSlipID = purchaseID
 		result.PurchaseSlipNumber = fmt.Sprintf("PI-%04d-%04d", date.Year(), documentSequence)
 		createdProductID = productID
-		productCode := date.Format("20060102") + fmt.Sprintf("%03d", productSequence)
 
 		if err := tx.Exec(`
 			INSERT INTO purchase_slips(
@@ -189,6 +204,9 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			date, input.CostAmountMinor, input.CostCurrency, input.BaseSalePriceMinor, input.BaseSaleCurrency,
 			conditionName, strings.Join(accessoryNames, ", "), strings.TrimSpace(input.BeltText), strings.TrimSpace(input.DialText),
 			input.BraceletQuantity, strings.TrimSpace(input.Notes), now, now).Error; err != nil {
+			if isProductCodeUniqueViolation(err) {
+				return ErrDuplicateProductCode
+			}
 			return fmt.Errorf("insert product: %w", err)
 		}
 		for _, accessoryID := range accessoryIDs {
@@ -314,6 +332,7 @@ func isCatalogLookupTable(table string) bool {
 	return map[string]bool{
 		"brands": true, "materials": true, "movements": true,
 		"product_conditions": true, "auction_houses": true,
+		"product_shapes": true, "markings": true,
 	}[table]
 }
 
@@ -344,4 +363,13 @@ func nullIfEmpty(value string) any {
 		return nil
 	}
 	return value
+}
+
+func isProductCodeUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "ux_products_organization_product_code_normalized") ||
+		strings.Contains(message, "products_org_product_code_key")
 }

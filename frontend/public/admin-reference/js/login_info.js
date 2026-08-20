@@ -76,8 +76,7 @@ function populateBuyerMasterSelect(id, options = {}) {
   const records = getBuyerMasterRecords(options.extraCodes || []);
   const emptyOption = emptyLabel === null ? '' : `<option value="">${loginInfoEscapeHtml(emptyLabel)}</option>`;
   select.innerHTML = emptyOption + records.map(buyer => {
-    const label = options.labelMode === 'name' ? buyer.name : `${buyer.code} — ${buyer.name}`;
-    return `<option value="${loginInfoEscapeHtml(buyer.code)}">${loginInfoEscapeHtml(label)}</option>`;
+    return `<option value="${loginInfoEscapeHtml(buyer.code)}">${loginInfoEscapeHtml(buyer.name)}</option>`;
   }).join('');
   if (records.some(buyer => buyer.code === selected)) select.value = selected;
   else if (emptyLabel !== null) select.value = '';

@@ -79,6 +79,8 @@ type SaleSlipRecord struct {
 	ConfirmedAt        *time.Time           `json:"confirmedAt,omitempty"`
 	IssuedAt           *time.Time           `json:"issuedAt,omitempty"`
 	IssuedBy           string               `json:"issuedBy,omitempty"`
+	PaidAt             *time.Time           `json:"paidAt,omitempty"`
+	PaidBy             string               `json:"paidBy,omitempty"`
 	CreatedAt          time.Time            `json:"createdAt"`
 	UpdatedAt          time.Time            `json:"updatedAt"`
 	Lines              []SaleLineRecord     `gorm:"-" json:"lines,omitempty"`
@@ -124,7 +126,7 @@ func convertCurrency(amount int64, from, to string, rate fxSnapshot) (int64, err
 	return 0, ErrExchangeRate
 }
 
-// purchaseCostSnapshot fixes the latest master USD/JPY rate in the same
+// purchaseCostSnapshot fixes the latest master foreign-currency/JPY rate in the same
 // transaction that registers the purchase. The persisted line snapshot is the
 // accounting source of truth and issuance or reissuance must never replace it.
 func purchaseCostSnapshot(tx *gorm.DB, organizationID string, unitAmount int64, quantity int, currency string) (int64, any, any, any, error) {
@@ -132,11 +134,14 @@ func purchaseCostSnapshot(tx *gorm.DB, organizationID string, unitAmount int64, 
 	if currency == "JPY" {
 		return total, nil, nil, nil, nil
 	}
-	rate, err := latestFX(tx, organizationID, "USD")
+	if currency != "USD" && currency != "HKD" {
+		return 0, nil, nil, nil, ErrExchangeRate
+	}
+	rate, err := latestFX(tx, organizationID, currency)
 	if err != nil {
 		return 0, nil, nil, nil, err
 	}
-	converted, err := convertCurrency(total, "USD", "JPY", rate)
+	converted, err := convertCurrency(total, currency, "JPY", rate)
 	if err != nil {
 		return 0, nil, nil, nil, err
 	}
@@ -323,7 +328,7 @@ func (r *Repository) SaleSlips(ctx context.Context, organizationID string, limit
 			COALESCE(SUM(l.total_minor),0) AS total_minor,COALESCE(SUM(l.converted_total_jpy),0) AS converted_total_jpy,
 			COALESCE(MAX(l.fx_rate_snapshot_id),'') AS fx_rate_snapshot_id,
 			COALESCE(MAX(l.fx_rate_scaled),0) AS fx_rate_scaled,COALESCE(MAX(l.fx_scale),0) AS fx_scale,
-			s.confirmed_at,s.issued_at,s.issued_by,s.created_at,s.updated_at`).
+			s.confirmed_at,s.issued_at,s.issued_by,s.paid_at,COALESCE(s.paid_by,'') AS paid_by,s.created_at,s.updated_at`).
 		Joins("JOIN partner_roles br ON br.id=s.buyer_role_id").Joins("JOIN business_partners bp ON bp.id=br.partner_id").
 		Joins("LEFT JOIN sales_lines l ON l.sales_slip_id=s.id").Where("s.organization_id=?", organizationID).
 		Group("s.id,br.role_code,bp.legal_name").Order("s.sale_date DESC,s.slip_number DESC").Limit(limit).Scan(&records).Error
@@ -339,7 +344,7 @@ func (r *Repository) SaleSlip(ctx context.Context, organizationID, saleID string
 			COALESCE(SUM(l.total_minor),0) AS total_minor,COALESCE(SUM(l.converted_total_jpy),0) AS converted_total_jpy,
 			COALESCE(MAX(l.fx_rate_snapshot_id),'') AS fx_rate_snapshot_id,
 			COALESCE(MAX(l.fx_rate_scaled),0) AS fx_rate_scaled,COALESCE(MAX(l.fx_scale),0) AS fx_scale,
-			s.confirmed_at,s.issued_at,s.issued_by,s.created_at,s.updated_at`).
+			s.confirmed_at,s.issued_at,s.issued_by,s.paid_at,COALESCE(s.paid_by,'') AS paid_by,s.created_at,s.updated_at`).
 		Joins("JOIN partner_roles br ON br.id=s.buyer_role_id").Joins("JOIN business_partners bp ON bp.id=br.partner_id").
 		Joins("LEFT JOIN sales_lines l ON l.sales_slip_id=s.id").Where("s.organization_id=? AND s.id=?", organizationID, saleID).
 		Group("s.id,br.role_code,bp.legal_name").Take(&record)
@@ -367,6 +372,21 @@ func (r *Repository) IssueSale(ctx context.Context, organizationID, saleID, acto
 	now := time.Now().UTC()
 	result := r.db.WithContext(ctx).Exec(`UPDATE sales_slips
 		SET issued_at=?,issued_by=?,updated_at=?
+		WHERE organization_id=? AND id=?`, now, actorUserID, now, organizationID, saleID)
+	if result.Error != nil {
+		return SaleSlipRecord{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return SaleSlipRecord{}, ErrSaleNotFound
+	}
+	return r.SaleSlip(ctx, organizationID, saleID)
+}
+
+// MarkSalePaid records the first payment confirmation timestamp and operator.
+func (r *Repository) MarkSalePaid(ctx context.Context, organizationID, saleID, actorUserID string) (SaleSlipRecord, error) {
+	now := time.Now().UTC()
+	result := r.db.WithContext(ctx).Exec(`UPDATE sales_slips
+		SET paid_at=COALESCE(paid_at,?),paid_by=COALESCE(paid_by,?),updated_at=?
 		WHERE organization_id=? AND id=?`, now, actorUserID, now, organizationID, saleID)
 	if result.Error != nil {
 		return SaleSlipRecord{}, result.Error

@@ -118,6 +118,20 @@ func (s *Server) apiSaleIssue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, record)
 }
 
+func (s *Server) apiSalePaid(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	record, err := s.repository.MarkSalePaid(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
+	if errors.Is(err, persistence.ErrSaleNotFound) {
+		writeAPIError(w, http.StatusNotFound, "sale_not_found", "売上伝票が見つかりません。")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "sale_payment_failed", "入金確認を保存できませんでした。")
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
 func writeSaleError(w http.ResponseWriter, err error) {
 	status, code, message := http.StatusConflict, "sale_failed", "売上伝票を処理できませんでした。"
 	switch {

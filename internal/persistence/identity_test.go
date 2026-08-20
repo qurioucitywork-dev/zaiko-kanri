@@ -18,11 +18,11 @@ func TestValidJSONObject(t *testing.T) {
 
 func TestPreviewIdentitySeedsFiveWorkersWithStableStaffCodes(t *testing.T) {
 	expected := map[string]string{
-		"worker":  "STF-001",
-		"worker2": "STF-002",
-		"worker3": "STF-003",
-		"worker4": "STF-004",
-		"worker5": "STF-005",
+		"worker":  "BUY-001",
+		"worker2": "BUY-002",
+		"worker3": "BUY-003",
+		"worker4": "BUY-004",
+		"worker5": "BUY-005",
 	}
 	workers := 0
 	usernames := map[string]bool{}

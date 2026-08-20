@@ -182,7 +182,7 @@ func TestRESTCSVExportCreatesDocumentHistory(t *testing.T) {
 		t.Fatalf("csv content disposition=%q", disposition)
 	}
 	body := exportRecorder.Body.Bytes()
-	if len(body) < 3 || body[0] != 0xEF || body[1] != 0xBB || body[2] != 0xBF || !strings.Contains(string(body), "商品コード") {
+	if len(body) < 3 || body[0] != 0xEF || body[1] != 0xBB || body[2] != 0xBF || !strings.Contains(string(body), "管理番号") {
 		t.Fatalf("csv body is missing UTF-8 BOM or headers: %q", string(body))
 	}
 

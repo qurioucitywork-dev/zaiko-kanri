@@ -217,19 +217,38 @@ function _inventoryTagCurrentItem() {
 
 function _inventoryTagAccessories(item) {
   return Array.isArray(item?.accessories) && item.accessories.length
-    ? item.accessories.join('、')
+    ? item.accessories.map(value => _inventoryTagMasterName(value, APP_DATA.accessoryRecords || [])).join('、')
     : 'なし';
+}
+
+function _inventoryTagMasterName(value, records) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  const record = (records || []).find(candidate =>
+    String(candidate?.code || '').trim() === text
+    || String(candidate?.id || '').trim() === text
+    || String(candidate?.name || '').trim() === text);
+  return String(record?.name || text).trim();
+}
+
+function _inventoryTagValue(value, fallback = '—') {
+  const text = String(value ?? '').trim();
+  return text || fallback;
 }
 
 function renderInventoryProductTagPanel(item) {
   const qr = createInventoryQrSvg(item, { cellSize: 5, margin: 10 });
   const code = _inventoryQrEscape(item.code || '—');
   const model = _inventoryQrEscape(item.model || '—');
-  const brand = _inventoryQrEscape(item.brand || '—');
+  const brand = _inventoryQrEscape(_inventoryTagMasterName(item.brand, APP_DATA.brandRecords || []) || '—');
   const reference = _inventoryQrEscape(item.ref || '—');
   const serial = _inventoryQrEscape(item.serial || '—');
   const accessories = _inventoryQrEscape(_inventoryTagAccessories(item));
   const note = _inventoryQrEscape(item.note || '');
+  const material = _inventoryQrEscape(_inventoryTagValue(_inventoryTagMasterName(item.material, APP_DATA.materials || [])));
+  const belt = _inventoryQrEscape(_inventoryTagValue(_inventoryTagMasterName(item.belt, APP_DATA.beltMaterialRecords || [])));
+  const movement = _inventoryQrEscape(_inventoryTagValue(_inventoryTagMasterName(item.movement, APP_DATA.movements || [])));
+  const marking = _inventoryQrEscape(_inventoryTagValue(_inventoryTagMasterName(item.marking, APP_DATA.markingRecords || [])));
 
   const qrBlock = `<div class="inventory-product-tag-qr" role="img" aria-label="管理番号 ${code} のQRコード">${qr}</div>`;
   const managementBlock = `<div class="inventory-product-tag-code"><span class="sr-only">管理番号</span><strong>${code}</strong></div>`;
@@ -244,7 +263,7 @@ function renderInventoryProductTagPanel(item) {
         <article class="inventory-product-tag inventory-product-tag-front" aria-label="商品タグ 表面">
           <div class="inventory-product-tag-hole" aria-hidden="true"></div>
           <div class="inventory-product-tag-content">
-            <div class="inventory-product-tag-model"><span class="sr-only">ブランド名</span><strong>${brand}</strong></div>
+            <div class="inventory-product-tag-model"><span class="sr-only">ブランド・素材・ベルト素材</span><strong>${brand}（${material}／${belt}）</strong></div>
             <dl class="inventory-product-tag-fields">
               <div><dt class="sr-only">モデル名</dt><dd>${model}</dd></div>
               <div><dt class="sr-only">型番</dt><dd>${reference}</dd></div>
@@ -252,7 +271,16 @@ function renderInventoryProductTagPanel(item) {
               <div><dt class="sr-only">付属品</dt><dd>${accessories}</dd></div>
             </dl>
             <div class="inventory-product-tag-note"><span class="sr-only">商品の備考</span><p>${note}</p></div>
-            <div class="inventory-product-tag-bottom">${qrBlock}${managementBlock}</div>
+            <div class="inventory-product-tag-bottom">
+              ${qrBlock}
+              <div class="inventory-product-tag-bottom-fields">
+                <div class="inventory-product-tag-mini-values">
+                  <span><span class="sr-only">駆動方式</span>${movement}</span>
+                  <span><span class="sr-only">マーキング</span>${marking}</span>
+                </div>
+                ${managementBlock}
+              </div>
+            </div>
           </div>
         </article>
         <span class="inventory-product-tag-side-label">表面</span>
@@ -261,7 +289,13 @@ function renderInventoryProductTagPanel(item) {
         <article class="inventory-product-tag inventory-product-tag-back" aria-label="商品タグ 裏面">
           <div class="inventory-product-tag-hole" aria-hidden="true"></div>
           <div class="inventory-product-tag-content inventory-product-tag-back-content">
-            <div class="inventory-product-tag-bottom">${qrBlock}${managementBlock}</div>
+            <div class="inventory-product-tag-bottom">
+              ${qrBlock}
+              <div class="inventory-product-tag-bottom-fields inventory-product-tag-back-fields">
+                <div class="inventory-product-tag-marking"><span class="sr-only">マーキング</span>${marking}</div>
+                ${managementBlock}
+              </div>
+            </div>
           </div>
         </article>
         <span class="inventory-product-tag-side-label">裏面</span>
@@ -311,6 +345,11 @@ function createInventoryProductTagSvg(item) {
   const frontQr = _inventoryTagQrRects(item.code, 70, 650, 190);
   const backQr = _inventoryTagQrRects(item.code, 680, 650, 190);
   const valueField = (value, y) => `<text x="76" y="${y}" class="value">${safe(value || '—')}</text><line x1="76" y1="${y + 13}" x2="504" y2="${y + 13}" class="rule"/>`;
+  const brand = safe(_inventoryTagMasterName(item.brand, APP_DATA.brandRecords || []) || '—');
+  const material = safe(_inventoryTagValue(_inventoryTagMasterName(item.material, APP_DATA.materials || [])));
+  const belt = safe(_inventoryTagValue(_inventoryTagMasterName(item.belt, APP_DATA.beltMaterialRecords || [])));
+  const movement = safe(_inventoryTagValue(_inventoryTagMasterName(item.movement, APP_DATA.movements || [])));
+  const marking = safe(_inventoryTagValue(_inventoryTagMasterName(item.marking, APP_DATA.markingRecords || [])));
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1160" height="930" viewBox="0 0 1160 930" role="img" aria-label="管理番号 ${code} の商品タグ 表面と裏面">
@@ -320,7 +359,7 @@ function createInventoryProductTagSvg(item) {
   <rect width="1160" height="930" fill="#f4f4f5"/>
   <rect x="35" y="25" width="520" height="850" rx="36" class="card"/>
   <circle cx="295" cy="75" r="23" fill="#d1d5db" stroke="#9ca3af" stroke-width="2"/>
-  <text x="76" y="165" class="model-value">${safe(item.brand || '—')}</text><line x1="76" y1="178" x2="504" y2="178" class="rule"/>
+  <text x="76" y="165" class="model-value">${brand}（${material}／${belt}）</text><line x1="76" y1="178" x2="504" y2="178" class="rule"/>
   ${valueField(item.model, 245)}
   ${valueField(item.ref, 300)}
   ${valueField(item.serial, 355)}
@@ -328,12 +367,15 @@ function createInventoryProductTagSvg(item) {
   <rect x="66" y="448" width="438" height="160" rx="10" fill="#fff" stroke="#4b5563" stroke-width="1.5"/>
   <text x="76" y="480" class="note-text">${noteLines}</text>
   ${frontQr}
+  <text x="300" y="678" class="value">${movement}</text><line x1="300" y1="693" x2="390" y2="693" class="rule"/>
+  <text x="414" y="678" class="value">${marking}</text><line x1="414" y1="693" x2="504" y2="693" class="rule"/>
   <text x="300" y="738" class="code-value">${code}</text><line x1="300" y1="753" x2="504" y2="753" class="rule"/>
   <text x="295" y="915" text-anchor="middle" class="side">表面</text>
 
   <rect x="645" y="25" width="480" height="850" rx="36" class="card"/>
   <circle cx="885" cy="75" r="23" fill="#d1d5db" stroke="#9ca3af" stroke-width="2"/>
   ${backQr}
+  <text x="900" y="678" class="value">${marking}</text><line x1="900" y1="693" x2="1085" y2="693" class="rule"/>
   <text x="900" y="738" class="code-value">${code}</text><line x1="900" y1="753" x2="1085" y2="753" class="rule"/>
   <text x="885" y="915" text-anchor="middle" class="side">裏面</text>
 </svg>`;

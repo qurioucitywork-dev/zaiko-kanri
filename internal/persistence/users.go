@@ -19,7 +19,7 @@ var (
 )
 
 var accountCodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@+-]{2,319}$`)
-var staffCodePattern = regexp.MustCompile(`^STF-[0-9]{3,}$`)
+var staffCodePattern = regexp.MustCompile(`^BUY-[0-9]{3,}$`)
 var guestCodePattern = regexp.MustCompile(`^G[0-9]{3,}$`)
 
 type UserRecord struct {
@@ -122,7 +122,7 @@ func nextAccountCode(tx *gorm.DB, organizationID, kind string) (string, error) {
 			FROM staff_profiles WHERE organization_id=?`, organizationID).Scan(&next).Error; err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("STF-%03d", next), nil
+		return fmt.Sprintf("BUY-%03d", next), nil
 	case "guest":
 		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, organizationID+":guest_code").Error; err != nil {
 			return "", err

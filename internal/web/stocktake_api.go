@@ -70,6 +70,27 @@ func (s *Server) apiScanStocktake(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"session": session, "result": result})
 }
 
+func (s *Server) apiConfirmStocktakeDocument(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	var input struct {
+		ProductCodes []string `json:"productCodes"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&input)
+	}
+	session, affected, err := s.repository.ConfirmStocktakeDocument(r.Context(), user.OrganizationID,
+		r.PathValue("id"), r.PathValue("type"), r.PathValue("documentId"), user.ID, input.ProductCodes)
+	if errors.Is(err, persistence.ErrStocktakeNotFound) {
+		writeAPIError(w, http.StatusNotFound, "stocktake_not_found", "進行中の棚卸がありません。")
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "stocktake_document_confirm_failed", "対象伝票を確認できませんでした。")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"session": session, "affected": affected})
+}
+
 func (s *Server) apiSaveStocktake(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
 	var input struct {

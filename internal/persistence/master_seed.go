@@ -39,15 +39,15 @@ func (r *Repository) SeedPreviewMasters(ctx context.Context) error {
 				{"BRD-007", "タグ・ホイヤー"}, {"BRD-008", "セイコー"}, {"BRD-009", "グランドセイコー"}, {"BRD-010", "その他"},
 			},
 			"materials": {
-				{"M01", "ステンレスSS"}, {"M02", "イエローゴールドYG"}, {"M03", "ホワイトゴールドWG"},
-				{"M04", "ピンクゴールドPG"}, {"M05", "プラチナPT"}, {"M06", "チタンTi"},
+				{"MAT-001", "ステンレスSS"}, {"MAT-002", "イエローゴールドYG"}, {"MAT-003", "ホワイトゴールドWG"},
+				{"MAT-004", "ピンクゴールドPG"}, {"MAT-005", "プラチナPT"}, {"MAT-006", "チタンTi"},
 			},
 			"movements": {
-				{"D01", "自動巻き"}, {"D02", "手巻き"}, {"D03", "クオーツ"}, {"D04", "電波"}, {"D05", "スマート"},
+				{"MOV-001", "自動巻き"}, {"MOV-002", "手巻き"}, {"MOV-003", "クオーツ"}, {"MOV-004", "電波"}, {"MOV-005", "スマート"},
 			},
 			"product_conditions": {
-				{"C01", "未使用品 (N)"}, {"C02", "未使用展示品 (N-)"}, {"C03", "極美品 (S)"},
-				{"C04", "美品 (A)"}, {"C05", "良品 (AB)"}, {"C06", "可品 (B)"}, {"C07", "傷あり (BC)"},
+				{"CON-001", "未使用品 (N)"}, {"CON-002", "未使用展示品 (N-)"}, {"CON-003", "極美品 (S)"},
+				{"CON-004", "美品 (A)"}, {"CON-005", "良品 (AB)"}, {"CON-006", "可品 (B)"}, {"CON-007", "傷あり (BC)"},
 			},
 			"accessories": {
 				{"ACC-001", "BOX"}, {"ACC-002", "CASE"}, {"ACC-003", "GUARANTEE"},
@@ -65,7 +65,7 @@ func (r *Repository) SeedPreviewMasters(ctx context.Context) error {
 				{"DIA-001", "ブラック"}, {"DIA-002", "ホワイト"}, {"DIA-003", "シルバー"},
 				{"DIA-004", "ブルー"}, {"DIA-005", "グリーン"},
 			},
-			"product_shapes": {{"SHP-001", "腕時計"}, {"SHP-002", "懐中時計"}, {"SHP-003", "置時計"}},
+			"product_shapes": {{"TYP-001", "腕時計"}, {"TYP-002", "懐中時計"}, {"TYP-003", "置時計"}},
 		}
 		for table, items := range catalogs {
 			for index, item := range items {

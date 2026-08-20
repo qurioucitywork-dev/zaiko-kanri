@@ -29,6 +29,48 @@ function init_consignment() {
       emptyLabel: '-- 選択 --', selected: document.getElementById('co-dest')?.value || '', labelMode: 'code-name',
     });
   }
+  renderRegisteredConsignmentSlips();
+}
+
+/** 委託登録ページ下部に、登録済み委託伝票を一覧表示する。 */
+function renderRegisteredConsignmentSlips() {
+  const tbody = document.getElementById('registered-consignment-list-body');
+  const empty = document.getElementById('registered-consignment-list-empty');
+  const count = document.getElementById('registered-consignment-list-count');
+  if (!tbody || !empty) return;
+
+  const records = [...(APP_DATA.consignments || [])].sort((a, b) => {
+    const dateDiff = String(b.date || '').localeCompare(String(a.date || ''));
+    return dateDiff || String(b.id || '').localeCompare(String(a.id || ''));
+  });
+  if (count) count.textContent = `${records.length}伝票`;
+  empty.style.display = records.length ? 'none' : '';
+  tbody.innerHTML = records.map(row => {
+    const id = _escHtml(row.id || '');
+    const note = _escHtml(row.note || '—');
+    const statusBadge = _slipStatusBadge(getConsignmentProcessingStatus(row), row.id, 'consignment');
+    const totalJpy = Number(row.totalJpy) || getShippingSaleTotalJPY(row.items || [], row);
+    return `<tr class="slip-list-row" onclick="openSlipDetail('consignment','${id}')">
+      <td><code style="font-size:12px;font-weight:bold;white-space:nowrap;">${id || '—'}</code></td>
+      <td style="white-space:nowrap;">${_escHtml(row.date || '—')}</td>
+      <td style="white-space:nowrap;">${_escHtml(getBuyerName(row.destination))}</td>
+      <td style="text-align:center;white-space:nowrap;">${(row.items || []).length}点</td>
+      <td style="text-align:right;font-weight:bold;color:var(--primary);white-space:nowrap;">${formatPrice(totalJpy)}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${note}">${note}</td>
+      <td style="text-align:center;white-space:nowrap;">${statusBadge}</td>
+      <td style="text-align:center;white-space:nowrap;" onclick="event.stopPropagation()">
+        <button type="button" class="btn btn-outline btn-sm" onclick="openSlipDetail('consignment','${id}')">
+          <i class="fa-solid fa-magnifying-glass"></i> 詳細
+        </button>
+      </td>
+      <td style="text-align:center;white-space:nowrap;" onclick="event.stopPropagation()">
+        <button type="button" class="btn btn-primary btn-sm" onclick="issueConsignmentSlipDocument('${id}',event)" ${canIssuePurchaseSlip() ? '' : 'disabled'}>
+          <i class="fa-solid fa-file-arrow-down"></i> ${row.issuedAt ? '再発行' : '発行'}
+        </button>
+      </td>
+      <td style="text-align:center;white-space:nowrap;">${formatIssuedAtStacked(row.issuedAt)}</td>
+    </tr>`;
+  }).join('');
 }
 
 function resetConsignmentForm(notify = false) {
@@ -47,6 +89,7 @@ function resetConsignmentForm(notify = false) {
   if (typeof populateBuyerMasterSelect === 'function') {
     populateBuyerMasterSelect('co-dest', { emptyLabel: '-- 選択 --', selected: '', labelMode: 'code-name' });
   }
+  renderRegisteredConsignmentSlips();
   if (notify && typeof showToast === 'function') showToast('info', 'リセット', '委託伝票の入力内容をクリアしました');
 }
 
@@ -239,12 +282,14 @@ async function saveConsignment() {
     }
     showToast('success', '委託登録完了', `${record.id} / ${items.length}点を委託中へ更新しました`);
     resetConsignmentForm(false);
+    renderRegisteredConsignmentSlips();
   } catch (error) {
     showToast('error', '委託登録エラー', error.message || '委託伝票を登録できませんでした');
   }
 }
 
 window.init_consignment = init_consignment;
+window.renderRegisteredConsignmentSlips = renderRegisteredConsignmentSlips;
 window.addConsignmentLine = addConsignmentLine;
 window.addConsignmentItemByCode = addConsignmentItemByCode;
 window.onConsignmentCodeInput = onConsignmentCodeInput;

@@ -24,7 +24,7 @@ func (r *Repository) SeedPreviewInventory(ctx context.Context) error {
 			{`SELECT id FROM staff_profiles WHERE user_id=(SELECT id FROM users WHERE username='admin' AND organization_id=(SELECT id FROM organizations WHERE code='PREVIEW'))`, nil, &staffID},
 			{`SELECT id FROM partner_roles WHERE organization_id=(SELECT id FROM organizations WHERE code='PREVIEW') AND role_type='supplier' AND role_code='S001'`, nil, &supplierRoleID},
 			{`SELECT id FROM brands WHERE organization_id=(SELECT id FROM organizations WHERE code='PREVIEW') AND code='BRD-001'`, nil, &brandID},
-			{`SELECT id FROM product_conditions WHERE organization_id=(SELECT id FROM organizations WHERE code='PREVIEW') AND code='C03'`, nil, &conditionID},
+			{`SELECT id FROM product_conditions WHERE organization_id=(SELECT id FROM organizations WHERE code='PREVIEW') AND code='CON-003'`, nil, &conditionID},
 		}
 		for _, lookup := range lookups {
 			if err := tx.Raw(lookup.query, lookup.args...).Scan(lookup.dest).Error; err != nil {
@@ -167,8 +167,8 @@ func (r *Repository) seedPreviewInventoryByMonth(ctx context.Context) error {
 		{code: "BRD-010", model: "Classic Watch", ref: "OTHER-001"},
 	}
 	suppliers := []string{"S001", "S002", "S003", "S004", "S005"}
-	staff := []string{"STF-000", "STF-001", "STF-002", "STF-003", "STF-004", "STF-005"}
-	conditions := []string{"C01", "C02", "C03", "C04", "C05", "C06", "C07"}
+	staff := []string{"BUY-000", "BUY-001", "BUY-002", "BUY-003", "BUY-004", "BUY-005"}
+	conditions := []string{"CON-001", "CON-002", "CON-003", "CON-004", "CON-005", "CON-006", "CON-007"}
 
 	const targetPerMonth = 20
 	for monthIndex, plan := range plans {

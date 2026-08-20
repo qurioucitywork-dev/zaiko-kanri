@@ -11,6 +11,7 @@ import (
 )
 
 type ProductUpdateInput struct {
+	ProductCode           *string   `json:"productCode"`
 	SKU                   *string   `json:"sku"`
 	BrandCode             *string   `json:"brandCode"`
 	ModelNumber           *string   `json:"modelNumber"`
@@ -58,6 +59,22 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 		setText(input.BeltText, "belt_text")
 		setText(input.DialText, "dial_text")
 		setText(input.Notes, "notes")
+		if input.ProductCode != nil {
+			productCode := strings.TrimSpace(*input.ProductCode)
+			if productCode == "" {
+				return ErrProductConflict
+			}
+			var duplicateCount int64
+			if err := tx.Table("products").Where(
+				"organization_id=? AND id<>? AND UPPER(BTRIM(product_code))=?",
+				organizationID, productID, strings.ToUpper(productCode)).Count(&duplicateCount).Error; err != nil {
+				return err
+			}
+			if duplicateCount > 0 {
+				return ErrDuplicateProductCode
+			}
+			updates["product_code"] = productCode
+		}
 
 		if input.BrandCode != nil {
 			id, name, err := lookupCatalog(tx, "brands", organizationID, *input.BrandCode, false)
@@ -144,7 +161,7 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 				continue
 			}
 			value := strings.ToUpper(strings.TrimSpace(*currency.value))
-			if value != "JPY" && value != "USD" {
+			if value != "JPY" && value != "USD" && value != "HKD" {
 				return ErrProductConflict
 			}
 			updates[currency.column] = value
@@ -190,6 +207,9 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 			}
 		}
 		if err := tx.Model(&Product{}).Where("organization_id=? AND id=?", organizationID, productID).Updates(updates).Error; err != nil {
+			if isProductCodeUniqueViolation(err) {
+				return ErrDuplicateProductCode
+			}
 			return err
 		}
 		eventID, _ := database.NewID("ive")

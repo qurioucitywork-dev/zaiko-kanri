@@ -631,12 +631,113 @@ function buildDetailSummary(req) {
       <span class="appr-summary-price">${fmt(d.price||0)}</span>
     </span>`;
   }
-  return `<span class="appr-summary">${d.reason || JSON.stringify(d)}</span>`;
+  const targetLabel = approvalTargetTypeLabel(d.targetType);
+  const purchaseSlip = d.targetType === 'purchase_slip' ? findApprovalPurchaseSlip(d.targetId) : null;
+  const displayTargetId = purchaseSlip?.id || d.targetId || '—';
+  return `<span class="appr-summary">${d.reason || `${targetLabel}：${displayTargetId}`}</span>`;
 }
 
 // =====================================================
 // 承認詳細モーダル
 // =====================================================
+function approvalDisplayType(req) {
+  const key = String(req?.typeLabel || req?.type || '').trim();
+  const labels = {
+    'purchase.confirm': '仕入伝票の確定',
+    'purchase.confirmed': '仕入伝票の確定',
+    'sales.confirm': '売上伝票の確定',
+    'sales.confirmed': '売上伝票の確定',
+    'shipment.confirm': '出荷伝票の確定',
+    'shipment.confirmed': '出荷伝票の確定',
+    'consignment.confirm': '委託伝票の確定',
+    'purchase.update': '仕入伝票の修正',
+    'sales.update': '売上伝票の修正',
+    'shipment.update': '出荷伝票の修正',
+    'stocktake.mismatch': '棚卸不一致の確定',
+  };
+  return labels[key] || labels[String(req?.type || '').trim()] || key || '承認申請';
+}
+
+function approvalTargetTypeLabel(value) {
+  return ({
+    purchase_slip: '仕入伝票',
+    sales_slip: '売上伝票',
+    shipment_slip: '出荷伝票',
+    consignment_slip: '委託伝票',
+    return_slip: '返品伝票',
+    product: '商品',
+    stocktake: '棚卸',
+    stocktake_line: '棚卸明細',
+  })[String(value || '')] || '対象データ';
+}
+
+function findApprovalPurchaseSlip(targetId) {
+  const id = String(targetId || '');
+  return (APP_DATA.purchaseSlips || []).find(record => String(record._id || '') === id || String(record.id || '') === id) || null;
+}
+
+function openApprovalPurchaseSlip(targetId) {
+  const slip = findApprovalPurchaseSlip(targetId);
+  if (!slip) { showToast('warning', '伝票を開けません', '対象の仕入伝票が見つかりません'); return; }
+  closeApprovalDetail();
+  navigateTo('sales-list');
+  switchSlipTab('purchase');
+  openSlipDetail('purchase', slip.id);
+}
+
+function openApprovalProductDetail(code) {
+  const product = (APP_DATA.inventory || []).find(item => String(item.code) === String(code));
+  if (!product) { showToast('warning', '商品を開けません', `管理番号 ${code} の商品が見つかりません`); return; }
+  closeApprovalDetail();
+  navigateTo('inventory');
+  execInventorySearch();
+  showItemDetail(product.code);
+}
+
+function buildPurchaseApprovalTargetDetail(detail) {
+  const slip = findApprovalPurchaseSlip(detail.targetId);
+  if (!slip) return null;
+  const lines = slip.lines || [];
+  return `<div class="appr-content-card">
+    <div class="appr-content-grid">
+      <div class="appr-content-item"><span class="appr-content-label">申請対象</span><span class="appr-content-val">仕入伝票</span></div>
+      <div class="appr-content-item"><span class="appr-content-label">仕入伝票番号</span><span class="appr-content-val"><b>${slip.id || '—'}</b></span></div>
+      <div class="appr-content-item"><span class="appr-content-label">仕入日</span><span class="appr-content-val">${slip.date || '—'}</span></div>
+      <div class="appr-content-item"><span class="appr-content-label">仕入先</span><span class="appr-content-val">${getSupplierName(slip.supplier)}</span></div>
+    </div>
+    <div style="margin-top:12px;"><button type="button" class="btn btn-primary btn-sm" onclick="openApprovalPurchaseSlip('${detail.targetId}')"><i class="fa-solid fa-file-invoice"></i> 仕入伝票を開く</button></div>
+    <div class="appr-items-section">
+      <div class="appr-items-title"><i class="fa-solid fa-boxes-stacked"></i> 商品明細（${lines.length}点）</div>
+      <div style="overflow-x:auto;"><table class="appr-items-table"><thead><tr><th>管理番号</th><th>ブランド</th><th>モデル名</th><th>型番</th><th>シリアル</th><th>詳細</th></tr></thead><tbody>
+      ${lines.map(line => {
+        const product = (APP_DATA.inventory || []).find(item => item.code === line.code);
+        const source = product || line.productDetail || line;
+        return `<tr><td>${line.code || '未発番'}</td><td>${source.brand || '—'}</td><td>${source.model || '—'}</td><td>${source.ref || '—'}</td><td>${source.serial || '—'}</td><td>${line.code ? `<button type="button" class="btn btn-outline btn-sm" onclick="openApprovalProductDetail('${line.code}')">商品詳細</button>` : '—'}</td></tr>`;
+      }).join('') || '<tr><td colspan="6">商品明細がありません</td></tr>'}
+      </tbody></table></div>
+    </div>
+  </div>`;
+}
+
+function buildReadableApprovalDetail(detail = {}) {
+  if (detail.targetType === 'purchase_slip') {
+    const purchaseDetail = buildPurchaseApprovalTargetDetail(detail);
+    if (purchaseDetail) return purchaseDetail;
+  }
+  const targetLabel = approvalTargetTypeLabel(detail.targetType);
+  const rows = [
+    ['申請対象', targetLabel],
+    [`${targetLabel}ID`, detail.targetId || '—'],
+  ];
+  if (detail.reason) rows.push(['申請理由', detail.reason]);
+  return `<div class="appr-content-card"><div class="appr-content-grid">
+    ${rows.map(([label, value]) => `<div class="appr-content-item">
+      <span class="appr-content-label">${label}</span>
+      <span class="appr-content-val">${value}</span>
+    </div>`).join('')}
+  </div></div>`;
+}
+
 function openApprovalDetail(reqId) {
   const req = APP_DATA.approvalRequests.find(r => r.id === reqId);
   if (!req) return;
@@ -645,7 +746,7 @@ function openApprovalDetail(reqId) {
   if (!modal) return;
 
   // タイトル
-  document.getElementById('apprDetailTitle').textContent = `${req.typeLabel} — 承認リクエスト詳細`;
+  document.getElementById('apprDetailTitle').textContent = `${approvalDisplayType(req)} — 承認申請の詳細`;
   document.getElementById('apprDetailIcon').innerHTML = typeIcon(req.type);
 
   // ボディ
@@ -681,7 +782,7 @@ function buildDetailModalBody(req) {
       </div>
       <div class="appr-meta-row">
         <span class="appr-meta-label"><i class="fa-solid fa-calendar-days"></i> 申請日時</span>
-        <span class="appr-meta-val">${req.createdAt}</span>
+        <span class="appr-meta-val">${req.createdAt ? new Date(req.createdAt).toLocaleString('ja-JP') : '—'}</span>
       </div>
       <div class="appr-meta-row">
         <span class="appr-meta-label"><i class="fa-solid fa-user"></i> 申請者</span>
@@ -689,7 +790,7 @@ function buildDetailModalBody(req) {
       </div>
       <div class="appr-meta-row">
         <span class="appr-meta-label"><i class="fa-solid fa-tag"></i> 種別</span>
-        <span class="appr-meta-val">${typeIcon(req.type)} ${req.typeLabel}</span>
+        <span class="appr-meta-val">${typeIcon(req.type)} ${approvalDisplayType(req)}</span>
       </div>
       <div class="appr-meta-row">
         <span class="appr-meta-label"><i class="fa-solid fa-circle-dot"></i> ステータス</span>
@@ -743,7 +844,7 @@ function buildDetailModalBody(req) {
   } else if (req.type === 'stocktake_mismatch') {
     html += buildStocktakeMismatchDetail(req.detail);
   } else {
-    html += `<pre style="font-size:12px;background:#f5f5f5;padding:12px;border-radius:6px;">${JSON.stringify(req.detail, null, 2)}</pre>`;
+    html += buildReadableApprovalDetail(req.detail);
   }
 
   return html;

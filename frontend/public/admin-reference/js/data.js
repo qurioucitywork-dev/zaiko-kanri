@@ -45,19 +45,19 @@ const APP_DATA = {
   ],
   staff: ["山本 太郎", "佐藤 花子", "鈴木 一郎", "田中 美香", "伊藤 健司"],
   materials: [
-    { code: "M01", name: "ステンレスSS" },
-    { code: "M02", name: "イエローゴールドYG" },
-    { code: "M03", name: "ホワイトゴールドWG" },
-    { code: "M04", name: "ピンクゴールドPG" },
-    { code: "M05", name: "プラチナPT" },
-    { code: "M06", name: "チタンTi" },
+    { code: "MAT-001", name: "ステンレスSS" },
+    { code: "MAT-002", name: "イエローゴールドYG" },
+    { code: "MAT-003", name: "ホワイトゴールドWG" },
+    { code: "MAT-004", name: "ピンクゴールドPG" },
+    { code: "MAT-005", name: "プラチナPT" },
+    { code: "MAT-006", name: "チタンTi" },
   ],
   movements: [
-    { code: "D01", name: "自動巻き" },
-    { code: "D02", name: "手巻き" },
-    { code: "D03", name: "クオーツ" },
-    { code: "D04", name: "電波" },
-    { code: "D05", name: "スマート" },
+    { code: "MOV-001", name: "自動巻き" },
+    { code: "MOV-002", name: "手巻き" },
+    { code: "MOV-003", name: "クオーツ" },
+    { code: "MOV-004", name: "電波" },
+    { code: "MOV-005", name: "スマート" },
   ],
   beltMaterialRecords: [
     { code: "BLT-001", name: "ステンレス" },
@@ -75,13 +75,13 @@ const APP_DATA = {
   ],
   accessories: ["BOX", "CASE", "GUARANTEE", "BRACELET PARTS", "CERTIFICATE", "ARCHIVE"],
   conditions: [
-    { code: "C01", name: "未使用品 (N)" },
-    { code: "C02", name: "未使用展示品 (N-)" },
-    { code: "C03", name: "極美品 (S)" },
-    { code: "C04", name: "美品 (A)" },
-    { code: "C05", name: "良品 (AB)" },
-    { code: "C06", name: "可品 (B)" },
-    { code: "C07", name: "傷あり (BC)" },
+    { code: "CON-001", name: "未使用品 (N)" },
+    { code: "CON-002", name: "未使用展示品 (N-)" },
+    { code: "CON-003", name: "極美品 (S)" },
+    { code: "CON-004", name: "美品 (A)" },
+    { code: "CON-005", name: "良品 (AB)" },
+    { code: "CON-006", name: "可品 (B)" },
+    { code: "CON-007", name: "傷あり (BC)" },
   ],
 
   // サンプル在庫データ
@@ -90,7 +90,7 @@ const APP_DATA = {
       code: "20260301001", brand: "ロレックス", brandEn: "Rolex", model: "サブマリーナ", modelEn: "Submariner",
       ref: "116610LN", serial: "ZX123456", supplier: "S001", staff: "山本 太郎",
       purchasePrice: 850000, salePrice: 1180000, purchaseDate: "2026-03-01", status: "在庫中",
-      material: "M01", movement: "D01", condition: "C03", accessories: ["BOX", "GUARANTEE"],
+      material: "MAT-001", movement: "MOV-001", condition: "CON-003", accessories: ["BOX", "GUARANTEE"],
       boxNo: 1,
       images: [
         "https://sspark.genspark.ai/cfimages?u1=DgG%2FT%2FRiDi119SYIwu0kNOmGnlMd2p6TvXoiRTIyu5aLuI7OGoVdX7Vm5NOBuuyHc02AW9wpJ3XI7O19LikN1pjtVJF5dwqWH7CvGI0aacVG8RFyulGV1ez9EjAOUNqQdE0Pg2Qxaww3NmYj38YAEL0DGbqW6NB29GB5t7hb67g%3D&u2=%2FEq%2BGAMH3r7lDW2h&width=2560",
@@ -105,7 +105,7 @@ const APP_DATA = {
       code: "20260303001", brand: "オメガ", brandEn: "Omega", model: "スピードマスター", modelEn: "Speedmaster",
       ref: "311.30.42.30.01.005", serial: "87654321", supplier: "S002", staff: "佐藤 花子",
       purchasePrice: 320000, salePrice: 498000, purchaseDate: "2026-03-03", status: "在庫中",
-      material: "M01", movement: "D02", condition: "C04", accessories: ["BOX"],
+      material: "MAT-001", movement: "MOV-002", condition: "CON-004", accessories: ["BOX"],
       images: [
         "https://sspark.genspark.ai/cfimages?u1=N2thZtxaem5YnQZDti31UJK5rXBwTM8nFa1JpHYdxIPcPBN6YQz5iLYMRfdoJQRYwA2CTPe6NWUksssOX%2Fh1u4pv%2Fl0trdbNG00VsgAegOY2OmeTi5fuhWkAO0P4rNJeqtpcJb4Vy5%2FtuQJa2uWrqrR5Etg%2BAzcDaS9MIEekU3VjvMD%2FpKG4il5zopQayYQ%3D&u2=52akKsJQKor%2BcWJW&width=2560",
         "https://sspark.genspark.ai/cfimages?u1=PUcS9qimEdQj2%2BeQYbdwiro1TDf1fwM5O3OO7qsOLbxggfoOZ0kU4eqzGCV3Z6MJbCw3XS82%2FwOzNs9J%2F7LeIqXwcOOEIK4qVPTGUCE3g89J8JcWisvY74JAMYKkE4UjoD7uJ48GnoZBin1weaKKCk2Gz9ZPaXYSCqoprLZMnAYq46LfCZiLjuP%2BYAhZUBLRhh0A5L4%2F8WR7urlC2dhl2dKETEB8aea4qRWOfNjI91UUkmR4ITqGk9%2BGXUdNk3CfSTHiLcD6GtMe%2F1A%3D&u2=tzokX0ua%2BWYl5mA4&width=2560",
@@ -118,7 +118,7 @@ const APP_DATA = {
       code: "20260305001", brand: "パテック・フィリップ", brandEn: "Patek Philippe", model: "アクアノート", modelEn: "Aquanaut",
       ref: "5167A-001", serial: "PH112233", supplier: "S005", staff: "山本 太郎",
       purchasePrice: 2800000, purchasePlannedPrice: 2600000, purchaseDate: "2026-03-05", status: "売上済",
-      material: "M01", movement: "D01", condition: "C03", accessories: ["BOX", "GUARANTEE"],
+      material: "MAT-001", movement: "MOV-001", condition: "CON-003", accessories: ["BOX", "GUARANTEE"],
       images: [], note: "",
       revisions: []
     },
@@ -126,7 +126,7 @@ const APP_DATA = {
       code: "20260307001", brand: "カルティエ", brandEn: "Cartier", model: "サントス", modelEn: "Santos",
       ref: "WSSA0009", serial: "CT445566", supplier: "S003", staff: "鈴木 一郎",
       purchasePrice: 480000, purchasePlannedPrice: 450000, salePrice: 720000, purchaseDate: "2026-03-07", status: "在庫中",
-      material: "M01", movement: "D03", condition: "C04", accessories: ["BOX", "GUARANTEE"],
+      material: "MAT-001", movement: "MOV-003", condition: "CON-004", accessories: ["BOX", "GUARANTEE"],
       images: [
         "https://sspark.genspark.ai/cfimages?u1=bIHK3aaCO%2FdOI5DtzcAuCwyh4KebsUCQ7ego4fj4gsgSHyod8AHR3fP9HZj%2BPi1RjHXurVPx9JYbxD9yfS6T1IcQgFwWN85lnowRdmYj6vxdhq4DzpNzAj9L3A%3D%3D&u2=0KiLTYScju95jKog&width=2560",
         "https://sspark.genspark.ai/cfimages?u1=djlGnOoOJOGJBWAN9nAMb4ZDgfR5b6SVCNHAAjSdtmQixBtQCviF16%2F7JeXsdFJV92xmsbpvezRbsxeYLvkqR8qwRFJDcgs1bv09o003JJ6udLftqjyBHSHX7r1f2hvg&u2=L2j3oSCXIQ9BZ7jG&width=2560",
@@ -140,7 +140,7 @@ const APP_DATA = {
       code: "20260310001", brand: "ロレックス", brandEn: "Rolex", model: "デイトナ", modelEn: "Daytona",
       ref: "116500LN", serial: "ZX789012", supplier: "S001", staff: "山本 太郎",
       purchasePrice: 1950000, purchasePlannedPrice: 1850000, purchaseDate: "2026-03-10", status: "出荷済",
-      material: "M01", movement: "D01", condition: "C03", accessories: ["BOX", "GUARANTEE", "BRACELET PARTS"],
+      material: "MAT-001", movement: "MOV-001", condition: "CON-003", accessories: ["BOX", "GUARANTEE", "BRACELET PARTS"],
       images: [], note: "",
       revisions: []
     },
@@ -148,7 +148,7 @@ const APP_DATA = {
       code: "20260312001", brand: "IWC", brandEn: "IWC", model: "ポルトギーゼ", modelEn: "Portugieser",
       ref: "IW500705", serial: "IW334455", supplier: "S004", staff: "田中 美香",
       purchasePrice: 560000, salePrice: 840000, purchaseDate: "2026-03-12", status: "在庫中",
-      material: "M03", movement: "D01", condition: "C04", accessories: ["BOX"],
+      material: "MAT-003", movement: "MOV-001", condition: "CON-004", accessories: ["BOX"],
       images: [
         "https://sspark.genspark.ai/cfimages?u1=MNbxcAbDbmpsfSaruW%2F26IWj9pjYMM7rLPyxWRtuPDNm9jaqXHty%2Fvr3f5UzYLTM%2FaIZR34x%2FD95zWkSEqRHWLXe2JQolFWlNOMdvlW3tSHZJPI0QeBCxvql6pmIKrSTrkP0lUWg&u2=oSViHra1T%2BLPkUxi&width=2560",
         "https://sspark.genspark.ai/cfimages?u1=o%2FSJXvPZwG1uA4we0mPhXTCFL6iadWPvZ8lyLE%2B%2Brlf%2Bww%2BZ1Y2RrDNA7yyDemOltjUKcDGk7%2B5mUFz63IyeyiKsY%2BAW69XhykngIpvML2deCDpgT5ni7gJfrW%2FPzlW05ZyArfo736VSKt4Dok96F7Yhh8Xmj3gYwkF7%2BGd2FmA53FbfZNPXaKscRZdsRQ%3D%3D&u2=bv6xA77DVjrrgNrH&width=2560",
@@ -161,7 +161,7 @@ const APP_DATA = {
       code: "20260314001", brand: "グランドセイコー", brandEn: "Grand Seiko", model: "エレガンスコレクション", modelEn: "Elegance Collection",
       ref: "SBGW047", serial: "GS556677", supplier: "S002", staff: "伊藤 健司",
       purchasePrice: 280000, salePrice: 430000, purchaseDate: "2026-03-14", status: "在庫中",
-      material: "M05", movement: "D02", condition: "C03", accessories: ["BOX", "GUARANTEE"],
+      material: "MAT-005", movement: "MOV-002", condition: "CON-003", accessories: ["BOX", "GUARANTEE"],
       images: [
         "https://sspark.genspark.ai/cfimages?u1=G2W0piFUXOC8euP30%2BfBfj%2FjipK5Me%2BAQW0%2F3g5EtzWaNhRDETdP45N6y7iUPTnff9ZFm0SgZbl6ZiwAJzNIM9HVBvc%2BDNYK3UcX8CZOcfGrnSIO1jFs9TwXKr1n&u2=hChVWqaU4GS%2BhfpE&width=2560",
         "https://sspark.genspark.ai/cfimages?u1=nqte9QQnMUYYF7rXS%2FFqA8MxAjQ3K6ymdfn%2F8W%2F1k8S7e41XAyYFTq62v%2FEbsv%2B9BTrLXXcvbTw5B1J4OH7UHeOxzDaHCuxOTJehabtZfSGOH3fJYGLhZN3W&u2=lA7vi4NZcysYa7YD&width=2560",
@@ -174,7 +174,7 @@ const APP_DATA = {
       code: "20260315001", brand: "ブライトリング", brandEn: "Breitling", model: "ナビタイマー", modelEn: "Navitimer",
       ref: "AB0121211B1A1", serial: "BR667788", supplier: "S003", staff: "鈴木 一郎",
       purchasePrice: 420000, salePrice: 610000, purchaseDate: "2026-03-15", status: "在庫中",
-      material: "M01", movement: "D01", condition: "C05", accessories: ["GUARANTEE"],
+      material: "MAT-001", movement: "MOV-001", condition: "CON-005", accessories: ["GUARANTEE"],
       images: [
         "https://sspark.genspark.ai/cfimages?u1=AmKHsTQiC35HA%2FFXMCv7H3FQFOF5D4scTRGfZPGeY07hnucMQOAgbLr%2BDnd8%2F8OnZXUBNFKeCdJpdMYIvhB1DTmOADZgTR%2FwlSRJjV5evuLpxf6CUan1xjH0%2BLy%2FsWY7fp9ex18FxfwkWkIkCg%2BDsYNNKWwyqywbJlrbHLE48gL4lCI673%2F0RszV8TkGyGxOtvZqJ6iqmrcN&u2=je4N5jfjagL0CQzI&width=2560",
         "https://sspark.genspark.ai/cfimages?u1=NNWEn9S8baXNlf60LgEM%2F8scB6%2BDEoc4Nb5jlK9Laman3aZ8vUWkSl%2BDgZ8RsRWwIdtQwmm64Rj%2FULR2yZVZ%2B1XstUlHhd14gFfBbp%2FydJUNNKqS2WzABFBBGWFmrZdBr8nIhXngfvycWnDbwrP%2BEEyN%2FMMij%2F4GrcWkalZOa1j1oWrlo37Ffl7EkQ5q2d2oAMRFOtg7BUUmnU8m&u2=MHbq8ol4rRDsjvqT&width=2560",
@@ -189,7 +189,7 @@ const APP_DATA = {
       code: "20260301002", brand: "ロレックス", brandEn: "Rolex", model: "デイトナ（ホワイトゴールド）", modelEn: "Daytona WG",
       ref: "116519LN", serial: "ZX234567", supplier: "S001", staff: "山本 太郎",
       purchasePrice: 1680000, salePrice: 2200000, purchaseDate: "2026-03-01", status: "在庫中",
-      material: "M03", movement: "D01", condition: "C02", accessories: ["BOX", "CASE", "GUARANTEE"],
+      material: "MAT-003", movement: "MOV-001", condition: "CON-002", accessories: ["BOX", "CASE", "GUARANTEE"],
       images: [], note: "",
       revisions: []
     },
@@ -198,7 +198,7 @@ const APP_DATA = {
       code: "20260310002", brand: "ブライトリング", brandEn: "Breitling", model: "ナビタイマー（ブラック）", modelEn: "Navitimer Black",
       ref: "AB0127211B1A1", serial: "XY001234", supplier: "S002", staff: "佐藤 花子",
       purchasePrice: 480000, salePrice: 720000, purchaseDate: "2026-03-10", status: "在庫中",
-      material: "M02", movement: "D01", condition: "C03", accessories: ["BOX", "GUARANTEE"],
+      material: "MAT-002", movement: "MOV-001", condition: "CON-003", accessories: ["BOX", "GUARANTEE"],
       images: [], note: "シリアル修正申請中（APR-007）",
       revisions: []
     },
@@ -609,7 +609,7 @@ const APP_DATA = {
       items: [
         { code: "20260301001", brand: "ロレックス", model: "サブマリーナ",
           ref: "116610LN", serial: "ZX223300", purchasePrice: 850000,
-          status: "処理済", trackingNo: "JD012345678JP" },
+          status: "処理済", trackingNo: "JMOV-0012345678JP" },
         { code: "20260303001", brand: "オメガ", model: "スピードマスター",
           ref: "310.30.42.50.01.001", serial: "OM112233", purchasePrice: 320000,
           status: "処理済", trackingNo: "" }
@@ -803,6 +803,7 @@ const APP_DATA = {
   ],
 
   // ===== 外貨レート設定（円換算レート手入力）=====
+  fxRateHistory: [],
   fxRates: [
     {
       code:     "USD",
@@ -864,8 +865,8 @@ const APP_DATA = {
         ref: "116610LN", serial: "ZX123456",
         supplier: "S001",
         purchaseDate: "2026-03-01",
-        before: { purchasePrice: 820000, condition: "C03" },
-        after:  { purchasePrice: 850000, condition: "C02" },
+        before: { purchasePrice: 820000, condition: "CON-003" },
+        after:  { purchasePrice: 850000, condition: "CON-002" },
         reason: "仕入価格の入力ミスを修正。コンディション評価を再確認の上、Sランクへ変更。",
       },
       status: "pending",
@@ -1176,8 +1177,8 @@ const APP_DATA = {
             code: "20260301001", brand: "ロレックス", brandEn: "Rolex",
             model: "サブマリーナ", modelEn: "Submariner",
             ref: "116610LN", serial: "ZX123456",
-            salePrice: 1180000, condition: "C03", status: "在庫中", boxNo: 1,
-            material: "M01", movement: "D01", accessories: ["BOX", "GUARANTEE"],
+            salePrice: 1180000, condition: "CON-003", status: "在庫中", boxNo: 1,
+            material: "MAT-001", movement: "MOV-001", accessories: ["BOX", "GUARANTEE"],
             images: [
               "https://sspark.genspark.ai/cfimages?u1=DgG%2FT%2FRiDi119SYIwu0kNOmGnlMd2p6TvXoiRTIyu5aLuI7OGoVdX7Vm5NOBuuyHc02AW9wpJ3XI7O19LikN1pjtVJF5dwqWH7CvGI0aacVG8RFyulGV1ez9EjAOUNqQdE0Pg2Qxaww3NmYj38YAEL0DGbqW6NB29GB5t7hb67g%3D&u2=%2FEq%2BGAMH3r7lDW2h&width=2560",
               "https://sspark.genspark.ai/cfimages?u1=xe3cjTbMMNYNQHsRS%2FOAQEL%2FMRHDlohxrlmOvc6CeDgcaFYYC%2Bho95pxhKun85Ax3J7rPvTyMq4bA%2FIkR3wTDJBL7qyXeZ3d0%2B52oexjSY54vue%2BbYnb031O6kA8k5Xst3h0dG6EBCuuKW2QdD2cmsfylRTJXvlYZptJatgxnfhY7vwUZvYxG%2F61I0APepxokXJCXqhPpLcn83xlH2u6H2DFquA%3D&u2=rhVbeo1QlsKyPIH%2F&width=2560"
@@ -1188,8 +1189,8 @@ const APP_DATA = {
             code: "20260301002", brand: "ロレックス", brandEn: "Rolex",
             model: "デイトナ（ホワイトゴールド）", modelEn: "Daytona WG",
             ref: "116519LN", serial: "ZX234567",
-            salePrice: 2200000, condition: "C02", status: "在庫中", boxNo: 1,
-            material: "M03", movement: "D01", accessories: ["BOX", "CASE", "GUARANTEE"],
+            salePrice: 2200000, condition: "CON-002", status: "在庫中", boxNo: 1,
+            material: "MAT-003", movement: "MOV-001", accessories: ["BOX", "CASE", "GUARANTEE"],
             images: [],
             note: ""
           }
@@ -1204,8 +1205,8 @@ const APP_DATA = {
             code: "20260303001", brand: "オメガ", brandEn: "Omega",
             model: "スピードマスター", modelEn: "Speedmaster",
             ref: "311.30.42.30.01.005", serial: "87654321",
-            salePrice: 498000, condition: "C04", status: "在庫中", boxNo: 3,
-            material: "M01", movement: "D02", accessories: ["BOX"],
+            salePrice: 498000, condition: "CON-004", status: "在庫中", boxNo: 3,
+            material: "MAT-001", movement: "MOV-002", accessories: ["BOX"],
             images: [
               "https://sspark.genspark.ai/cfimages?u1=N2thZtxaem5YnQZDti31UJK5rXBwTM8nFa1JpHYdxIPcPBN6YQz5iLYMRfdoJQRYwA2CTPe6NWUksssOX%2Fh1u4pv%2Fl0trdbNG00VsgAegOY2OmeTi5fuhWkAO0P4rNJeqtpcJb4Vy5%2FtuQJa2uWrqrR5Etg%2BAzcDaS9MIEekU3VjvMD%2FpKG4il5zopQayYQ%3D&u2=52akKsJQKor%2BcWJW&width=2560",
               "https://sspark.genspark.ai/cfimages?u1=PUcS9qimEdQj2%2BeQYbdwiro1TDf1fwM5O3OO7qsOLbxggfoOZ0kU4eqzGCV3Z6MJbCw3XS82%2FwOzNs9J%2F7LeIqXwcOOEIK4qVPTGUCE3g89J8JcWisvY74JAMYKkE4UjoD7uJ48GnoZBin1weaKKCk2Gz9ZPaXYSCqoprLZMnAYq46LfCZiLjuP%2BYAhZUBLRhh0A5L4%2F8WR7urlC2dhl2dKETEB8aea4qRWOfNjI91UUkmR4ITqGk9%2BGXUdNk3CfSTHiLcD6GtMe%2F1A%3D&u2=tzokX0ua%2BWYl5mA4&width=2560"
@@ -1216,8 +1217,8 @@ const APP_DATA = {
             code: "20260307001", brand: "カルティエ", brandEn: "Cartier",
             model: "サントス", modelEn: "Santos",
             ref: "WSSA0009", serial: "CT445566",
-            salePrice: 720000, condition: "C04", status: "在庫中", boxNo: 3,
-            material: "M01", movement: "D03", accessories: ["BOX", "GUARANTEE"],
+            salePrice: 720000, condition: "CON-004", status: "在庫中", boxNo: 3,
+            material: "MAT-001", movement: "MOV-003", accessories: ["BOX", "GUARANTEE"],
             images: [
               "https://sspark.genspark.ai/cfimages?u1=bIHK3aaCO%2FdOI5DtzcAuCwyh4KebsUCQ7ego4fj4gsgSHyod8AHR3fP9HZj%2BPi1RjHXurVPx9JYbxD9yfS6T1IcQgFwWN85lnowRdmYj6vxdhq4DzpNzAj9L3A%3D%3D&u2=0KiLTYScju95jKog&width=2560",
               "https://sspark.genspark.ai/cfimages?u1=djlGnOoOJOGJBWAN9nAMb4ZDgfR5b6SVCNHAAjSdtmQixBtQCviF16%2F7JeXsdFJV92xmsbpvezRbsxeYLvkqR8qwRFJDcgs1bv09o003JJ6udLftqjyBHSHX7r1f2hvg&u2=L2j3oSCXIQ9BZ7jG&width=2560"
@@ -1228,8 +1229,8 @@ const APP_DATA = {
             code: "20260312001", brand: "IWC", brandEn: "IWC",
             model: "ポルトギーゼ", modelEn: "Portugieser",
             ref: "IW500705", serial: "IW334455",
-            salePrice: 840000, condition: "C04", status: "在庫中", boxNo: 3,
-            material: "M03", movement: "D01", accessories: ["BOX"],
+            salePrice: 840000, condition: "CON-004", status: "在庫中", boxNo: 3,
+            material: "MAT-003", movement: "MOV-001", accessories: ["BOX"],
             images: [
               "https://sspark.genspark.ai/cfimages?u1=MNbxcAbDbmpsfSaruW%2F26IWj9pjYMM7rLPyxWRtuPDNm9jaqXHty%2Fvr3f5UzYLTM%2FaIZR34x%2FD95zWkSEqRHWLXe2JQolFWlNOMdvlW3tSHZJPI0QeBCxvql6pmIKrSTrkP0lUWg&u2=oSViHra1T%2BLPkUxi&width=2560",
               "https://sspark.genspark.ai/cfimages?u1=o%2FSJXvPZwG1uA4we0mPhXTCFL6iadWPvZ8lyLE%2B%2Brlf%2Bww%2BZ1Y2RrDNA7yyDemOltjUKcDGk7%2B5mUFz63IyeyiKsY%2BAW69XhykngIpvML2deCDpgT5ni7gJfrW%2FPzlW05ZyArfo736VSKt4Dok96F7Yhh8Xmj3gYwkF7%2BGd2FmA53FbfZNPXaKscRZdsRQ%3D%3D&u2=bv6xA77DVjrrgNrH&width=2560"
@@ -1240,8 +1241,8 @@ const APP_DATA = {
             code: "20260314001", brand: "グランドセイコー", brandEn: "Grand Seiko",
             model: "エレガンスコレクション", modelEn: "Elegance Collection",
             ref: "SBGW047", serial: "GS556677",
-            salePrice: 430000, condition: "C03", status: "在庫中", boxNo: 3,
-            material: "M05", movement: "D02", accessories: ["BOX", "GUARANTEE"],
+            salePrice: 430000, condition: "CON-003", status: "在庫中", boxNo: 3,
+            material: "MAT-005", movement: "MOV-002", accessories: ["BOX", "GUARANTEE"],
             images: [
               "https://sspark.genspark.ai/cfimages?u1=G2W0piFUXOC8euP30%2BfBfj%2FjipK5Me%2BAQW0%2F3g5EtzWaNhRDETdP45N6y7iUPTnff9ZFm0SgZbl6ZiwAJzNIM9HVBvc%2BDNYK3UcX8CZOcfGrnSIO1jFs9TwXKr1n&u2=hChVWqaU4GS%2BhfpE&width=2560",
               "https://sspark.genspark.ai/cfimages?u1=nqte9QQnMUYYF7rXS%2FFqA8MxAjQ3K6ymdfn%2F8W%2F1k8S7e41XAyYFTq62v%2FEbsv%2B9BTrLXXcvbTw5B1J4OH7UHeOxzDaHCuxOTJehabtZfSGOH3fJYGLhZN3W&u2=lA7vi4NZcysYa7YD&width=2560"
@@ -1252,8 +1253,8 @@ const APP_DATA = {
             code: "20260315001", brand: "ブライトリング", brandEn: "Breitling",
             model: "ナビタイマー", modelEn: "Navitimer",
             ref: "AB0121211B1A1", serial: "BR667788",
-            salePrice: 610000, condition: "C05", status: "在庫中", boxNo: 3,
-            material: "M01", movement: "D01", accessories: ["GUARANTEE"],
+            salePrice: 610000, condition: "CON-005", status: "在庫中", boxNo: 3,
+            material: "MAT-001", movement: "MOV-001", accessories: ["GUARANTEE"],
             images: [
               "https://sspark.genspark.ai/cfimages?u1=AmKHsTQiC35HA%2FFXMCv7H3FQFOF5D4scTRGfZPGeY07hnucMQOAgbLr%2BDnd8%2F8OnZXUBNFKeCdJpdMYIvhB1DTmOADZgTR%2FwlSRJjV5evuLpxf6CUan1xjH0%2BLy%2FsWY7fp9ex18FxfwkWkIkCg%2BDsYNNKWwyqywbJlrbHLE48gL4lCI673%2F0RszV8TkGyGxOtvZqJ6iqmrcN&u2=je4N5jfjagL0CQzI&width=2560",
               "https://sspark.genspark.ai/cfimages?u1=NNWEn9S8baXNlf60LgEM%2F8scB6%2BDEoc4Nb5jlK9Laman3aZ8vUWkSl%2BDgZ8RsRWwIdtQwmm64Rj%2FULR2yZVZ%2B1XstUlHhd14gFfBbp%2FydJUNNKqS2WzABFBBGWFmrZdBr8nIhXngfvycWnDbwrP%2BEEyN%2FMMij%2F4GrcWkalZOa1j1oWrlo37Ffl7EkQ5q2d2oAMRFOtg7BUUmnU8m&u2=MHbq8ol4rRDsjvqT&width=2560"
@@ -1264,8 +1265,8 @@ const APP_DATA = {
             code: "20260310002", brand: "ブライトリング", brandEn: "Breitling",
             model: "ナビタイマー（ブラック）", modelEn: "Navitimer Black",
             ref: "AB0127211B1A1", serial: "XY001234",
-            salePrice: 720000, condition: "C03", status: "在庫中", boxNo: 3,
-            material: "M02", movement: "D01", accessories: ["BOX", "GUARANTEE"],
+            salePrice: 720000, condition: "CON-003", status: "在庫中", boxNo: 3,
+            material: "MAT-002", movement: "MOV-001", accessories: ["BOX", "GUARANTEE"],
             images: [],
             note: ""
           }
@@ -1352,6 +1353,7 @@ const APP_DATA = {
   },
 
   // ===== 仕入登録伝票 =====
+  deletedPurchaseSlips: [],
   purchaseSlips: [
     {
       id: "PI-2026-0001",
@@ -1368,7 +1370,7 @@ const APP_DATA = {
           purchasePrice: 820000, salePrice: 1180000,
           productDetail: {
             brand: "ロレックス", model: "サブマリーナ", ref: "116610LN",
-            serial: "ZX223300", condition: "C03", accessories: ["BOX","GUARANTEE"]
+            serial: "ZX223300", condition: "CON-003", accessories: ["BOX","GUARANTEE"]
           }
         },
         {
@@ -1376,7 +1378,7 @@ const APP_DATA = {
           purchasePrice: 310000, salePrice: 490000,
           productDetail: {
             brand: "オメガ", model: "スピードマスター", ref: "311.30.42.30",
-            serial: "OM998877", condition: "C04", accessories: ["BOX"]
+            serial: "OM998877", condition: "CON-004", accessories: ["BOX"]
           }
         }
       ],
@@ -1403,7 +1405,7 @@ const APP_DATA = {
           purchasePrice: 2600000, salePrice: 3500000,
           productDetail: {
             brand: "パテック・フィリップ", model: "アクアノート", ref: "5167A-001",
-            serial: "PP556677", condition: "C02", accessories: ["BOX","GUARANTEE","CERTIFICATE"]
+            serial: "PP556677", condition: "CON-002", accessories: ["BOX","GUARANTEE","CERTIFICATE"]
           }
         }
       ],
@@ -1422,7 +1424,7 @@ const APP_DATA = {
           purchasePrice: 450000, salePrice: 680000,
           productDetail: {
             brand: "IWC", model: "ポルトギーゼ", ref: "IW500704",
-            serial: "IW334455", condition: "C04", accessories: ["BOX","GUARANTEE"]
+            serial: "IW334455", condition: "CON-004", accessories: ["BOX","GUARANTEE"]
           }
         },
         {
@@ -1430,7 +1432,7 @@ const APP_DATA = {
           purchasePrice: 390000, salePrice: 580000,
           productDetail: {
             brand: "ブライトリング", model: "ナビタイマー", ref: "AB0121",
-            serial: "BR778899", condition: "C05", accessories: []
+            serial: "BR778899", condition: "CON-005", accessories: []
           }
         }
       ],
@@ -1451,7 +1453,7 @@ const APP_DATA = {
       lines: [{
         lineNo: 1, code: "20260415001", sku: "ROL-DATE-126300",
         purchasePrice: 1350000, salePrice: 1850000,
-        productDetail: { brand: "ロレックス", model: "デイトジャスト", ref: "126300", serial: "RX445566", condition: "C02", accessories: ["BOX","GUARANTEE"] }
+        productDetail: { brand: "ロレックス", model: "デイトジャスト", ref: "126300", serial: "RX445566", condition: "CON-002", accessories: ["BOX","GUARANTEE"] }
       }],
     },
     // ⑤ サンプル：差戻し
@@ -1467,7 +1469,7 @@ const APP_DATA = {
       lines: [{
         lineNo: 1, code: "20260416001", sku: "OMG-AQT-220",
         purchasePrice: 280000, salePrice: 420000,
-        productDetail: { brand: "オメガ", model: "アクアテラ", ref: "220.10.38.20", serial: "", condition: "C04", accessories: ["BOX"] }
+        productDetail: { brand: "オメガ", model: "アクアテラ", ref: "220.10.38.20", serial: "", condition: "CON-004", accessories: ["BOX"] }
       }],
     },
     // ⑤ サンプル：差戻し②
@@ -1483,7 +1485,7 @@ const APP_DATA = {
       lines: [{
         lineNo: 1, code: "20260417001", sku: "PAT-CAL-5396",
         purchasePrice: 3200000, salePrice: 4500000,
-        productDetail: { brand: "パテック・フィリップ", model: "カラトラバ", ref: "5396G-001", serial: "PP667788", condition: "C03", accessories: ["BOX","GUARANTEE","CERTIFICATE"] }
+        productDetail: { brand: "パテック・フィリップ", model: "カラトラバ", ref: "5396G-001", serial: "PP667788", condition: "CON-003", accessories: ["BOX","GUARANTEE","CERTIFICATE"] }
       }],
     },
   ],
@@ -1629,6 +1631,7 @@ function showToast(type, title, msg, duration = 3000) {
 // ページ遷移（SPA風）
 // =====================================================
 function navigateTo(page) {
+  document.getElementById('pe-csv-error-toast')?.remove();
   // nav アイテムの active 状態更新
   document.querySelectorAll('.nav-item').forEach(el => {
     el.classList.toggle('active', el.dataset.page === page);

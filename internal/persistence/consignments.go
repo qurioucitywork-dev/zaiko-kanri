@@ -12,8 +12,10 @@ import (
 )
 
 var (
-	ErrConsignmentNotFound = errors.New("consignment slip not found")
-	ErrConsignmentState    = errors.New("consignment slip cannot be changed in its current state")
+	ErrConsignmentNotFound        = errors.New("consignment slip not found")
+	ErrConsignmentState           = errors.New("consignment slip cannot be changed in its current state")
+	ErrConsignmentProductNotFound = errors.New("product is not included in consignment slip")
+	ErrConsignmentReturnState     = errors.New("consignment product cannot be returned in its current state")
 )
 
 type ConsignmentCreateInput struct {
@@ -55,6 +57,67 @@ type ConsignmentSlipRecord struct {
 	UpdatedAt        time.Time               `json:"updatedAt"`
 	Lines            []ConsignmentLineRecord `gorm:"-" json:"lines,omitempty"`
 	OfficialPDF      *OfficialDocumentRef    `gorm:"-" json:"officialPdf,omitempty"`
+}
+
+// ReturnConsignmentProduct moves one product on a confirmed consignment back
+// into stock. Membership and state are checked under locks so a QR from another
+// slip or a duplicate scan cannot change unrelated inventory.
+func (r *Repository) ReturnConsignmentProduct(ctx context.Context, organizationID, consignmentID, productCode, actorUserID string) (ShipmentReturnScanResult, error) {
+	var scan ShipmentReturnScanResult
+	productCode = strings.TrimSpace(productCode)
+	if productCode == "" {
+		return scan, ErrConsignmentProductNotFound
+	}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var slipStatus string
+		result := tx.Raw(`SELECT status FROM consignment_slips WHERE organization_id=? AND id=? FOR UPDATE`, organizationID, consignmentID).Scan(&slipStatus)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrConsignmentNotFound
+		}
+		if slipStatus != "confirmed" {
+			return ErrConsignmentState
+		}
+		var product struct{ ID, ProductCode, InventoryStatus string }
+		result = tx.Raw(`SELECT p.id,p.product_code,p.inventory_status
+			FROM consignment_lines l JOIN products p ON p.id=l.product_id
+			WHERE l.consignment_slip_id=? AND p.organization_id=? AND p.product_code=? AND p.deleted_at IS NULL
+			FOR UPDATE`, consignmentID, organizationID, productCode).Scan(&product)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrConsignmentProductNotFound
+		}
+		scan = ShipmentReturnScanResult{ProductCode: product.ProductCode, PreviousStatus: product.InventoryStatus, CurrentStatus: product.InventoryStatus}
+		if product.InventoryStatus == "in_stock" {
+			scan.Result = "already_in_stock"
+			return nil
+		}
+		if product.InventoryStatus != "consigned" {
+			return ErrConsignmentReturnState
+		}
+		now := time.Now().UTC()
+		if err := tx.Exec(`UPDATE products SET inventory_status='in_stock',updated_at=? WHERE id=?`, now, product.ID).Error; err != nil {
+			return err
+		}
+		eventID, err := database.NewID("ive")
+		if err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO inventory_events(
+			id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
+		) VALUES(?,?,?,'consignment_return_scanned','consigned','in_stock','委託伝票詳細で返却QRを読取',?,?)`,
+			eventID, organizationID, product.ID, actorUserID, now).Error; err != nil {
+			return err
+		}
+		scan.CurrentStatus = "in_stock"
+		scan.Result = "returned"
+		return nil
+	})
+	return scan, err
 }
 
 func (r *Repository) CreateConsignment(ctx context.Context, input ConsignmentCreateInput) (ConsignmentSlipRecord, error) {

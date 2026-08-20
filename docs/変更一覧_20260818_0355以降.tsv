@@ -1,0 +1,27 @@
+﻿画面	大項目	変更内容	変更前	変更後	対象ファイル	ステータス	備考
+在庫一覧	商品詳細	詳細モーダルを開いた際に先頭位置を表示	前回のスクロール位置が残る場合がある	毎回モーダル上端・左端から表示	frontend/public/admin-reference/js/app.js	完了	配布用ファイルへ同期済み
+仕入登録	CSV取込	CSVエラー通知を明示的に閉じるまで保持	再描画でエラー表示が消える	閉じる操作・正常取込・次エラーまで保持	frontend/public/admin-reference/js/purchase_entry.js	完了	エラー件数とセル例を表示
+商品登録・商品編集	管理番号	管理番号の全体一意性をフロント・API・DBで検証	画面単位の確認に依存	編集対象自身を除外し重複登録を拒否	frontend/public/admin-reference/js/app.js / internal / migrations	完了	APIエラーも画面表示
+伝票共通	伝票番号	全伝票種別で伝票番号の一意性を保証	種別ごとの採番確認	DB制約とAPI検証で重複を拒否	internal / migrations	完了	削除番号は欠番として再利用しない
+伝票一覧	一括選択	行・複数・ヘッダー選択と選択件数を共通化	タブごとに操作差がある	全タブで同じ選択操作	frontend/public/admin-reference/js/app.js	完了	未選択時は対象伝票を1件以上選択する旨を表示
+仕入伝票一覧	帳票	選択した仕入伝票のみ帳票発行・ダウンロード・印刷	表示対象と選択対象が不明確	選択分だけ仕入伝票帳票を生成	frontend/public/admin-reference/js/app.js	完了	帳票種別を固定
+出荷伝票一覧	帳票	選択した出荷伝票の帳票・通関書類・通関画像を個別出力	通関書類と画像が混在	別PDFとしてダウンロード可能	frontend/public/admin-reference/js/app.js / css/style.css	完了	A4横・選択分のみ
+委託伝票一覧	帳票・編集	選択帳票の発行と伝票詳細からの編集を追加	閲覧・単票操作中心	複数選択帳票と編集に対応	frontend/public/admin-reference/js/app.js	完了	委託中商品の有無で処理状態を算出
+売上伝票一覧	請求書	選択した売上伝票のみ請求書を発行	一括対象が曖昧	選択分だけ請求書を生成	frontend/public/admin-reference/js/app.js	完了	入金確認済みで処理済み
+伝票一覧	タブ操作	タブごとのボタン名称と選択状態を分離	タブ切替後に前タブ状態が残る場合がある	タブ切替時に選択と操作表示を更新	frontend/public/admin-reference/js/app.js	完了	仕入・出荷・委託・売上に対応
+売上返品伝票	追跡・状態	追跡番号をステータス横で編集・確定可能に変更	完了操作中心	処理中／処理済を追跡番号で判定	frontend/public/admin-reference/js/app.js	完了	返品確定時に商品を在庫中へ反映
+仕入返品伝票	追跡・状態	追跡番号必須と確定状態を分離	商品状態と伝票状態が混在	伝票は処理中／処理済、商品は仕入返品中／仕入返品済	frontend/public/admin-reference/js/app.js / app.html	完了	検索候補にも反映
+伝票一覧	操作	不足していた操作列を追加し削除をアーカイブ化	直接削除のみ	削除伝票一覧へ保存	frontend/public/admin-reference/js/app.js / internal	完了	左メニューに削除伝票一覧
+仕入登録	登録済み一覧	仕入登録内の一覧を伝票一覧と統一	別レイアウト	伝票番号から操作まで共通列で表示	frontend/public/admin-reference/js/purchase_entry.js	完了	原価は円、売価はUSDを既定表示
+仕入登録	仕入レート	海外仕入のUSD/HKD選択と起票時レート固定	通貨・レート表示が不足	起票時レートと実仕入通貨を伝票へ保存・表示	frontend/public/admin-reference/js/purchase_entry.js / internal	完了	備考欄にも通貨別レートを表示
+マスタ登録	外貨レート	為替レート推移をグラフ表示	数値一覧のみ	USD/HKD等の推移グラフを表示	frontend/public/admin-reference/js/app.js / css/style.css	完了	仕入伝票の固定レート元
+在庫一覧	検索	検索条件の整列、マスタ選択、Enter検索を追加	一部条件でボタン操作が必要	現在の条件でEnter検索	frontend/public/admin-reference/js/app.js / app.html	完了	形状検索は削除
+相場表	検索・CSV	検索欄整列、Enter検索、テンプレート名称を統一	配置と名称が不統一	相場表テンプレートとして出力	frontend/public/admin-reference/js/app.js / app.html	完了	マスタ項目は名称表示
+売上登録	QR連続読取	カメラ・外部リーダー連続読取と自動明細追加	手入力中心	重複防止・大文字小文字吸収・件数表示	frontend/public/admin-reference/js/app.js	完了	参照伝票商品の条件を検証
+出荷登録・委託登録	QR連続読取	売上登録と同じ位置・操作へ統一	画面ごとに位置が異なる	明細下部に追加行と並べて表示	frontend/public/admin-reference/js/app.js / app.html	完了	登録済み伝票一覧も確定ボタン下に表示
+商品画像	通関画像	先頭画像を通関画像用として明示・拡大表示	注釈が画像に重なる	赤枠と画像外注釈、クリック拡大	frontend/public/admin-reference/js/app.js / css/style.css	完了	1ページ10点のPDF配置
+商品タグ	表示内容	コードではなくマスタ名称・記号を表示	MAT/MOV/MRK等のコード表示	素材名・駆動方式名・マーキング記号を表示	frontend/public/admin-reference/js/app.js	完了	実物タグの表面レイアウトに準拠
+通関書類	PDF	列幅・罫線・縦横位置を調整し見切れを解消	長い値が隣列へ重なる	項目単位が視認できるA4横PDF	frontend/public/admin-reference/js/app.js / css/style.css	完了	OriginはSwitzerland
+棚卸	スナップショット	棚卸開始時に対象データ固定、担当者・実施日を保持	現在在庫を都度参照	セッションと明細をDB保存	frontend/public/admin-reference/js/app.js / internal	完了	不一致確定と伝票ベース確認に対応
+承認管理	申請詳細	日本語表示と対象伝票・商品詳細への導線を追加	内部種別・ID中心	申請内容を日本語で表示し詳細を開ける	frontend/public/admin-reference/js/app.js	完了	ベル通知から承認管理へ遷移
+マスタ登録	名称・コード	画面名称とCSV列名を統一しコード接頭辞を整理	旧名称・旧接頭辞が混在	管理番号・モデル・原価・バイヤー等へ統一	frontend/public/admin-reference/js/app.js / purchase_entry.js	完了	CSVのマスタ項目のみ名称+コード

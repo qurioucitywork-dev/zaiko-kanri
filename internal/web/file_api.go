@@ -111,7 +111,11 @@ func (s *Server) apiProductFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]responseFile, 0, len(records))
 	for _, record := range records {
-		items = append(items, responseFile{ProductFileRecord: record, URL: "/api/v1/product-files/" + record.ID})
+		fileURL := "/api/v1/product-files/" + record.ID
+		if record.SHA256 != "" {
+			fileURL += "?v=" + record.SHA256
+		}
+		items = append(items, responseFile{ProductFileRecord: record, URL: fileURL})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
 }

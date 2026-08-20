@@ -44,8 +44,9 @@ func TestPurchaseCostSnapshotUsesLatestRateAtRegistration(t *testing.T) {
 	newObserved := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
 	if err := db.Exec(`INSERT INTO exchange_rate_snapshots
 		(id,organization_id,base_currency,quote_currency,rate_scaled,scale,observed_at,created_at)
-		VALUES ('fx_old','org','USD','JPY',150,1,?,?),('fx_registration','org','USD','JPY',160,1,?,?)`,
-		oldObserved, oldObserved, newObserved, newObserved).Error; err != nil {
+		VALUES ('fx_old','org','USD','JPY',150,1,?,?),('fx_registration','org','USD','JPY',160,1,?,?),
+		('fx_hkd_registration','org','HKD','JPY',20,1,?,?)`,
+		oldObserved, oldObserved, newObserved, newObserved, newObserved, newObserved).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,5 +56,12 @@ func TestPurchaseCostSnapshotUsesLatestRateAtRegistration(t *testing.T) {
 	}
 	if converted != 32000 || rateID != "fx_registration" || rateScaled != int64(160) || scale != int64(1) {
 		t.Fatalf("registration snapshot = converted:%d id:%v rate:%v scale:%v", converted, rateID, rateScaled, scale)
+	}
+	hkdConverted, hkdRateID, hkdRateScaled, hkdScale, err := purchaseCostSnapshot(db, "org", 1000, 1, "HKD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hkdConverted != 20000 || hkdRateID != "fx_hkd_registration" || hkdRateScaled != int64(20) || hkdScale != int64(1) {
+		t.Fatalf("HKD registration snapshot = converted:%d id:%v rate:%v scale:%v", hkdConverted, hkdRateID, hkdRateScaled, hkdScale)
 	}
 }

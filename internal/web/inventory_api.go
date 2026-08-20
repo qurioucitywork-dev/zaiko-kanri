@@ -27,6 +27,7 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
+		ProductCode           string   `json:"productCode"`
 		SupplierCode          string   `json:"supplierCode"`
 		StaffCode             string   `json:"staffCode"`
 		PurchaseDate          string   `json:"purchaseDate"`
@@ -74,7 +75,7 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	user, _ := currentUser(r.Context())
 	result, err := s.repository.CreateSingleProduct(r.Context(), persistence.SingleProductInput{
-		OrganizationID: user.OrganizationID, ActorUserID: user.ID, SupplierCode: input.SupplierCode,
+		OrganizationID: user.OrganizationID, ActorUserID: user.ID, ProductCode: input.ProductCode, SupplierCode: input.SupplierCode,
 		StaffCode: input.StaffCode, PurchaseDate: input.PurchaseDate, SKU: input.SKU, BrandCode: input.BrandCode,
 		ModelNumber: input.ModelNumber, ReferenceNumber: input.ReferenceNumber, SerialNumber: input.SerialNumber,
 		ProductType: input.ProductType, ShapeCode: input.ShapeCode, MarkingCode: input.MarkingCode, MaterialCode: input.MaterialCode, MovementCode: input.MovementCode,
@@ -94,6 +95,8 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 			status, code, message = http.StatusBadRequest, "master_not_found", "商品マスタコードが見つかりません。"
 		case errors.Is(err, persistence.ErrDuplicateSerialReason):
 			status, code, message = http.StatusConflict, "duplicate_serial_reason_required", "同じシリアル番号が存在します。登録理由を入力してください。"
+		case errors.Is(err, persistence.ErrDuplicateProductCode):
+			status, code, message = http.StatusConflict, "duplicate_product_code", "この管理番号は既に使用されています。別の管理番号を入力してください。"
 		}
 		s.log.Error("create REST product", "error", err, "request_id", requestID(r.Context()))
 		writeAPIError(w, status, code, message)
@@ -136,6 +139,8 @@ func (s *Server) apiProductUpdate(w http.ResponseWriter, r *http.Request) {
 			status, code, message = http.StatusConflict, "product_state_conflict", "出荷・売上・取置などのステータスは各伝票から変更してください。"
 		case errors.Is(err, persistence.ErrDuplicateSerialReason):
 			status, code, message = http.StatusConflict, "duplicate_serial_reason_required", "同じシリアル番号が存在します。編集理由を入力してください。"
+		case errors.Is(err, persistence.ErrDuplicateProductCode):
+			status, code, message = http.StatusConflict, "duplicate_product_code", "この管理番号は既に使用されています。別の管理番号を入力してください。"
 		case errors.Is(err, persistence.ErrPurchaseDateMismatch):
 			status, code, message = http.StatusConflict, "purchase_date_mismatch", "仕入伝票から登録された商品の仕入日は、元の仕入伝票と同じ日付で固定されています。"
 		case errors.Is(err, persistence.ErrSupplierNotFound), errors.Is(err, persistence.ErrStaffNotFound), errors.Is(err, persistence.ErrMasterCodeNotFound):
@@ -154,4 +159,4 @@ func (s *Server) apiProductUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, record)
 }
 
-func validCurrency(value string) bool { return value == "JPY" || value == "USD" }
+func validCurrency(value string) bool { return value == "JPY" || value == "USD" || value == "HKD" }

@@ -32,27 +32,33 @@ type StocktakeSession struct {
 func (StocktakeSession) TableName() string { return "stocktake_sessions" }
 
 type StocktakeLine struct {
-	ID                 string     `gorm:"column:id;primaryKey" json:"id"`
-	OrganizationID     string     `gorm:"column:organization_id" json:"-"`
-	SessionID          string     `gorm:"column:session_id" json:"sessionId"`
-	ProductID          string     `gorm:"column:product_id" json:"productId,omitempty"`
-	ProductCode        string     `gorm:"column:product_code" json:"productCode"`
-	LineType           string     `gorm:"column:line_type" json:"lineType"`
-	ResultStatus       string     `gorm:"column:result_status" json:"resultStatus"`
-	Source             string     `gorm:"column:source" json:"source"`
-	InventoryStatus    string     `gorm:"column:inventory_status" json:"inventoryStatus"`
-	Brand              string     `gorm:"column:brand" json:"brand"`
-	ModelNumber        string     `gorm:"column:model_number" json:"modelNumber"`
-	ReferenceNumber    string     `gorm:"column:reference_number" json:"referenceNumber"`
-	SerialNumber       string     `gorm:"column:serial_number" json:"serialNumber"`
-	PurchasePriceMinor int64      `gorm:"column:purchase_price_minor" json:"purchasePriceMinor"`
-	Reason             string     `gorm:"column:reason" json:"reason"`
-	Note               string     `gorm:"column:note" json:"note"`
-	CheckedAt          *time.Time `gorm:"column:checked_at" json:"checkedAt,omitempty"`
-	ShipmentIssuedAt   *time.Time `gorm:"column:shipment_issued_at" json:"shipmentIssuedAt,omitempty"`
-	ResolvedAt         *time.Time `gorm:"column:resolved_at" json:"resolvedAt,omitempty"`
-	CreatedAt          time.Time  `gorm:"column:created_at" json:"createdAt"`
-	UpdatedAt          time.Time  `gorm:"column:updated_at" json:"updatedAt"`
+	ID                  string     `gorm:"column:id;primaryKey" json:"id"`
+	OrganizationID      string     `gorm:"column:organization_id" json:"-"`
+	SessionID           string     `gorm:"column:session_id" json:"sessionId"`
+	ProductID           string     `gorm:"column:product_id" json:"productId,omitempty"`
+	ProductCode         string     `gorm:"column:product_code" json:"productCode"`
+	LineType            string     `gorm:"column:line_type" json:"lineType"`
+	ResultStatus        string     `gorm:"column:result_status" json:"resultStatus"`
+	Source              string     `gorm:"column:source" json:"source"`
+	InventoryStatus     string     `gorm:"column:inventory_status" json:"inventoryStatus"`
+	Brand               string     `gorm:"column:brand" json:"brand"`
+	ModelNumber         string     `gorm:"column:model_number" json:"modelNumber"`
+	ReferenceNumber     string     `gorm:"column:reference_number" json:"referenceNumber"`
+	SerialNumber        string     `gorm:"column:serial_number" json:"serialNumber"`
+	PurchasePriceMinor  int64      `gorm:"column:purchase_price_minor" json:"purchasePriceMinor"`
+	Reason              string     `gorm:"column:reason" json:"reason"`
+	Note                string     `gorm:"column:note" json:"note"`
+	CheckedAt           *time.Time `gorm:"column:checked_at" json:"checkedAt,omitempty"`
+	ShipmentIssuedAt    *time.Time `gorm:"column:shipment_issued_at" json:"shipmentIssuedAt,omitempty"`
+	DocumentType        string     `gorm:"column:document_type" json:"documentType,omitempty"`
+	DocumentID          string     `gorm:"column:document_id" json:"documentId,omitempty"`
+	DocumentNumber      string     `gorm:"column:document_number" json:"documentNumber,omitempty"`
+	DocumentPartnerName string     `gorm:"column:document_partner_name" json:"documentPartnerName,omitempty"`
+	DocumentCheckedAt   *time.Time `gorm:"column:document_checked_at" json:"documentCheckedAt,omitempty"`
+	DocumentCheckedBy   string     `gorm:"column:document_checked_by" json:"documentCheckedBy,omitempty"`
+	ResolvedAt          *time.Time `gorm:"column:resolved_at" json:"resolvedAt,omitempty"`
+	CreatedAt           time.Time  `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt           time.Time  `gorm:"column:updated_at" json:"updatedAt"`
 }
 
 func (StocktakeLine) TableName() string { return "stocktake_lines" }
@@ -77,11 +83,46 @@ func (r *Repository) CurrentStocktake(ctx context.Context, organizationID string
 	if err != nil {
 		return session, err
 	}
+	if err := attachStocktakeDocuments(r.db.WithContext(ctx), organizationID, session.ID); err != nil {
+		return session, err
+	}
 	if err := r.db.WithContext(ctx).Where("session_id = ?", session.ID).
 		Order("CASE WHEN line_type = 'expected_missing' THEN 0 ELSE 1 END, created_at, product_code").Find(&session.Lines).Error; err != nil {
 		return session, err
 	}
 	return session, nil
+}
+
+func attachStocktakeDocuments(tx *gorm.DB, organizationID, sessionID string) error {
+	if tx.Migrator().HasTable("shipment_lines") {
+		if err := tx.Exec(`UPDATE stocktake_lines st SET
+			document_type='shipment', document_id=x.id, document_number=x.slip_number,
+			document_partner_name=x.partner_name, shipment_issued_at=x.issued_at
+		FROM (SELECT DISTINCT ON (sl.product_id) sl.product_id,ss.id,ss.slip_number,
+			bp.legal_name AS partner_name,COALESCE(ss.confirmed_at,ss.created_at) AS issued_at
+			FROM shipment_lines sl JOIN shipment_slips ss ON ss.id=sl.shipment_slip_id
+			JOIN partner_roles pr ON pr.id=ss.buyer_role_id JOIN business_partners bp ON bp.id=pr.partner_id
+			WHERE ss.organization_id=? AND ss.status='confirmed'
+			ORDER BY sl.product_id,COALESCE(ss.confirmed_at,ss.created_at) DESC) x
+		WHERE st.session_id=? AND st.product_id=x.product_id AND st.inventory_status='shipped' AND st.document_id=''`, organizationID, sessionID).Error; err != nil {
+			return err
+		}
+	}
+	if tx.Migrator().HasTable("consignment_lines") {
+		if err := tx.Exec(`UPDATE stocktake_lines st SET
+			document_type='consignment', document_id=x.id, document_number=x.slip_number,
+			document_partner_name=x.partner_name, shipment_issued_at=x.issued_at
+		FROM (SELECT DISTINCT ON (cl.product_id) cl.product_id,cs.id,cs.slip_number,
+			bp.legal_name AS partner_name,COALESCE(cs.issued_at,cs.confirmed_at,cs.created_at) AS issued_at
+			FROM consignment_lines cl JOIN consignment_slips cs ON cs.id=cl.consignment_slip_id
+			JOIN partner_roles pr ON pr.id=cs.consignee_role_id JOIN business_partners bp ON bp.id=pr.partner_id
+			WHERE cs.organization_id=? AND cs.status='confirmed'
+			ORDER BY cl.product_id,COALESCE(cs.issued_at,cs.confirmed_at,cs.created_at) DESC) x
+		WHERE st.session_id=? AND st.product_id=x.product_id AND st.inventory_status='consigned' AND st.document_id=''`, organizationID, sessionID).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *Repository) StartStocktake(ctx context.Context, organizationID, actorUserID string) (StocktakeSession, error) {
@@ -232,6 +273,22 @@ func (r *Repository) ScanStocktake(ctx context.Context, organizationID, sessionI
 		}
 		var expected StocktakeLine
 		if err := tx.Where("session_id = ? AND product_code = ? AND line_type = ?", sessionID, code, "expected_missing").First(&expected).Error; err == nil {
+			if expected.InventoryStatus == "shipped" || expected.InventoryStatus == "consigned" {
+				if expected.DocumentCheckedAt == nil {
+					message = "document_unchecked"
+					return nil
+				}
+				if expected.ResultStatus == "duplicate_presence" {
+					message = "already_duplicate_presence"
+					return nil
+				}
+				now := time.Now().UTC()
+				message = "duplicate_presence"
+				return tx.Model(&StocktakeLine{}).Where("id = ?", expected.ID).Updates(map[string]any{
+					"result_status": "duplicate_presence", "reason": "伝票確認後に実在庫を検出（二重確認）",
+					"checked_at": now, "updated_at": now,
+				}).Error
+			}
 			if expected.ResultStatus == "verified" {
 				message = "already_verified"
 				return nil
@@ -275,6 +332,47 @@ func (r *Repository) ScanStocktake(ctx context.Context, organizationID, sessionI
 	}
 	session, err := r.CurrentStocktake(ctx, organizationID)
 	return session, message, err
+}
+
+func (r *Repository) ConfirmStocktakeDocument(ctx context.Context, organizationID, sessionID, documentType, documentID, actorUserID string, productCodes []string) (StocktakeSession, int64, error) {
+	if documentType != "shipment" && documentType != "consignment" {
+		return StocktakeSession{}, 0, fmt.Errorf("invalid document type")
+	}
+	now := time.Now().UTC()
+	var affected int64
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var session StocktakeSession
+		if err := tx.Where("id=? AND organization_id=? AND status='in_progress'", sessionID, organizationID).First(&session).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrStocktakeNotFound
+			}
+			return err
+		}
+		query := tx.Model(&StocktakeLine{}).Where(
+			"session_id=? AND organization_id=? AND document_type=? AND document_id=? AND line_type='expected_missing'",
+			sessionID, organizationID, documentType, documentID,
+		)
+		if len(productCodes) > 0 {
+			query = query.Where("product_code IN ?", productCodes)
+		}
+		result := query.Updates(map[string]any{
+			"result_status": "verified", "checked_at": now, "document_checked_at": now,
+			"document_checked_by": actorUserID, "reason": "", "updated_at": now,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		affected = result.RowsAffected
+		if affected == 0 {
+			return fmt.Errorf("stocktake document not found")
+		}
+		return tx.Model(&StocktakeSession{}).Where("id=?", sessionID).Updates(map[string]any{"saved_at": now, "updated_at": now}).Error
+	})
+	if err != nil {
+		return StocktakeSession{}, affected, err
+	}
+	session, err := r.CurrentStocktake(ctx, organizationID)
+	return session, affected, err
 }
 
 func (r *Repository) SaveStocktake(ctx context.Context, organizationID, sessionID string, updates map[string]struct{ Reason, Note string }, resolvedIDs []string) (StocktakeSession, error) {

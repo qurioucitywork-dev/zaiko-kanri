@@ -9,6 +9,11 @@
 /output/
 /.gocache/
 /.logs/
+/.tmp-gocache/
+/.tmp-go-cache/
+/.tmp-customs-csv/
+/.tmp-cloudflared-*.log
+/.tmp-server*.log
 
 # Local configuration
 .env
@@ -30,6 +35,7 @@ Thumbs.db
 
 # Frontend dependencies (built assets under internal/web/react-dist are committed)
 /frontend/node_modules/
+/frontend/.pnpm-store/
 
 # Terraform local state
 **/.terraform/

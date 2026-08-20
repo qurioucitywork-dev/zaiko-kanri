@@ -13,8 +13,10 @@ import (
 )
 
 var (
-	ErrShipmentNotFound = errors.New("shipment slip not found")
-	ErrShipmentState    = errors.New("shipment slip cannot be changed in its current state")
+	ErrShipmentNotFound        = errors.New("shipment slip not found")
+	ErrShipmentState           = errors.New("shipment slip cannot be changed in its current state")
+	ErrShipmentProductNotFound = errors.New("product is not included in shipment slip")
+	ErrShipmentReturnState     = errors.New("shipment product cannot be returned in its current state")
 )
 
 type ShipmentCreateInput struct {
@@ -64,6 +66,74 @@ type ShipmentSlipRecord struct {
 	CreatedAt        time.Time            `json:"createdAt"`
 	UpdatedAt        time.Time            `json:"updatedAt"`
 	Lines            []ShipmentLineRecord `gorm:"-" json:"lines,omitempty"`
+}
+
+type ShipmentReturnScanResult struct {
+	ProductCode    string `json:"productCode"`
+	PreviousStatus string `json:"previousStatus"`
+	CurrentStatus  string `json:"currentStatus"`
+	Result         string `json:"result"`
+}
+
+// ReturnShipmentProduct moves one product on a confirmed shipment back into stock.
+// The shipment-line check and status transition are locked in one transaction so a
+// QR from another document, or a duplicate scan, cannot corrupt inventory state.
+func (r *Repository) ReturnShipmentProduct(ctx context.Context, organizationID, shipmentID, productCode, actorUserID string) (ShipmentReturnScanResult, error) {
+	var scan ShipmentReturnScanResult
+	productCode = strings.TrimSpace(productCode)
+	if productCode == "" {
+		return scan, ErrShipmentProductNotFound
+	}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var shipmentStatus string
+		result := tx.Raw(`SELECT status FROM shipment_slips WHERE organization_id=? AND id=? FOR UPDATE`, organizationID, shipmentID).Scan(&shipmentStatus)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrShipmentNotFound
+		}
+		if shipmentStatus != "confirmed" {
+			return ErrShipmentState
+		}
+		var product struct{ ID, ProductCode, InventoryStatus string }
+		result = tx.Raw(`SELECT p.id,p.product_code,p.inventory_status
+			FROM shipment_lines l JOIN products p ON p.id=l.product_id
+			WHERE l.shipment_slip_id=? AND p.organization_id=? AND p.product_code=? AND p.deleted_at IS NULL
+			FOR UPDATE`, shipmentID, organizationID, productCode).Scan(&product)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrShipmentProductNotFound
+		}
+		scan = ShipmentReturnScanResult{ProductCode: product.ProductCode, PreviousStatus: product.InventoryStatus, CurrentStatus: product.InventoryStatus}
+		if product.InventoryStatus == "in_stock" {
+			scan.Result = "already_in_stock"
+			return nil
+		}
+		if product.InventoryStatus != "shipped" {
+			return ErrShipmentReturnState
+		}
+		now := time.Now().UTC()
+		if err := tx.Exec(`UPDATE products SET inventory_status='in_stock',updated_at=? WHERE id=?`, now, product.ID).Error; err != nil {
+			return err
+		}
+		eventID, err := database.NewID("ive")
+		if err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO inventory_events(
+			id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
+		) VALUES(?,?,?,'shipment_return_scanned','shipped','in_stock','出荷伝票詳細で返却QRを読取',?,?)`,
+			eventID, organizationID, product.ID, actorUserID, now).Error; err != nil {
+			return err
+		}
+		scan.CurrentStatus = "in_stock"
+		scan.Result = "returned"
+		return nil
+	})
+	return scan, err
 }
 
 func (r *Repository) UpdateShipmentTracking(ctx context.Context, organizationID, shipmentID, carrier, trackingNumber string) (ShipmentSlipRecord, error) {

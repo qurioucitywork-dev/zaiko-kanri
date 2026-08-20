@@ -45,25 +45,27 @@ type ReturnLineRecord struct {
 }
 
 type ReturnSlipRecord struct {
-	ID              string             `json:"id"`
-	SlipNumber      string             `json:"slipNumber"`
-	OperationType   string             `json:"operationType"`
-	TransactionDate DateString         `json:"transactionDate"`
-	BuyerCode       string             `json:"buyerCode,omitempty"`
-	BuyerName       string             `json:"buyerName,omitempty"`
-	SupplierCode    string             `json:"supplierCode,omitempty"`
-	SupplierName    string             `json:"supplierName,omitempty"`
-	PurchaseSlipID  string             `json:"sourcePurchaseSlipId,omitempty"`
-	PurchaseSlipNo  string             `json:"sourcePurchaseSlipNumber,omitempty"`
-	Carrier         string             `json:"carrier"`
-	TrackingNumber  string             `json:"trackingNumber"`
-	Status          string             `json:"status"`
-	Reason          string             `json:"reason"`
-	Notes           string             `json:"notes"`
-	ConfirmedAt     *time.Time         `json:"confirmedAt,omitempty"`
-	CreatedAt       time.Time          `json:"createdAt"`
-	UpdatedAt       time.Time          `json:"updatedAt"`
-	Lines           []ReturnLineRecord `gorm:"-" json:"lines,omitempty"`
+	ID                  string             `json:"id"`
+	SlipNumber          string             `json:"slipNumber"`
+	OperationType       string             `json:"operationType"`
+	TransactionDate     DateString         `json:"transactionDate"`
+	BuyerCode           string             `json:"buyerCode,omitempty"`
+	BuyerName           string             `json:"buyerName,omitempty"`
+	SupplierCode        string             `json:"supplierCode,omitempty"`
+	SupplierName        string             `json:"supplierName,omitempty"`
+	PurchaseSlipID      string             `json:"sourcePurchaseSlipId,omitempty"`
+	PurchaseSlipNo      string             `json:"sourcePurchaseSlipNumber,omitempty"`
+	Carrier             string             `json:"carrier"`
+	TrackingNumber      string             `json:"trackingNumber"`
+	Status              string             `json:"status"`
+	Reason              string             `json:"reason"`
+	Notes               string             `json:"notes"`
+	ConfirmedAt         *time.Time         `json:"confirmedAt,omitempty"`
+	TrackingConfirmedAt *time.Time         `json:"trackingConfirmedAt,omitempty"`
+	TrackingConfirmedBy string             `json:"trackingConfirmedBy,omitempty"`
+	CreatedAt           time.Time          `json:"createdAt"`
+	UpdatedAt           time.Time          `json:"updatedAt"`
+	Lines               []ReturnLineRecord `gorm:"-" json:"lines,omitempty"`
 }
 
 func (r *Repository) CreateReturn(ctx context.Context, input ReturnCreateInput) (ReturnSlipRecord, error) {
@@ -191,7 +193,8 @@ func (r *Repository) ReturnSlips(ctx context.Context, organizationID string, lim
 		Select(`r.id,r.slip_number,r.operation_type,r.transaction_date,COALESCE(br.role_code,'') AS buyer_code,
 			COALESCE(bp.legal_name,'') AS buyer_name,COALESCE(sr.role_code,'') AS supplier_code,
 			COALESCE(sp.legal_name,'') AS supplier_name,COALESCE(r.source_purchase_slip_id,'') AS purchase_slip_id,
-			COALESCE(ps.slip_number,'') AS purchase_slip_no,r.carrier,r.tracking_number,r.status,r.reason,r.notes,r.confirmed_at,r.created_at,r.updated_at`).
+			COALESCE(ps.slip_number,'') AS purchase_slip_no,r.carrier,r.tracking_number,r.status,r.reason,r.notes,r.confirmed_at,
+			r.tracking_confirmed_at,COALESCE(r.tracking_confirmed_by,'') AS tracking_confirmed_by,r.created_at,r.updated_at`).
 		Joins("LEFT JOIN partner_roles br ON br.id=r.buyer_role_id").Joins("LEFT JOIN business_partners bp ON bp.id=br.partner_id").
 		Joins("LEFT JOIN partner_roles sr ON sr.id=r.supplier_role_id").Joins("LEFT JOIN business_partners sp ON sp.id=sr.partner_id").
 		Joins("LEFT JOIN purchase_slips ps ON ps.id=r.source_purchase_slip_id").
@@ -206,7 +209,8 @@ func (r *Repository) ReturnSlip(ctx context.Context, organizationID, returnID st
 		Select(`r.id,r.slip_number,r.operation_type,r.transaction_date,COALESCE(br.role_code,'') AS buyer_code,
 			COALESCE(bp.legal_name,'') AS buyer_name,COALESCE(sr.role_code,'') AS supplier_code,
 			COALESCE(sp.legal_name,'') AS supplier_name,COALESCE(r.source_purchase_slip_id,'') AS purchase_slip_id,
-			COALESCE(ps.slip_number,'') AS purchase_slip_no,r.carrier,r.tracking_number,r.status,r.reason,r.notes,r.confirmed_at,r.created_at,r.updated_at`).
+			COALESCE(ps.slip_number,'') AS purchase_slip_no,r.carrier,r.tracking_number,r.status,r.reason,r.notes,r.confirmed_at,
+			r.tracking_confirmed_at,COALESCE(r.tracking_confirmed_by,'') AS tracking_confirmed_by,r.created_at,r.updated_at`).
 		Joins("LEFT JOIN partner_roles br ON br.id=r.buyer_role_id").Joins("LEFT JOIN business_partners bp ON bp.id=br.partner_id").
 		Joins("LEFT JOIN partner_roles sr ON sr.id=r.supplier_role_id").Joins("LEFT JOIN business_partners sp ON sp.id=sr.partner_id").
 		Joins("LEFT JOIN purchase_slips ps ON ps.id=r.source_purchase_slip_id").
@@ -226,7 +230,7 @@ func (r *Repository) ReturnSlip(ctx context.Context, organizationID, returnID st
 	return record, nil
 }
 
-func (r *Repository) UpdateReturnTracking(ctx context.Context, organizationID, returnID, actorUserID, carrier, trackingNumber string) (ReturnSlipRecord, error) {
+func (r *Repository) UpdateReturnTracking(ctx context.Context, organizationID, returnID, actorUserID, carrier, trackingNumber string, confirmed bool) (ReturnSlipRecord, error) {
 	carrier = strings.TrimSpace(carrier)
 	trackingNumber = strings.TrimSpace(trackingNumber)
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -242,12 +246,15 @@ func (r *Repository) UpdateReturnTracking(ctx context.Context, organizationID, r
 		if result.RowsAffected == 0 || slip.Status == "cancelled" {
 			return ErrReturnNotFound
 		}
+		if confirmed && trackingNumber == "" {
+			return ErrReturnState
+		}
 
 		now := time.Now().UTC()
 		// 仕入返品は、伝票起票・承認時点では実物が手元にあるため「仕入返品中」
-		// （内部値 return_pending）のまま保持する。配送番号を明示的に保存した時点を
-		// 返品発送完了とみなし、「仕入返品済」（内部値 cancelled）へ遷移させる。
-		if slip.OperationType == "purchase_return" && trackingNumber != "" {
+		// （内部値 return_pending）のまま保持する。配送番号を入力しただけでは完了させず、
+		// 利用者が「確定」を実行した時点でのみ「仕入返品済」（内部値 cancelled）へ遷移させる。
+		if slip.OperationType == "purchase_return" || slip.OperationType == "return" {
 			var lines []struct{ ProductID string }
 			if err := tx.Table("return_lines").Select("product_id").Where("return_slip_id=?", returnID).
 				Order("line_number").Scan(&lines).Error; err != nil {
@@ -263,30 +270,59 @@ func (r *Repository) UpdateReturnTracking(ctx context.Context, organizationID, r
 				if productResult.RowsAffected == 0 {
 					return ErrProductUnavailable
 				}
-				if current == "cancelled" {
+				fromStatus, toStatus := "return_pending", "cancelled"
+				eventType, reason := "purchase_return_tracking_confirmed", "配送番号の確定により仕入返品済へ変更"
+				if slip.OperationType == "return" {
+					toStatus = "in_stock"
+					eventType, reason = "sales_return_tracking_confirmed", "追跡番号の確定により売上返品済へ変更"
+				}
+				if !confirmed {
+					fromStatus, toStatus = toStatus, "return_pending"
+					if slip.OperationType == "purchase_return" {
+						eventType, reason = "purchase_return_tracking_reopened", "配送番号を修正するため仕入返品中へ戻す"
+					} else {
+						eventType, reason = "sales_return_tracking_reopened", "追跡番号を修正するため売上返品中へ戻す"
+					}
+				}
+				if current == toStatus {
 					continue
 				}
-				if current != "return_pending" {
+				if current != fromStatus {
 					return ErrReturnState
 				}
-				if err := tx.Exec(`UPDATE products SET inventory_status='cancelled',cancelled_at=?,cancelled_by=?,
-					cancel_reason=?,updated_at=? WHERE organization_id=? AND id=?`, now, actorUserID,
-					"仕入返品の配送番号保存", now, organizationID, line.ProductID).Error; err != nil {
-					return err
+				if confirmed && slip.OperationType == "purchase_return" {
+					if err := tx.Exec(`UPDATE products SET inventory_status='cancelled',cancelled_at=?,cancelled_by=?,
+						cancel_reason=?,updated_at=? WHERE organization_id=? AND id=?`, now, actorUserID,
+						"仕入返品の配送番号確定", now, organizationID, line.ProductID).Error; err != nil {
+						return err
+					}
+				} else {
+					cancelFields := ""
+					if slip.OperationType == "purchase_return" {
+						cancelFields = ",cancelled_at=NULL,cancelled_by=NULL,cancel_reason=''"
+					}
+					if err := tx.Exec(`UPDATE products SET inventory_status=?,updated_at=?`+cancelFields+`
+						WHERE organization_id=? AND id=?`, toStatus, now, organizationID, line.ProductID).Error; err != nil {
+						return err
+					}
 				}
 				eventID, _ := database.NewID("ive")
 				if err := tx.Exec(`INSERT INTO inventory_events(
 					id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
 				) VALUES(?,?,?,?,?,?,?,?,?)`, eventID, organizationID, line.ProductID,
-					"purchase_return_tracking_confirmed", "return_pending", "cancelled",
-					"配送番号保存により仕入返品済へ変更", actorUserID, now).Error; err != nil {
+					eventType, fromStatus, toStatus, reason, actorUserID, now).Error; err != nil {
 					return err
 				}
 			}
 		}
 
-		return tx.Table("return_slips").Where("organization_id=? AND id=?", organizationID, returnID).
-			Updates(map[string]any{"carrier": carrier, "tracking_number": trackingNumber, "updated_at": now}).Error
+		updates := map[string]any{"carrier": carrier, "tracking_number": trackingNumber, "updated_at": now,
+			"tracking_confirmed_at": nil, "tracking_confirmed_by": nil}
+		if confirmed {
+			updates["tracking_confirmed_at"] = now
+			updates["tracking_confirmed_by"] = actorUserID
+		}
+		return tx.Table("return_slips").Where("organization_id=? AND id=?", organizationID, returnID).Updates(updates).Error
 	})
 	if err != nil {
 		return ReturnSlipRecord{}, err
@@ -329,19 +365,23 @@ func (r *Repository) ConfirmReturn(ctx context.Context, organizationID, returnID
 			if slip.OperationType == "purchase_return" && current != "return_pending" {
 				return ErrReturnState
 			}
-			// 仕入返品の確定は伝票の承認だけを行い、商品は「仕入返品中」のまま保持する。
-			// 「仕入返品済」への遷移は配送番号を保存した時点で UpdateReturnTracking が行う。
+			// 仕入返品は配送番号の確定まで「仕入返品中」、売上返品も追跡番号の確定まで
+			// 「売上返品中」として保持する。完了遷移は UpdateReturnTracking が行う。
 			if slip.OperationType == "purchase_return" {
 				continue
 			}
-			if err := tx.Exec(`UPDATE products SET inventory_status=?,updated_at=? WHERE id=?`, line.ToStatus, now, line.ProductID).Error; err != nil {
+			toStatus := line.ToStatus
+			if slip.OperationType == "return" {
+				toStatus = "return_pending"
+			}
+			if err := tx.Exec(`UPDATE products SET inventory_status=?,updated_at=? WHERE id=?`, toStatus, now, line.ProductID).Error; err != nil {
 				return err
 			}
 			eventID, _ := database.NewID("ive")
 			if err := tx.Exec(`INSERT INTO inventory_events(
 				id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
 			) VALUES(?,?,?,?,?,?,?, ?,?)`, eventID, organizationID, line.ProductID,
-				"return_"+slip.OperationType+"_confirmed", current, line.ToStatus, "返品/持ち帰り伝票確定", actorUserID, now).Error; err != nil {
+				"return_"+slip.OperationType+"_confirmed", current, toStatus, "返品/持ち帰り伝票確定", actorUserID, now).Error; err != nil {
 				return err
 			}
 		}

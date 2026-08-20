@@ -132,7 +132,13 @@ async function initStocktake() {
     if (typeof showToast === 'function') showToast('error', '棚卸データ取得エラー', error.message || '棚卸途中データを取得できませんでした。');
   } finally { _stkLoading = false; }
   const startButton = document.getElementById('stkStartButton');
-  if (startButton) startButton.classList.toggle('hidden', Boolean(_stkSession));
+  if (startButton) {
+    startButton.classList.remove('hidden');
+    startButton.disabled = Boolean(_stkSession);
+    startButton.innerHTML = _stkSession
+      ? '<i class="fa-solid fa-lock"></i> 棚卸開始済み（データ固定中）'
+      : '<i class="fa-solid fa-play"></i> 棚卸開始';
+  }
   const sessionLabel = document.getElementById('stkSessionLabel');
   if (sessionLabel && _stkSession) {
     const scanner = (APP_DATA.users || []).find(user => user.id === _stkSession.startedBy)?.name || _stkSession.startedBy;
@@ -204,6 +210,10 @@ async function stkHandleInput() {
         _stkShowPopup('warning', '不明在庫として追加しました', `管理番号「${code}」は棚卸対象外または未登録のため、不一致リストへ追加しました。`);
       } else if (result.result === 'already_verified') {
         _stkShowPopup('info', 'すでに棚卸済です', `管理番号「${code}」はすでに棚卸済です。`);
+      } else if (result.result === 'document_unchecked') {
+        _stkShowPopup('warning', '先に伝票の商品を確認してください', `管理番号「${code}」は出荷・委託中です。「出荷済・委託中」タブで該当伝票の商品にチェックを入れて確定してください。`);
+      } else if (['duplicate_presence','already_duplicate_presence'].includes(result.result)) {
+        _stkShowPopup('warning', '二重確認を不一致へ追加しました', `伝票側で確認済みの管理番号「${code}」が実在庫としてスキャンされました。在庫戻し忘れの可能性があるため、不一致リストへ追加しました。`);
       } else {
         _stkShowToast(`<i class="fa-solid fa-check-circle" style="color:#16a34a;"></i> 棚卸済にしました: <b>${_esc(item?.brand || code)} ${_esc(item?.model || '')}</b>`);
       }
@@ -302,10 +312,60 @@ function stkRenderTable() {
     return;
   }
 
+  if (_stkCurrentTab === 'shipped' && _stkSession) {
+    _stkRenderDocumentGroups(tbody, items);
+    return;
+  }
   tbody.innerHTML = items.map(item => _stkBuildRow(item)).join('');
 }
 
-function _stkBuildRow(item) {
+function _stkRenderDocumentGroups(tbody, items) {
+  const groups = new Map();
+  items.forEach(item => {
+    const line = item._stocktakeLine || {};
+    const key = `${line.documentType || 'unlinked'}:${line.documentId || item.code}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(item);
+  });
+  tbody.innerHTML = [...groups.values()].map(group => {
+    const line = group[0]._stocktakeLine || {};
+    const typeLabel = line.documentType === 'consignment' ? '委託伝票' : (line.documentType === 'shipment' ? '出荷伝票' : '伝票未関連');
+    const checked = group.filter(item => item._stocktakeLine?.documentCheckedAt).length;
+    const issuedAt = line.shipmentIssuedAt ? new Date(line.shipmentIssuedAt).toLocaleString('ja-JP') : '—';
+    const action = line.documentId ? `<button class="btn btn-primary btn-sm" onclick="stkConfirmDocumentItems('${_esc(line.documentType)}','${_esc(line.documentId)}')">
+      <i class="fa-solid fa-check-double"></i> 選択商品を伝票確認
+    </button>` : '<span class="stk-document-warning">伝票との関連を確認してください</span>';
+    return `<tr class="stk-document-row"><td colspan="13">
+      <div class="stk-document-header">
+        <div><strong>${typeLabel} ${_esc(line.documentNumber || '—')}</strong>
+          <span>起票日時：${_esc(issuedAt)}</span><span>出荷・委託先：${_esc(line.documentPartnerName || '—')}</span>
+          <span>確認済み：${checked} / ${group.length}点</span>
+        </div>${action}
+      </div>
+    </td></tr>${group.map(item => _stkBuildRow(item, true)).join('')}`;
+  }).join('');
+}
+
+async function stkConfirmDocumentItems(documentType, documentId) {
+  const productCodes = [...document.querySelectorAll(`#stkTableBody .stk-document-check[data-document-id="${CSS.escape(documentId)}"]:checked`)]
+    .map(input => input.value);
+  if (!productCodes.length) {
+    _stkShowPopup('info', '商品を選択してください', '伝票に記載された現物を確認し、該当商品のチェックボックスを選択してください。');
+    return;
+  }
+  try {
+    const result = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(_stkSession.id)}/documents/${encodeURIComponent(documentType)}/${encodeURIComponent(documentId)}/confirm`, {
+      method:'POST', body:JSON.stringify({ productCodes }),
+    });
+    _stkSession = result.session; _stkSyncStateFromSession();
+    stkRenderTable(); stkUpdateSummary(); stkUpdateProgress(); _stkUpdateMismatchBadge();
+    _stkShowToast(`<i class="fa-solid fa-check-circle" style="color:#16a34a;"></i> 伝票の商品 ${result.affected}点を確認しました。続けて店内の実在庫をスキャンしてください。`);
+  } catch (error) {
+    _stkShowPopup('warning', '伝票確認を保存できません', error.message || '通信状態を確認してください。');
+  }
+}
+
+function _stkBuildRow(item, documentMode = false) {
   const st = _stkState[item.code] || { state: '未処理', reason: null };
   const state = st.state;
 
@@ -319,7 +379,9 @@ function _stkBuildRow(item) {
   }[state] || '';
 
   // バッジ
-  const badgeHtml = `<span class="stk-state-badge stk-state-${state}">${_stkStateIcon(state)} ${state}</span>`;
+  const line = item._stocktakeLine || {};
+  const documentCheck = documentMode ? `<input type="checkbox" class="stk-document-check" data-document-id="${_esc(line.documentId || '')}" value="${_esc(item.code)}" ${line.documentCheckedAt ? 'checked disabled' : ''} aria-label="${_esc(item.code)}を伝票確認"> ` : '';
+  const badgeHtml = `${documentCheck}<span class="stk-state-badge stk-state-${state}">${_stkStateIcon(state)} ${state}</span>`;
 
   // コンディション名
   const cond = (APP_DATA.conditions || []).find(c => c.code === item.condition);
@@ -333,6 +395,9 @@ function _stkBuildRow(item) {
   return `<tr class="${rowClass}" data-code="${_esc(item.code)}">
     <td class="stk-td stk-td-status">${badgeHtml}</td>
     <td class="stk-td stk-td-code">${_esc(item.code)}</td>
+    <td class="stk-td stk-td-inventory-date${st.inventoryDate ? ' stk-date-set' : ''}">${_esc(st.inventoryDate || '—')}</td>
+    <td class="stk-td">${_esc(item._stocktakeLine?.shipmentIssuedAt ? new Date(item._stocktakeLine.shipmentIssuedAt).toLocaleString('ja-JP') : '—')}</td>
+    <td class="stk-td">${_esc(scanner)}</td>
     <td class="stk-td">${_esc(item.brand || '—')}</td>
     <td class="stk-td">${_esc(item.model || '—')}</td>
     <td class="stk-td">${_esc(item.ref   || '—')}</td>
@@ -341,9 +406,6 @@ function _stkBuildRow(item) {
     <td class="stk-td">${_esc(item.staff || '—')}</td>
     <td class="stk-td stk-td-price">${price}</td>
     <td class="stk-td">${_esc(item.purchaseDate || '—')}</td>
-    <td class="stk-td stk-td-inventory-date${st.inventoryDate ? ' stk-date-set' : ''}">${_esc(st.inventoryDate || '—')}</td>
-    <td class="stk-td">${_esc(item._stocktakeLine?.shipmentIssuedAt ? new Date(item._stocktakeLine.shipmentIssuedAt).toLocaleString('ja-JP') : '—')}</td>
-    <td class="stk-td">${_esc(scanner)}</td>
   </tr>`;
 }
 
@@ -813,7 +875,7 @@ function stkDownloadCSV() {
   const inv = _stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || []);
   const fmt = v => v || '';
 
-  const headers = ['商品コード','ブランド','モデル名','型番','シリアル','仕入金額','ステータス','棚卸状態','不一致理由','備考','棚卸日時'];
+  const headers = ['管理番号','ブランド','モデル','型番','シリアル','原価','ステータス','棚卸状態','不一致理由','備考','棚卸日時'];
   const rows = inv.map(item => {
     const st = _stkState[item.code] || { state: '未処理' };
     return [

@@ -19,6 +19,7 @@ var (
 	ErrQuantitySerialConflict = errors.New("serial number cannot be used when quantity is greater than one")
 	ErrPurchaseQuantity       = errors.New("purchase line quantity must be one")
 	ErrPurchaseTaxMode        = errors.New("invalid purchase tax mode")
+	ErrPurchaseInUse          = errors.New("purchase slip has products already used by another operation")
 )
 
 const (
@@ -110,6 +111,11 @@ type PurchaseSlipRecord struct {
 	ConfirmedAt           *time.Time           `json:"confirmedAt,omitempty"`
 	IssuedAt              *time.Time           `json:"issuedAt,omitempty"`
 	IssuedBy              string               `json:"issuedBy,omitempty"`
+	PaidAt                *time.Time           `json:"paidAt,omitempty"`
+	PaidBy                string               `json:"paidBy,omitempty"`
+	CancelledAt           *time.Time           `json:"cancelledAt,omitempty"`
+	CancelledBy           string               `json:"cancelledBy,omitempty"`
+	CancelReason          string               `json:"cancelReason,omitempty"`
 	IssueFXRateSnapshotID string               `json:"issueFxRateSnapshotId,omitempty"`
 	IssueFXRateScaled     int64                `json:"issueFxRateScaled"`
 	IssueFXScale          int64                `json:"issueFxScale"`
@@ -151,7 +157,7 @@ func (r *Repository) PurchaseSlipsPage(ctx context.Context, organizationID strin
 	}
 	var total int64
 	if err := r.db.WithContext(ctx).Table("purchase_slips").
-		Where("organization_id=?", organizationID).Count(&total).Error; err != nil {
+		Where("organization_id=? AND status<>'cancelled'", organizationID).Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 	var records []PurchaseSlipRecord
@@ -159,15 +165,44 @@ func (r *Repository) PurchaseSlipsPage(ctx context.Context, organizationID strin
 		Select(`p.id,p.slip_number,pr.role_code AS supplier_code,bp.legal_name AS supplier_name,
 			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_rate_basis_points,
 			p.status,p.is_simple,p.notes,
-			p.confirmed_at,p.issued_at,COALESCE(p.issued_by,'') AS issued_by,
+			p.confirmed_at,p.issued_at,COALESCE(p.issued_by,'') AS issued_by,p.paid_at,COALESCE(p.paid_by,'') AS paid_by,
 			COALESCE(p.issue_fx_rate_snapshot_id,'') AS issue_fx_rate_snapshot_id,
 			COALESCE(p.issue_fx_rate_scaled,0) AS issue_fx_rate_scaled,
 			COALESCE(p.issue_fx_scale,0) AS issue_fx_scale,p.created_at,p.updated_at`).
 		Joins("JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
 		Joins("JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
-		Where("p.organization_id=?", organizationID).
+		Where("p.organization_id=? AND p.status<>'cancelled'", organizationID).
 		Order("p.purchase_date DESC,p.slip_number DESC").
+		Offset((page - 1) * pageSize).Limit(pageSize).Scan(&records).Error
+	return records, total, err
+}
+
+// DeletedPurchaseSlipsPage returns archived (cancelled) purchase slips. They
+// remain in PostgreSQL so their numbers and audit trail are never reused.
+func (r *Repository) DeletedPurchaseSlipsPage(ctx context.Context, organizationID string, page, pageSize int) ([]PurchaseSlipRecord, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 200 {
+		pageSize = 100
+	}
+	var total int64
+	if err := r.db.WithContext(ctx).Table("purchase_slips").
+		Where("organization_id=? AND status='cancelled'", organizationID).Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var records []PurchaseSlipRecord
+	err := r.db.WithContext(ctx).Table("purchase_slips AS p").
+		Select(`p.id,p.slip_number,pr.role_code AS supplier_code,bp.legal_name AS supplier_name,
+			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_rate_basis_points,
+			p.status,p.is_simple,p.notes,p.cancelled_at,COALESCE(p.cancelled_by,'') AS cancelled_by,
+			p.cancel_reason,p.created_at,p.updated_at`).
+		Joins("JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
+		Joins("JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
+		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
+		Where("p.organization_id=? AND p.status='cancelled'", organizationID).
+		Order("p.cancelled_at DESC NULLS LAST,p.slip_number DESC").
 		Offset((page - 1) * pageSize).Limit(pageSize).Scan(&records).Error
 	return records, total, err
 }
@@ -178,14 +213,14 @@ func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseI
 		Select(`p.id,p.slip_number,pr.role_code AS supplier_code,bp.legal_name AS supplier_name,
 			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_rate_basis_points,
 			p.status,p.is_simple,p.notes,
-			p.confirmed_at,p.issued_at,COALESCE(p.issued_by,'') AS issued_by,
+			p.confirmed_at,p.issued_at,COALESCE(p.issued_by,'') AS issued_by,p.paid_at,COALESCE(p.paid_by,'') AS paid_by,
 			COALESCE(p.issue_fx_rate_snapshot_id,'') AS issue_fx_rate_snapshot_id,
 			COALESCE(p.issue_fx_rate_scaled,0) AS issue_fx_rate_scaled,
 			COALESCE(p.issue_fx_scale,0) AS issue_fx_scale,p.created_at,p.updated_at`).
 		Joins("JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
 		Joins("JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
-		Where("p.organization_id=? AND p.id=?", organizationID, purchaseID).Take(&record)
+		Where("p.organization_id=? AND p.id=? AND p.status<>'cancelled'", organizationID, purchaseID).Take(&record)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return PurchaseSlipRecord{}, ErrPurchaseNotFound
 	}
@@ -222,6 +257,48 @@ func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseI
 		record.Lines = append(record.Lines, row.PurchaseLineRecord)
 	}
 	return record, nil
+}
+
+// DeletePurchase cancels a purchase slip and removes its still-unused products
+// from active inventory. The row and sequence stay for audit, so its number is
+// never issued again.
+func (r *Repository) DeletePurchase(ctx context.Context, organizationID, purchaseID, actorUserID string) (PurchaseSlipRecord, error) {
+	var before PurchaseSlipRecord
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Raw(`SELECT id,slip_number,status FROM purchase_slips
+			WHERE organization_id=? AND id=? AND status<>'cancelled' FOR UPDATE`, organizationID, purchaseID).Scan(&before)
+		if result.Error != nil {
+			return result.Error
+		}
+		if before.ID == "" {
+			return ErrPurchaseNotFound
+		}
+
+		var usedCount int64
+		if err := tx.Table("products AS product").
+			Joins("JOIN purchase_slip_lines AS line ON line.id=product.purchase_slip_line_id").
+			Where("line.purchase_slip_id=? AND product.deleted_at IS NULL AND product.inventory_status NOT IN ?", purchaseID, []string{"purchasing", "in_stock"}).
+			Count(&usedCount).Error; err != nil {
+			return err
+		}
+		if usedCount > 0 {
+			return ErrPurchaseInUse
+		}
+
+		now := time.Now().UTC()
+		if err := tx.Table("purchase_slips").Where("organization_id=? AND id=?", organizationID, purchaseID).Updates(map[string]any{
+			"status": "cancelled", "cancelled_at": now, "cancelled_by": actorUserID,
+			"cancel_reason": "伝票一覧から削除", "updated_at": now,
+		}).Error; err != nil {
+			return err
+		}
+		return tx.Table("products AS product").
+			Where(`product.organization_id=? AND product.deleted_at IS NULL AND product.purchase_slip_line_id IN
+				(SELECT id FROM purchase_slip_lines WHERE purchase_slip_id=?)`, organizationID, purchaseID).
+			Updates(map[string]any{"inventory_status": "cancelled", "cancelled_at": now, "cancelled_by": actorUserID,
+				"cancel_reason": "仕入伝票削除", "deleted_at": now, "updated_at": now}).Error
+	})
+	return before, err
 }
 
 func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInput) (PurchaseSlipRecord, error) {
@@ -493,6 +570,20 @@ func (r *Repository) IssuePurchase(ctx context.Context, organizationID, purchase
 	now := time.Now().UTC()
 	result := r.db.WithContext(ctx).Exec(`UPDATE purchase_slips
 		SET issued_at=?,issued_by=?,updated_at=?
+		WHERE organization_id=? AND id=?`, now, actorUserID, now, organizationID, purchaseID)
+	if result.Error != nil {
+		return PurchaseSlipRecord{}, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return PurchaseSlipRecord{}, ErrPurchaseNotFound
+	}
+	return r.PurchaseSlip(ctx, organizationID, purchaseID)
+}
+
+func (r *Repository) MarkPurchasePaid(ctx context.Context, organizationID, purchaseID, actorUserID string) (PurchaseSlipRecord, error) {
+	now := time.Now().UTC()
+	result := r.db.WithContext(ctx).Exec(`UPDATE purchase_slips
+		SET paid_at=COALESCE(paid_at,?),paid_by=COALESCE(paid_by,?),updated_at=?
 		WHERE organization_id=? AND id=?`, now, actorUserID, now, organizationID, purchaseID)
 	if result.Error != nil {
 		return PurchaseSlipRecord{}, result.Error

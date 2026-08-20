@@ -105,7 +105,7 @@ func (s *Server) productsCSV(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="inventory-products.csv"`)
 	_, _ = w.Write([]byte{0xEF, 0xBB, 0xBF})
 	writer := csv.NewWriter(w)
-	_ = writer.Write([]string{"商品コード", "SKU", "ブランド", "型番", "シリアル", "仕入日", "仕入先", "原価", "原価通貨", "売価（USD）", "売価通貨", "在庫状態"})
+	_ = writer.Write([]string{"管理番号", "SKU", "ブランド", "型番", "シリアル", "仕入日", "仕入先", "原価", "原価通貨", "売価", "売価通貨", "ステータス"})
 	for _, product := range page.Products {
 		_ = writer.Write([]string{
 			safeCSVCell(product.ProductCode), safeCSVCell(product.SKU), safeCSVCell(product.Brand),

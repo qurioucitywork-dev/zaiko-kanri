@@ -102,3 +102,33 @@ func (s *Server) apiConsignmentCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, record)
 }
+
+func (s *Server) apiConsignmentReturnScan(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Code string `json:"code"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.Code) == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_product_code", "商品管理番号を読み取ってください。")
+		return
+	}
+	user, _ := currentUser(r.Context())
+	result, err := s.repository.ReturnConsignmentProduct(r.Context(), user.OrganizationID, r.PathValue("id"), input.Code, user.ID)
+	if err != nil {
+		switch {
+		case errors.Is(err, persistence.ErrConsignmentNotFound):
+			writeAPIError(w, http.StatusNotFound, "consignment_not_found", "委託伝票が見つかりません。")
+		case errors.Is(err, persistence.ErrConsignmentProductNotFound):
+			writeAPIError(w, http.StatusNotFound, "consignment_product_not_found", "この委託伝票に含まれない商品です。")
+		case errors.Is(err, persistence.ErrConsignmentState):
+			writeAPIError(w, http.StatusConflict, "consignment_not_confirmed", "確定済みの委託伝票だけ返却処理できます。")
+		case errors.Is(err, persistence.ErrConsignmentReturnState):
+			writeAPIError(w, http.StatusConflict, "consignment_return_state", "この商品は委託中ではないため在庫中へ変更できません。")
+		default:
+			writeAPIError(w, http.StatusInternalServerError, "consignment_return_failed", "返却処理を完了できませんでした。")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
