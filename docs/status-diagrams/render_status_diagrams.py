@@ -134,7 +134,7 @@ def make_purchase():
     draw_node(d, n["p7"], size, "仕入取消\n伝票：取消", "red")
     draw_node(d, n["p6"], size, "検品不合格\n商品：検品保留", "red")
     draw_node(d, n["p8"], size, "仕入返品伝票を起票\n商品：仕入返品処理中", "orange")
-    draw_node(d, n["p9"], size, "仕入先へ返送\n商品：仕入返品済", "gray")
+    draw_node(d, n["p9"], size, "仕入先へ返送\n商品：仕入返品処理済", "gray")
     draw_node(d, n["p10"], (300, 100), "修理・再検品", "gray")
     draw_node(d, n["p11"], (300, 100), "廃棄処理", "red")
 

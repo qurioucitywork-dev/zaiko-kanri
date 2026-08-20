@@ -288,8 +288,8 @@ func (s *Server) parseTemplates() error {
 		"productStatus": func(status string) string {
 			return map[string]string{
 				"purchasing": "仕入中", "in_stock": "在庫中", "reserved": "取置中",
-				"return_pending": "仕入返品中", "consigned": "委託中",
-				"sold": "販売済み", "shipped": "出荷済み", "cancelled": "仕入返品済", "invalid": "無効",
+				"return_pending": "仕入返品処理中", "consigned": "委託中",
+				"sold": "販売済み", "shipped": "出荷済み", "cancelled": "仕入返品処理済", "invalid": "無効",
 				"public": "公開", "private": "非公開",
 			}[status]
 		},

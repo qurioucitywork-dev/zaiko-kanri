@@ -521,8 +521,8 @@ function syncPurchaseSlipToInventory(slip) {
 /** 商品在庫ステータスの旧名称を現行名称へ統一する。DBの英語値にも対応する。 */
 function normalizeInventoryStatusLabel(status) {
   const value = String(status || '').trim();
-  if (['return_pending', '仕入返品', '仕入返品中'].includes(value) || value === '仕入返品処理中') return '仕入返品中';
-  if (['cancelled', '取消', '取消済', '取り消し', '仕入返品済'].includes(value) || value === '仕入返品処理済') return '仕入返品済';
+  if (['return_pending', '仕入返品', '仕入返品中', '仕入返品処理中'].includes(value)) return '仕入返品処理中';
+  if (['cancelled', '取消', '取消済', '取り消し', '仕入返品済', '仕入返品処理済'].includes(value)) return '仕入返品処理済';
   if (['sales_return_pending', '売上返品中', '売上返品処理中'].includes(value)) return '売上返品処理中';
   if (['sales_returned', '売上返品済'].includes(value)) return '売上返品済';
   return value;
@@ -576,7 +576,7 @@ function applyBusinessRecordState(type, record) {
       if (inventoryItem) inventoryItem.status = '在庫中';
     });
   } else if (type === 'purchasereturn') {
-    _setRecordInventoryStatus(record, '仕入返品中', { preserveLabel: true });
+    _setRecordInventoryStatus(record, '仕入返品処理中', { preserveLabel: true });
   }
 }
 
@@ -1954,7 +1954,7 @@ function filterInventory() {
 }
 
 // ステータス未指定の「すべて」は、仕入伝票から生成された商品との突合に使うため
-// 仕入返品済を含む全商品を返す。通常利用時は検索条件の初期値が「在庫中」なので、
+// 仕入返品処理済を含む全商品を返す。通常利用時は検索条件の初期値が「在庫中」なので、
 // 実在庫だけを見たい従来の初期表示は維持される。
 function _matchesInventoryFilters(item, f) {
   const itemStatus = normalizeInventoryStatusLabel(item.status);
@@ -4858,11 +4858,11 @@ function getSlipSearchStatus(record, tabType = currentSlipTab) {
   }
 
   if (tabType === 'purchasereturn') {
-    return getPurchaseReturnProcessingStatus(record) === '仕入返品処理済' ? 'completed' : 'processing';
+    return getPurchaseReturnProcessingStatus(record) === '処理済' ? 'completed' : 'processing';
   }
 
   if (tabType === 'salesreturn') {
-    return getSalesReturnProcessingStatus(record) === '売上返品済' ? 'completed' : 'processing';
+    return getSalesReturnProcessingStatus(record) === '処理済' ? 'completed' : 'processing';
   }
 
   const rawStatus = String(record?.status || '').trim();
@@ -8115,7 +8115,7 @@ function getPurchaseReturnProcessingStatus(ret) {
 }
 
 function getSalesReturnProcessingStatus(ret) {
-  return _isReturnTrackingConfirmed(ret) ? '売上返品済' : '売上返品処理中';
+  return _isReturnTrackingConfirmed(ret) ? '処理済' : '処理中';
 }
 
 function openPurchaseReturnDetail(retId) {
@@ -8242,13 +8242,13 @@ async function _savePurchaseReturnTracking(ret, rawValue, confirmed = true) {
       ret.trackingNo = trackingNumber;
       ret.trackingConfirmed = confirmed;
       ret.trackingConfirmedAt = confirmed ? new Date().toISOString() : '';
-      ret.status = confirmed ? '仕入返品処理済' : '仕入返品処理中';
+      ret.status = confirmed ? '処理済' : '処理中';
       persistBusinessWorkflowState();
     }
-    _setRecordInventoryStatus(ret, confirmed ? '仕入返品済' : '仕入返品中', { preserveLabel: true });
+    _setRecordInventoryStatus(ret, confirmed ? '仕入返品処理済' : '仕入返品処理中', { preserveLabel: true });
     refreshLinkedBusinessViews({ source: confirmed ? 'purchase-return-tracking-confirmed' : 'purchase-return-tracking-edit' });
     showToast('success', confirmed ? '追跡番号を確定しました' : '追跡番号を編集できます',
-      confirmed ? '対象商品を「仕入返品済」に変更しました。' : '確定するまで伝票は「仕入返品処理中」、商品は「仕入返品中」です。');
+      confirmed ? '対象商品を「仕入返品処理済」に変更しました。' : '確定するまで伝票は「処理中」、商品は「仕入返品処理中」です。');
     return true;
   } catch (error) {
     showToast('error', '配送番号を保存できませんでした', error.message);
@@ -9181,12 +9181,12 @@ async function _saveSalesReturnTracking(ret, rawValue, confirmed = true) {
         item.trackingNo = trackingNumber;
         item.trackingConfirmed = confirmed;
         item.trackingConfirmedAt = confirmed ? new Date().toISOString() : '';
-        item.status = confirmed ? '売上返品済' : '売上返品処理中';
+        item.status = confirmed ? '処理済' : '処理中';
       });
       ret.trackingNo = trackingNumber;
       ret.trackingConfirmed = confirmed;
       ret.trackingConfirmedAt = confirmed ? new Date().toISOString() : '';
-      ret.status = confirmed ? '売上返品済' : '売上返品処理中';
+      ret.status = confirmed ? '処理済' : '処理中';
       _setRecordInventoryStatus(ret, '在庫中');
       persistBusinessWorkflowState();
     }

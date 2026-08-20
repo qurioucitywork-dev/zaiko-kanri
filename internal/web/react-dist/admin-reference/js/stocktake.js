@@ -40,12 +40,12 @@ let _stkCompleted = false;
 let _stkSession = null;
 let _stkLoading = false;
 
-const _STK_TARGET_STATUS = new Set(['在庫中', '取置中', '出荷済', '委託中', '仕入返品中']);
+const _STK_TARGET_STATUS = new Set(['在庫中', '取置中', '出荷済', '委託中', '仕入返品処理中']);
 
 function _stkNormalizeInventoryStatus(status) {
   const value = String(status || '').trim();
-  if (['仕入返品中', '仕入返品'].includes(value)) return '仕入返品中';
-  if (['仕入返品済', '取消済', '取り消し', '取消'].includes(value)) return '仕入返品済';
+  if (['仕入返品中', '仕入返品', '仕入返品処理中'].includes(value)) return '仕入返品処理中';
+  if (['仕入返品済', '取消済', '取り消し', '取消', '仕入返品処理済'].includes(value)) return '仕入返品処理済';
   return value;
 }
 
@@ -65,7 +65,7 @@ function _stkLineToItem(line) {
 }
 
 function _stkStatusLabel(value) {
-  return ({ in_stock:'在庫中', reserved:'取置中', shipped:'出荷済', consigned:'委託中', return_pending:'仕入返品中', cancelled:'仕入返品済' })[value] || value || '—';
+  return ({ in_stock:'在庫中', reserved:'取置中', shipped:'出荷済', consigned:'委託中', return_pending:'仕入返品処理中', cancelled:'仕入返品処理済' })[value] || value || '—';
 }
 
 function _stkSnapshotItems() {
@@ -73,7 +73,7 @@ function _stkSnapshotItems() {
   return (_stkSession.lines || [])
     .filter(line => line.lineType === 'expected_missing')
     .map(_stkLineToItem)
-    .filter(item => _stkNormalizeInventoryStatus(item.status) !== '仕入返品済');
+    .filter(item => _stkNormalizeInventoryStatus(item.status) !== '仕入返品処理済');
 }
 
 function _stkUnknownItems() {
@@ -81,7 +81,7 @@ function _stkUnknownItems() {
   return (_stkSession.lines || [])
     .filter(line => line.lineType === 'unknown_inventory')
     .map(_stkLineToItem)
-    .filter(item => _stkNormalizeInventoryStatus(item.status) !== '仕入返品済');
+    .filter(item => _stkNormalizeInventoryStatus(item.status) !== '仕入返品処理済');
 }
 
 function _stkSyncStateFromSession() {
@@ -205,7 +205,7 @@ async function stkHandleInput() {
       stkRenderTable(); stkUpdateSummary(); stkUpdateProgress(); _stkUpdateMismatchBadge();
       input.value = ''; input.focus();
       if (result.result === 'cancelled_ignored') {
-        _stkShowPopup('info', '仕入返品済商品は棚卸対象外です', `管理番号「${code}」は仕入返品済のため、棚卸リスト・不一致リストには追加しません。`);
+        _stkShowPopup('info', '仕入返品処理済商品は棚卸対象外です', `管理番号「${code}」は仕入返品処理済のため、棚卸リスト・不一致リストには追加しません。`);
       } else if (['unknown_added','already_unknown'].includes(result.result)) {
         _stkShowPopup('warning', '不明在庫として追加しました', `管理番号「${code}」は棚卸対象外または未登録のため、不一致リストへ追加しました。`);
       } else if (result.result === 'already_verified') {
@@ -223,8 +223,8 @@ async function stkHandleInput() {
     }
   }
 
-  if (item && _stkNormalizeInventoryStatus(item.status) === '仕入返品済') {
-    _stkShowPopup('info', '仕入返品済商品は棚卸対象外です', `管理番号「${code}」は仕入返品済のため、棚卸リスト・不一致リストには追加しません。`);
+  if (item && _stkNormalizeInventoryStatus(item.status) === '仕入返品処理済') {
+    _stkShowPopup('info', '仕入返品処理済商品は棚卸対象外です', `管理番号「${code}」は仕入返品処理済のため、棚卸リスト・不一致リストには追加しません。`);
     input.value = ''; input.focus(); return;
   }
 
@@ -287,7 +287,7 @@ function stkRenderTable() {
   if (!tbody) return;
 
   // 現在タブのステータスで絞り込み
-  const targetStatuses = _stkCurrentTab === 'instock' ? ['在庫中', '取置中', '仕入返品中'] : ['出荷済', '委託中'];
+  const targetStatuses = _stkCurrentTab === 'instock' ? ['在庫中', '取置中', '仕入返品処理中'] : ['出荷済', '委託中'];
 
   // 取置中も物理在庫なので在庫中タブの棚卸対象に含める。
   let items = (_stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || [])).filter(i => targetStatuses.includes(_stkNormalizeInventoryStatus(i.status)));
@@ -300,7 +300,7 @@ function stkRenderTable() {
 
   // タブカウント更新
   const snapshot = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
-  const inStockCount  = snapshot.filter(i => ['在庫中', '取置中', '仕入返品中'].includes(_stkNormalizeInventoryStatus(i.status))).length;
+  const inStockCount  = snapshot.filter(i => ['在庫中', '取置中', '仕入返品処理中'].includes(_stkNormalizeInventoryStatus(i.status))).length;
   const shippedCount  = snapshot.filter(i => ['出荷済', '委託中'].includes(_stkNormalizeInventoryStatus(i.status))).length;
   const countInStk = document.getElementById('stkTabCountInStock');
   const countShp  = document.getElementById('stkTabCountShipped');
@@ -426,7 +426,7 @@ function _stkStateIcon(state) {
 function stkUpdateProgress() {
   const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
 
-  const inStockItems  = inv.filter(i => ['在庫中', '取置中', '仕入返品中'].includes(_stkNormalizeInventoryStatus(i.status)));
+  const inStockItems  = inv.filter(i => ['在庫中', '取置中', '仕入返品処理中'].includes(_stkNormalizeInventoryStatus(i.status)));
   const shippedItems  = inv.filter(i => ['出荷済', '委託中'].includes(i.status));
 
   const doneInStock  = inStockItems.filter(i => _stkState[i.code]?.state === '棚卸済').length;
@@ -448,7 +448,7 @@ function stkUpdateProgress() {
 function stkUpdateSummary() {
   const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
 
-  const inStockItems  = inv.filter(i => ['在庫中', '取置中', '仕入返品中'].includes(_stkNormalizeInventoryStatus(i.status)));
+  const inStockItems  = inv.filter(i => ['在庫中', '取置中', '仕入返品処理中'].includes(_stkNormalizeInventoryStatus(i.status)));
   const shippedItems  = inv.filter(i => ['出荷済', '委託中'].includes(i.status));
 
   const sum = arr => arr.reduce((s, i) => s + (i.purchasePrice || 0), 0);
@@ -818,7 +818,7 @@ function stkTryComplete() {
   const statsEl = document.getElementById('stkCompleteStats');
   if (statsEl) {
     statsEl.innerHTML = [
-      { label: 'システム合計（在庫中・取置中・出荷済・委託中・仕入返品中）', val: fmt(grandTotal) },
+      { label: 'システム合計（在庫中・取置中・出荷済・委託中・仕入返品処理中）', val: fmt(grandTotal) },
       { label: '棚卸済合計',                    val: fmt(doneTotal) },
       { label: '不一致合計',                    val: fmt(mismatchTotal) },
       { label: 'チェック',                      val: diff < 1 ? '✓ 一致' : '✗ 不一致' },

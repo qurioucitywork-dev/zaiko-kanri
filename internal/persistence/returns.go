@@ -251,9 +251,9 @@ func (r *Repository) UpdateReturnTracking(ctx context.Context, organizationID, r
 		}
 
 		now := time.Now().UTC()
-		// 仕入返品は、伝票起票・承認時点では実物が手元にあるため「仕入返品中」
+		// 仕入返品は、伝票起票・承認時点では実物が手元にあるため「仕入返品処理中」
 		// （内部値 return_pending）のまま保持する。配送番号を入力しただけでは完了させず、
-		// 利用者が「確定」を実行した時点でのみ「仕入返品済」（内部値 cancelled）へ遷移させる。
+		// 利用者が「確定」を実行した時点でのみ「仕入返品処理済」（内部値 cancelled）へ遷移させる。
 		if slip.OperationType == "purchase_return" || slip.OperationType == "return" {
 			var lines []struct{ ProductID string }
 			if err := tx.Table("return_lines").Select("product_id").Where("return_slip_id=?", returnID).
@@ -271,17 +271,17 @@ func (r *Repository) UpdateReturnTracking(ctx context.Context, organizationID, r
 					return ErrProductUnavailable
 				}
 				fromStatus, toStatus := "return_pending", "cancelled"
-				eventType, reason := "purchase_return_tracking_confirmed", "配送番号の確定により仕入返品済へ変更"
+				eventType, reason := "purchase_return_tracking_confirmed", "配送番号の確定により仕入返品処理済へ変更"
 				if slip.OperationType == "return" {
 					toStatus = "in_stock"
-					eventType, reason = "sales_return_tracking_confirmed", "追跡番号の確定により売上返品済へ変更"
+					eventType, reason = "sales_return_tracking_confirmed", "追跡番号の確定により在庫中へ変更"
 				}
 				if !confirmed {
 					fromStatus, toStatus = toStatus, "return_pending"
 					if slip.OperationType == "purchase_return" {
-						eventType, reason = "purchase_return_tracking_reopened", "配送番号を修正するため仕入返品中へ戻す"
+						eventType, reason = "purchase_return_tracking_reopened", "配送番号を修正するため仕入返品処理中へ戻す"
 					} else {
-						eventType, reason = "sales_return_tracking_reopened", "追跡番号を修正するため売上返品中へ戻す"
+						eventType, reason = "sales_return_tracking_reopened", "追跡番号を修正するため売上返品処理中へ戻す"
 					}
 				}
 				if current == toStatus {
@@ -365,8 +365,8 @@ func (r *Repository) ConfirmReturn(ctx context.Context, organizationID, returnID
 			if slip.OperationType == "purchase_return" && current != "return_pending" {
 				return ErrReturnState
 			}
-			// 仕入返品は配送番号の確定まで「仕入返品中」、売上返品も追跡番号の確定まで
-			// 「売上返品中」として保持する。完了遷移は UpdateReturnTracking が行う。
+			// 仕入返品は配送番号の確定まで「仕入返品処理中」、売上返品も追跡番号の確定まで
+			// 「売上返品処理中」として保持する。完了遷移は UpdateReturnTracking が行う。
 			if slip.OperationType == "purchase_return" {
 				continue
 			}

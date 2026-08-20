@@ -189,8 +189,8 @@ func (r *Repository) SyncStocktake(ctx context.Context, organizationID, sessionI
 			}
 			return err
 		}
-		// 仕入返品済商品（内部値 cancelled）は棚卸対象外。過去の棚卸仕様で作られた
-		// 不明在庫行や、棚卸開始後に仕入返品済へ変わった対象行も同期時に確実に除外する。
+		// 仕入返品処理済商品（内部値 cancelled）は棚卸対象外。過去の棚卸仕様で作られた
+		// 不明在庫行や、棚卸開始後に仕入返品処理済へ変わった対象行も同期時に確実に除外する。
 		if err := tx.Exec(`DELETE FROM stocktake_lines
 			WHERE session_id = ? AND organization_id = ? AND (
 				source = 'cancelled' OR inventory_status = 'cancelled' OR

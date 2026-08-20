@@ -45,7 +45,7 @@ function Loading() { return <section className="card react-loading" aria-busy="t
 function Empty({ text = "対象データはありません。" }) { return <div className="empty-state"><strong>{text}</strong><p>検索条件や登録内容を確認してください。</p></div>; }
 function Status({ value }) { return <span className={`status-badge ${value}`}>{statusLabel(value)}</span>; }
 function InventoryStatus({ value }) {
-  const label = value === "return_pending" ? "仕入返品中" : value === "cancelled" ? "仕入返品済" : statusLabel(value);
+  const label = value === "return_pending" ? "仕入返品処理中" : value === "cancelled" ? "仕入返品処理済" : statusLabel(value);
   return <span className={`status-badge ${value}`}>{label}</span>;
 }
 function CsvLink({ kind, children = "ダウンロード" }) { return <a className="button secondary" href={`/api/v1/exports/${kind}.csv`}>↓ {children}</a>; }
@@ -67,7 +67,7 @@ function partnerOptions(partners, roleType) {
 function splitCodes(value) { return String(value || "").split(/[\s,、]+/).map((item) => item.trim()).filter(Boolean); }
 function money(value, currency = "JPY") { return new Intl.NumberFormat("ja-JP", { style: "currency", currency, maximumFractionDigits: 0 }).format(Number(value) || 0); }
 function dateTime(value) { return value ? new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "—"; }
-function statusLabel(value) { return ({ draft: "下書き", pending: "承認待ち", pending_approval: "承認待ち", approved: "承認済", returned: "差戻し", rejected: "却下", confirmed: "確定", cancelled: "取消", in_stock: "在庫中", reserved: "取置中", shipped: "出荷済", sold: "売上済", return_pending: "仕入返品中", active: "有効", inactive: "無効" })[value] || value || "—"; }
+function statusLabel(value) { return ({ draft: "下書き", pending: "承認待ち", pending_approval: "承認待ち", approved: "承認済", returned: "差戻し", rejected: "却下", confirmed: "確定", cancelled: "取消", in_stock: "在庫中", reserved: "取置中", shipped: "出荷済", sold: "売上済", return_pending: "仕入返品処理中", active: "有効", inactive: "無効" })[value] || value || "—"; }
 
 export function PurchasesPage() {
   const remote = useRemote("/purchases?limit=500");

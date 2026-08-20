@@ -12,7 +12,7 @@
       <option value="reserved" {{if eq .Status "reserved"}}selected{{end}}>取置中</option>
       <option value="sold" {{if eq .Status "sold"}}selected{{end}}>販売済み</option>
       <option value="shipped" {{if eq .Status "shipped"}}selected{{end}}>出荷済み</option>
-      {{if or (eq .User.Role "admin") (eq .User.Role "worker")}}<option value="return_pending" {{if eq .Status "return_pending"}}selected{{end}}>仕入返品中</option><option value="cancelled" {{if eq .Status "cancelled"}}selected{{end}}>仕入返品済</option>{{end}}
+      {{if or (eq .User.Role "admin") (eq .User.Role "worker")}}<option value="return_pending" {{if eq .Status "return_pending"}}selected{{end}}>仕入返品処理中</option><option value="cancelled" {{if eq .Status "cancelled"}}selected{{end}}>仕入返品処理済</option>{{end}}
     </select>
     <label class="sr-only" for="product-sort">並び順</label>
     <select id="product-sort" name="sort">
@@ -24,7 +24,7 @@
       <option value="sale_price_desc" {{if eq .Sort "sale_price_desc"}}selected{{end}}>売価（USD）の高い順</option>
     </select>
     {{if eq .User.Role "admin"}}
-    <label class="check-field"><input type="checkbox" name="include_cancelled" value="1" {{if .IncludeCancelled}}checked{{end}}>仕入返品済を含む</label>
+    <label class="check-field"><input type="checkbox" name="include_cancelled" value="1" {{if .IncludeCancelled}}checked{{end}}>仕入返品処理済を含む</label>
     {{end}}
     <button class="button secondary" type="submit">検索</button>
     <a class="button ghost" href="/products">条件をクリア</a>

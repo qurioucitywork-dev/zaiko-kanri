@@ -12,14 +12,14 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":               "89a8ce96a1b1458c58414b4b0f9beaa3ce99849f73709478cd511f5046a0a1ca",
+		"app.html":               "9ce2cd8be9337c3b29234939f344ca674c03704cda6ffd86a43ee7c0689bc25b",
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
 		"css/market-table.css":   "1bf42fc24cd9ac5d84fc2584942d5c8863a727cddf5796f47c7f92f514f377e2",
 		"css/style.css":          "c09a28c46ff7771252dc3f14645c520ab4ec236d5e87a8e78eb3987f9ceee129",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
-		"js/api_bridge.js":       "fc02d9dd4c5d56b10488cc5fd36a56d72384995e80018c317cf2005c47c0027d",
-		"js/app.js":              "cc3d48b472c924ec1fd06b5633e1182c4ba4d1c59526b58fc9fdb40e15308f6d",
+		"js/api_bridge.js":       "d2767c608d9200b5696727c66215e2188bb941d0ce1b3d819729a52abecdb4d5",
+		"js/app.js":              "b4d81d69408080121fe103912f26e563d4a6990bdf41545d446ab575a5e281cc",
 		"js/approval.js":         "43de68681b060a67bf00af6eb2a993e01d4acbcff55a1928c795cb4f0f031c1d",
 		"js/auth.js":             "a9f0cc7a928b801342241f4740c055f4f34eb208ac6ed61e25ef82191ad97c50",
 		"js/box.js":              "4ae711817115c0d62cdaa99e11920acc5ec67a0fa4d2e1879488368235840575",
@@ -30,7 +30,7 @@ func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 		"js/market_table.js":     "8b90c10b5a26854ce3cdd1cc82cd8956dbdf847d7b5a11f77cf9891e4c77af51",
 		"js/notify.js":           "edae1bc1187f3f29f87086018425aec3f628c5d342a0d8a3d22f854948cb6321",
 		"js/purchase_entry.js":   "044141a561c60e3f0a02703c9deebe709008afc05cab9e5b729aa32e7e22f90e",
-		"js/stocktake.js":        "a5002932c496174ea0f8f0b509a50d52ab9561242c28c5fcb584990b1d185763",
+		"js/stocktake.js":        "fd7b6cf4ae52ba64ed5c08839098551e191737a93a1c7be1681fc366142ee8d1",
 		"js/consignment.js":      "b5e54c342e0bb61a9c30ee0851b01101714eba9e194f414ed01a67b39f653586",
 		"js/qrcode-generator.js": "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
 		"js/jsQR.js":             "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
@@ -121,8 +121,8 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 	}
 	appJS := string(appContent)
 	for _, marker := range []string{
-		`['return_pending', '仕入返品', '仕入返品中']`,
-		`['cancelled', '取消', '取消済', '取り消し', '仕入返品済']`,
+		`['return_pending', '仕入返品', '仕入返品中', '仕入返品処理中']`,
+		`['cancelled', '取消', '取消済', '取り消し', '仕入返品済', '仕入返品処理済']`,
 		`normalizeInventoryCollectionStatuses();`,
 	} {
 		if !strings.Contains(appJS, marker) {

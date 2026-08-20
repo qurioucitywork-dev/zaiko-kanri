@@ -10,7 +10,7 @@
 売上伝票一覧	請求書	選択した売上伝票のみ請求書を発行	一括対象が曖昧	選択分だけ請求書を生成	frontend/public/admin-reference/js/app.js	完了	入金確認済みで処理済み
 伝票一覧	タブ操作	タブごとのボタン名称と選択状態を分離	タブ切替後に前タブ状態が残る場合がある	タブ切替時に選択と操作表示を更新	frontend/public/admin-reference/js/app.js	完了	仕入・出荷・委託・売上に対応
 売上返品伝票	追跡・状態	追跡番号をステータス横で編集・確定可能に変更	完了操作中心	処理中／処理済を追跡番号で判定	frontend/public/admin-reference/js/app.js	完了	返品確定時に商品を在庫中へ反映
-仕入返品伝票	追跡・状態	追跡番号必須と確定状態を分離	商品状態と伝票状態が混在	伝票は処理中／処理済、商品は仕入返品中／仕入返品済	frontend/public/admin-reference/js/app.js / app.html	完了	検索候補にも反映
+仕入返品伝票	追跡・状態	追跡番号必須と確定状態を分離	商品状態と伝票状態が混在	伝票は処理中／処理済、商品は仕入返品処理中／仕入返品処理済	frontend/public/admin-reference/js/app.js / app.html	完了	検索候補にも反映
 伝票一覧	操作	不足していた操作列を追加し削除をアーカイブ化	直接削除のみ	削除伝票一覧へ保存	frontend/public/admin-reference/js/app.js / internal	完了	左メニューに削除伝票一覧
 仕入登録	登録済み一覧	仕入登録内の一覧を伝票一覧と統一	別レイアウト	伝票番号から操作まで共通列で表示	frontend/public/admin-reference/js/purchase_entry.js	完了	原価は円、売価はUSDを既定表示
 仕入登録	仕入レート	海外仕入のUSD/HKD選択と起票時レート固定	通貨・レート表示が不足	起票時レートと実仕入通貨を伝票へ保存・表示	frontend/public/admin-reference/js/purchase_entry.js / internal	完了	備考欄にも通貨別レートを表示

@@ -88,7 +88,7 @@ assert.match(apiBridgeSource, /async function appendProductImages\(item, files =
 assert.match(staticAppSource, /async function _puSaveMatchedProductImages\(existingItem\)/u,
   "the product registration save action must persist staged images for an existing management number");
 assert.equal(
-  /if \(!filterStatus && itemStatus === '仕入返品済'\)/u.test(staticAppSource),
+  /if \(!filterStatus && itemStatus === '仕入返品処理済'\)/u.test(staticAppSource),
   false,
   "the all-status inventory view must include completed purchase returns for purchase reconciliation",
 );
@@ -1298,11 +1298,11 @@ document.getElementById("inv-f-status").value = "";
 window.execInventorySearch();
 assert.equal(document.getElementById("inv-status-sort-th").getAttribute("aria-sort"), "none");
 const normalizeInventoryStatus = (status) => {
-  if (["仕入返品", "仕入返品中", "return_pending"].includes(status)) return "仕入返品中";
-  if (["取消", "取消済", "取り消し", "仕入返品済", "cancelled"].includes(status)) return "仕入返品済";
+  if (["仕入返品", "仕入返品中", "仕入返品処理中", "return_pending"].includes(status)) return "仕入返品処理中";
+  if (["取消", "取消済", "取り消し", "仕入返品済", "仕入返品処理済", "cancelled"].includes(status)) return "仕入返品処理済";
   return status;
 };
-const statusOrder = ["在庫中", "取置中", "委託中", "仕入返品中", "出荷済", "売上済", "仕入返品済", "保留"];
+const statusOrder = ["在庫中", "取置中", "委託中", "仕入返品処理中", "出荷済", "売上済", "仕入返品処理済", "保留"];
 const expectedAscendingStatuses = [...inventory]
   .sort((a, b) => {
     const aStatus = normalizeInventoryStatus(a.status);
@@ -1531,7 +1531,7 @@ const linkedPurchaseReturn = {
 };
 window.eval("APP_DATA.purchaseReturns").push(linkedPurchaseReturn);
 window.applyBusinessRecordState("purchasereturn", linkedPurchaseReturn);
-assert.equal(savedSingleInventory.status, "仕入返品中", "purchase-return slips must reserve products from normal inventory use");
+assert.equal(savedSingleInventory.status, "仕入返品処理中", "purchase-return slips must reserve products from normal inventory use");
 assert.equal(window.getPurchaseReturnProcessingStatus(linkedPurchaseReturn), "処理中", "purchase returns without tracking must remain processing");
 window.switchSlipTab("purchasereturn");
 assert.match(document.getElementById("slipListBody").textContent, /PR-RET-LINK-TEST/u);
@@ -1540,10 +1540,10 @@ const purchaseReturnTrackingInput = document.getElementById("pr-list-tracking-PR
 assert.ok(purchaseReturnTrackingInput, "purchase-return rows must expose a tracking-number confirmation field");
 purchaseReturnTrackingInput.value = "TRACK-RETURN-001";
 await window.prConfirmTrackingFromList("PR-RET-LINK-TEST");
-assert.equal(savedSingleInventory.status, "仕入返品済", "confirming purchase-return tracking must complete the linked inventory return");
+assert.equal(savedSingleInventory.status, "仕入返品処理済", "confirming purchase-return tracking must complete the linked inventory return");
 assert.equal(linkedPurchaseReturn.items[0].trackingNo, "TRACK-RETURN-001", "tracking is saved only by the explicit confirmation action");
 assert.equal(window.getPurchaseReturnProcessingStatus(linkedPurchaseReturn), "処理済", "purchase returns with saved tracking must display processed");
-assert.ok(document.querySelector('#inv-f-status option[value="仕入返品済"]'), "inventory status search must include completed purchase-return products");
+assert.ok(document.querySelector('#inv-f-status option[value="仕入返品処理済"]'), "inventory status search must include completed purchase-return products");
 window.resetInventorySearch();
 assert.equal(document.getElementById("inv-f-status").value, "在庫中", "inventory search must default to in-stock products");
 document.getElementById("inv-f-status").value = "";
@@ -1553,11 +1553,11 @@ assert.equal(
   `${inventory.length} 件`,
   "the all-status inventory count must include every product, including completed purchase returns",
 );
-document.getElementById("inv-f-status").value = "仕入返品済";
+document.getElementById("inv-f-status").value = "仕入返品処理済";
 window.execInventorySearch();
 assert.equal(
   document.getElementById("inventoryCount").textContent.trim(),
-  `${inventory.filter((item) => normalizeInventoryStatus(item.status) === "仕入返品済").length} 件`,
+  `${inventory.filter((item) => normalizeInventoryStatus(item.status) === "仕入返品処理済").length} 件`,
   "cancelled products remain searchable when the cancelled status is selected",
 );
 assert.match(document.getElementById("inventoryTableBody").textContent, new RegExp(singlePurchaseCode, "u"));
