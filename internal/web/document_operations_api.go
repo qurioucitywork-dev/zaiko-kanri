@@ -21,6 +21,10 @@ type csvExportData struct {
 }
 
 func (s *Server) apiShipmentTrackingUpdate(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireAPIAdmin(w, r, "出荷伝票の配送情報変更")
+	if !ok {
+		return
+	}
 	var input struct {
 		Carrier        string `json:"carrier"`
 		TrackingNumber string `json:"trackingNumber"`
@@ -32,7 +36,6 @@ func (s *Server) apiShipmentTrackingUpdate(w http.ResponseWriter, r *http.Reques
 		writeAPIError(w, http.StatusBadRequest, "invalid_tracking", "配送会社と追跡番号を確認してください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
 	record, err := s.repository.UpdateShipmentTracking(r.Context(), user.OrganizationID, r.PathValue("id"), input.Carrier, input.TrackingNumber)
 	if err != nil {
 		writeShipmentError(w, err)
@@ -46,6 +49,10 @@ func (s *Server) apiShipmentTrackingUpdate(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) apiReturnTrackingUpdate(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireAPIAdmin(w, r, "返品伝票の配送情報変更")
+	if !ok {
+		return
+	}
 	var input struct {
 		Carrier        string `json:"carrier"`
 		TrackingNumber string `json:"trackingNumber"`
@@ -57,7 +64,6 @@ func (s *Server) apiReturnTrackingUpdate(w http.ResponseWriter, r *http.Request)
 		writeAPIError(w, http.StatusBadRequest, "invalid_tracking", "配送会社と追跡番号を確認してください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
 	record, err := s.repository.UpdateReturnTracking(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, input.Carrier, input.TrackingNumber, input.Confirmed)
 	if err != nil {
 		if errors.Is(err, persistence.ErrReturnState) {

@@ -23,6 +23,28 @@ func TestMigrationCatalogIsOrderedAndChecksummed(t *testing.T) {
 	}
 }
 
+func TestMarketResearchCurrencyRateMigrationPersistsHistoricalRate(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000056_market_research_currency_rate" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("market research currency/rate migration 000056 is missing")
+	}
+	for _, fragment := range []string{"market_fx_rate_scaled", "market_fx_scale", "'HKD'", "exchange_rate_snapshots"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("market research currency/rate migration is missing %q", fragment)
+		}
+	}
+}
+
 func TestBeltAndDialMasterMigrationCreatesStableCatalogs(t *testing.T) {
 	migrations, err := migrationCatalog()
 	if err != nil {
@@ -470,6 +492,123 @@ func TestPartnerContactDetailsMigrationAddsOperationalFields(t *testing.T) {
 	for _, fragment := range []string{"contact_phone", "antique_license_number", "LPAD", "^T[0-9]{13}$"} {
 		if !strings.Contains(sql, fragment) {
 			t.Fatalf("partner contact details migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestProductCodeDDMMYYMigrationRenumbersProductsAndReferences(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000049_product_code_ddmmyy_sequence" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("product code DDMMYY migration 000049 is missing")
+	}
+	for _, fragment := range []string{
+		"product_code_migration_history",
+		"TO_CHAR(business_date, 'DDMMYY')",
+		"LPAD(sequence::TEXT, 4, '0')",
+		"UPDATE stocktake_lines AS line",
+		"CHECK (product_code ~ '^[0-9]{10}$')",
+		"LEFT(NEW.product_code, 6) <> TO_CHAR(source_purchase_date, 'DDMMYY')",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("product code DDMMYY migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPersonalPurchaseTaxModeMigrationAllowsThreePurchaseCategories(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000052_personal_purchase_tax_mode" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("personal purchase tax mode migration 000052 is missing")
+	}
+	for _, fragment := range []string{"'domestic', 'personal', 'overseas'", "purchase_tax_mode IN ('personal', 'overseas')", "tax_rate_basis_points = 0"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("personal purchase tax mode migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchasePaymentMethodMigrationAddsValidatedDefault(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000053_purchase_payment_method" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase payment method migration 000053 is missing")
+	}
+	for _, fragment := range []string{"payment_method", "DEFAULT 'bank_transfer'", "'cash', 'bank_transfer', 'card'"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase payment method migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchaseTaxCategoryMigrationAddsThreeValidatedChoices(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000054_purchase_tax_category" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase tax category migration 000054 is missing")
+	}
+	for _, fragment := range []string{"tax_category", "consumption_tax", "tax_equivalent", "out_of_scope"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase tax category migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPersonalPurchaseTemporarySupplierMigrationAddsSlipOnlyName(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000057_personal_purchase_temporary_supplier" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("personal purchase temporary supplier migration 000057 is missing")
+	}
+	for _, fragment := range []string{"purchase_slips", "supplier_name_text", "VARCHAR(200)", "DEFAULT ''"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("personal purchase temporary supplier migration is missing %q", fragment)
 		}
 	}
 }

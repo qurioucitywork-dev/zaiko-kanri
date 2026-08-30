@@ -50,7 +50,7 @@ CREATE TABLE IF NOT EXISTS purchase_slip_lines (
 CREATE TABLE IF NOT EXISTS product_code_sequences (
     organization_id TEXT NOT NULL REFERENCES organizations(id),
     purchase_date TEXT NOT NULL,
-    last_sequence INTEGER NOT NULL CHECK (last_sequence BETWEEN 0 AND 999),
+    last_sequence INTEGER NOT NULL CHECK (last_sequence BETWEEN 0 AND 9999),
     PRIMARY KEY (organization_id, purchase_date)
 );
 

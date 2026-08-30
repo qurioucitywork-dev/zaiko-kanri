@@ -82,7 +82,10 @@ func (s *Server) apiReturnCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiReturnConfirm(w http.ResponseWriter, r *http.Request) {
-	user, _ := currentUser(r.Context())
+	user, ok := requireAPIAdmin(w, r, "返品伝票の確定")
+	if !ok {
+		return
+	}
 	record, err := s.repository.ConfirmReturn(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
 	if err != nil {
 		writeAPIError(w, http.StatusConflict, "return_confirm_failed", "返品/持ち帰り伝票を確定できませんでした。")

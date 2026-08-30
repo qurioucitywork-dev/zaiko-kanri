@@ -451,7 +451,7 @@ func nextProductCodeTx(ctx context.Context, tx *sql.Tx, organizationID, purchase
 		INSERT INTO product_code_sequences(organization_id,purchase_date,last_sequence)
 		VALUES(?,?,1)
 		ON CONFLICT(organization_id,purchase_date) DO UPDATE SET last_sequence=last_sequence+1
-		WHERE last_sequence < 999
+		WHERE last_sequence < 9999
 		RETURNING last_sequence`, organizationID, purchaseDate).Scan(&sequence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrDailyProductLimit
@@ -463,7 +463,7 @@ func nextProductCodeTx(ctx context.Context, tx *sql.Tx, organizationID, purchase
 	if err != nil {
 		return "", err
 	}
-	return date.Format("20060102") + fmt.Sprintf("%03d", sequence), nil
+	return date.Format("020106") + fmt.Sprintf("%04d", sequence), nil
 }
 
 func productsForPurchaseTx(ctx context.Context, tx *sql.Tx, organizationID, slipID string) ([]Product, error) {

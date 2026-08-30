@@ -89,7 +89,7 @@ func TestConfirmPurchaseGeneratesQuantityAndIsIdempotent(t *testing.T) {
 		t.Fatalf("generated=%d want=3", len(result.Products))
 	}
 	for index, product := range result.Products {
-		want := "20260801" + []string{"001", "002", "003"}[index]
+		want := "010826" + []string{"0001", "0002", "0003"}[index]
 		if product.ProductCode != want || product.InventoryStatus != "purchasing" {
 			t.Fatalf("product=%+v want code=%s purchasing", product, want)
 		}
@@ -203,17 +203,17 @@ func TestCancelledProductCodeIsNotReused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ProductCode != "20260805001" || second.ProductCode != "20260805002" {
+	if first.ProductCode != "0508260001" || second.ProductCode != "0508260002" {
 		t.Fatalf("codes were reused: %s %s", first.ProductCode, second.ProductCode)
 	}
 }
 
-func TestThousandthProductReturnsBusinessError(t *testing.T) {
+func TestTenThousandthProductReturnsBusinessError(t *testing.T) {
 	store := inventoryStore(t)
 	ctx := context.Background()
 	if _, err := store.db.Exec(`
 		INSERT INTO product_code_sequences(organization_id,purchase_date,last_sequence)
-		VALUES('org_preview','2026-08-06',999)`); err != nil {
+		VALUES('org_preview','2026-08-06',9999)`); err != nil {
 		t.Fatal(err)
 	}
 	_, err := store.CreateSingleProduct(ctx, singleInput("2026-08-06", "", "LIMIT"))

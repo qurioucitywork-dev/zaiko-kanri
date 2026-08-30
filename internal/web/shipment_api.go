@@ -64,7 +64,10 @@ func (s *Server) apiShipmentCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiShipmentConfirm(w http.ResponseWriter, r *http.Request) {
-	user, _ := currentUser(r.Context())
+	user, ok := requireAPIAdmin(w, r, "出荷伝票の確定")
+	if !ok {
+		return
+	}
 	record, err := s.repository.ConfirmShipment(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
 	if err != nil {
 		writeShipmentError(w, err)
@@ -74,6 +77,10 @@ func (s *Server) apiShipmentConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiShipmentReturnScan(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireAPIAdmin(w, r, "出荷伝票の商品返却")
+	if !ok {
+		return
+	}
 	var input struct {
 		Code string `json:"code"`
 	}
@@ -83,7 +90,6 @@ func (s *Server) apiShipmentReturnScan(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_product_code", "商品管理番号を読み取ってください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
 	result, err := s.repository.ReturnShipmentProduct(r.Context(), user.OrganizationID, r.PathValue("id"), input.Code, user.ID)
 	if err != nil {
 		switch {

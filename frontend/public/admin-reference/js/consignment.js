@@ -104,7 +104,7 @@ function addConsignmentLine() {
   row.innerHTML = `
     <div>
       <input class="form-control" id="co-code-${id}" aria-label="商品管理番号" autocomplete="off"
-        placeholder="例：20260815001" oninput="onConsignmentCodeInput(this, ${id})"
+        placeholder="例：2908260001" oninput="onConsignmentCodeInput(this, ${id})"
         onkeydown="if(event.key==='Enter'){event.preventDefault();onConsignmentCodeInput(this, ${id}, true);}">
     </div>
     <div class="consignment-readonly-cell" id="co-brand-${id}">—</div>
@@ -221,6 +221,7 @@ function _collectConsignmentItems() {
 }
 
 async function saveConsignment() {
+  if (!requireAdminForSensitiveOperation('委託伝票の登録')) return;
   const date = document.getElementById('co-date')?.value || '';
   const destination = document.getElementById('co-dest')?.value || '';
   const note = document.getElementById('co-note')?.value || '';

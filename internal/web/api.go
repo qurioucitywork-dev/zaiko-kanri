@@ -47,6 +47,20 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, payload)
 }
 
+// requireAPIAdmin protects business mutations that change monetary values,
+// product valuation, or an already-created document. Workers may create a
+// draft and request approval where that workflow exists, but they must never
+// execute the sensitive mutation directly.
+func requireAPIAdmin(w http.ResponseWriter, r *http.Request, operation string) (database.User, bool) {
+	user, ok := currentUser(r.Context())
+	if !ok || user.Role != database.RoleAdmin {
+		writeAPIError(w, http.StatusForbidden, "admin_approval_required",
+			operation+"には管理者権限または管理者承認が必要です。")
+		return database.User{}, false
+	}
+	return user, true
+}
+
 func (s *Server) apiHealth(w http.ResponseWriter, r *http.Request) {
 	status := "ok"
 	httpStatus := http.StatusOK

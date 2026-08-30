@@ -79,7 +79,10 @@ func (s *Server) apiSaleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiSaleConfirm(w http.ResponseWriter, r *http.Request) {
-	user, _ := currentUser(r.Context())
+	user, ok := requireAPIAdmin(w, r, "売上伝票の確定")
+	if !ok {
+		return
+	}
 	record, err := s.repository.ConfirmSale(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
 	if err != nil {
 		writeSaleError(w, err)
@@ -119,7 +122,10 @@ func (s *Server) apiSaleIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiSalePaid(w http.ResponseWriter, r *http.Request) {
-	user, _ := currentUser(r.Context())
+	user, ok := requireAPIAdmin(w, r, "売上伝票の入金確認")
+	if !ok {
+		return
+	}
 	record, err := s.repository.MarkSalePaid(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
 	if errors.Is(err, persistence.ErrSaleNotFound) {
 		writeAPIError(w, http.StatusNotFound, "sale_not_found", "売上伝票が見つかりません。")

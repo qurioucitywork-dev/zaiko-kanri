@@ -29,8 +29,29 @@ const guestHtmlSource = await readFile(path.join(referenceRoot, "guest.html"), "
 const guestCssSource = await readFile(path.join(referenceRoot, "css", "guest.css"), "utf8");
 const marketCssSource = await readFile(path.join(referenceRoot, "css", "market-table.css"), "utf8");
 const apiBridgeSource = await readFile(path.join(referenceRoot, "js", "api_bridge.js"), "utf8");
+const authSource = await readFile(path.join(referenceRoot, "js", "auth.js"), "utf8");
 const staticAppSource = await readFile(path.join(referenceRoot, "js", "app.js"), "utf8");
+const consignmentSource = await readFile(path.join(referenceRoot, "js", "consignment.js"), "utf8");
 const purchaseEntrySource = await readFile(path.join(referenceRoot, "js", "purchase_entry.js"), "utf8");
+assert.match(authSource, /function requireAdminForSensitiveOperation\(operationLabel\)/u,
+  "money, price, and document mutations must share the administrator guard");
+for (const operationLabel of ["商品情報・原価・売価の変更", "登録済み伝票の内容変更", "外貨レートの変更"]) {
+  assert.ok(staticAppSource.includes(operationLabel), `${operationLabel} must be protected in the UI`);
+}
+assert.match(consignmentSource, /requireAdminForSensitiveOperation\('委託伝票の登録'\)/u,
+  "consignment registration must require an administrator");
+assert.match(purchaseEntrySource, /requireAdminForSensitiveOperation\('仕入伝票の確定'\)/u,
+  "the offline purchase fallback must not bypass administrator approval");
+assert.equal(purchaseEntrySource.includes('SKU必須'), false,
+  "purchase registration must present SKU as optional");
+assert.equal(purchaseEntrySource.includes('SKUを入力してください'), false,
+  "purchase registration must accept blank SKU values");
+assert.equal(purchaseEntrySource.includes("_peCSVHasHeader(headers, 'SKU')"), false,
+  "purchase CSV import must not require an SKU column");
+assert.match(purchaseEntrySource, /if \(!_peConfirmBlankSKURegistration\(\)\) return;/u,
+  "purchase registration must confirm immediately before saving when an SKU is blank");
+assert.ok(purchaseEntrySource.includes('SKUが空欄の商品があります。このまま進めますか'),
+  "the blank-SKU confirmation must explain that registration can continue");
 assert.match(staticAppSource, /modalBody\.scrollTo\(\{ top: 0/u,
   "inventory detail modal must always open at the top");
 assert.match(purchaseEntrySource, /_peClearCSVImportErrors/u,
@@ -68,6 +89,14 @@ assert.match(apiBridgeSource, /brandCode: resolvedBrandCode/u,
   "purchase API payloads must support an empty brand while preserving a supplied stable brand code");
 assert.match(apiBridgeSource, /product\.fixedPurchaseCostJpyMinor/u,
   "inventory hydration must use the persisted purchase-date JPY snapshot");
+assert.match(apiBridgeSource, /purchaseType: \['personal', 'overseas'\]\.includes\(product\.purchaseTaxMode\)/u,
+  "inventory hydration must retain the purchase category stored on the source purchase slip");
+assert.match(apiBridgeSource, /supplierName: slip\.supplierName \|\| ''/u,
+  "personal purchase registration must send its transaction-only supplier name to the API");
+assert.match(apiBridgeSource, /supplierName: record\.supplierName \|\| ''/u,
+  "purchase hydration must restore the transaction-only supplier name");
+assert.match(apiBridgeSource, /supplierName: product\.supplierName \|\| ''/u,
+  "inventory hydration must retain the supplier name from a personal purchase slip");
 assert.equal(
   /product\.costCurrency === 'USD'\s*\?\s*Math\.round\(product\.costAmountMinor \* rate\)/u.test(apiBridgeSource),
   false,
@@ -139,6 +168,14 @@ assert.match(staticAppSource, /columns\.slice\(0, -1\)\.forEach\(width => \{[\s\
   "customs document fields must be separated by vertical grid lines");
 assert.match(staticAppSource, /const _pdfWrap = \(value, maxChars, maxLines = 2\)/u,
   "customs document values must wrap inside their assigned cells");
+assert.match(staticAppSource, /const SEARCHABLE_PARTNER_SELECT_IDS = Object\.freeze/u,
+  "growing business-partner selects must share one searchable control");
+for (const partnerSelectId of ["pe-supplier", "pu-supplier", "ie-supplier", "sl-buyer", "sh-dest", "co-dest", "slip-filter-party"]) {
+  assert.match(staticAppSource, new RegExp(`'${partnerSelectId}'`),
+    `${partnerSelectId} must be registered as a searchable business-partner select`);
+}
+assert.match(staticAppSource, /button\.textContent = record\.label/u,
+  "partner candidates must display the business name without exposing the internal code");
 
 let html = await readFile(path.join(referenceRoot, "app.html"), "utf8");
 assert.match(html, /\.cd-items-table tbody td\s*\{[\s\S]*?border: 1px solid #9eabb8;[\s\S]*?overflow-wrap: anywhere;/u,
@@ -206,6 +243,14 @@ const dom = new JSDOM(html, {
     window.URL.createObjectURL = () => "blob:reference-test";
     window.URL.revokeObjectURL = () => {};
     window.HTMLElement.prototype.scrollIntoView = () => {};
+    Object.defineProperty(window.navigator, "clipboard", {
+      configurable: true,
+      value: {
+        async writeText(value) {
+          window.__lastClipboardText = value;
+        },
+      },
+    });
     Object.defineProperty(window.HTMLCanvasElement.prototype, "getContext", {
       configurable: true,
       value() {
@@ -231,6 +276,33 @@ assert.deepEqual(runtimeErrors, [], `reference boot emitted errors: ${runtimeErr
 assert.equal(typeof window.navigateTo, "function", "navigateTo must be globally callable");
 assert.equal(typeof window.openNotification, "function", "notification items must be globally actionable");
 assert.equal(typeof window.showItemDetail, "function", "showItemDetail must be globally callable");
+for (const partnerSelectId of ["pe-supplier", "pu-supplier", "ie-supplier", "inv-f-supplier", "sl-buyer", "sh-dest", "co-dest", "slip-filter-party"]) {
+  const select = document.getElementById(partnerSelectId);
+  assert.equal(select?.dataset.partnerSearchEnhanced, "true", `${partnerSelectId} must be enhanced for free-word search`);
+  assert.ok(document.querySelector(`input[data-partner-search-for="${partnerSelectId}"]`),
+    `${partnerSelectId} must expose a searchable combobox input`);
+}
+const supplierSearch = document.querySelector('input[data-partner-search-for="pe-supplier"]');
+window.init_purchase_entry();
+supplierSearch.focus();
+supplierSearch.value = "ゴールデン";
+supplierSearch.dispatchEvent(new window.Event("input", { bubbles: true }));
+const supplierCandidates = [...document.querySelectorAll('#partner-search-panel-pe-supplier .partner-search-option')];
+assert.deepEqual(supplierCandidates.map((button) => button.textContent.trim()), ["ゴールデンウォッチ"],
+  "supplier free-word search must narrow the visible candidates by name");
+assert.equal(supplierCandidates[0].textContent.includes("S003"), false,
+  "supplier search candidates must not display internal codes");
+supplierCandidates[0].click();
+assert.equal(document.getElementById("pe-supplier").value, "S003",
+  "choosing a searched supplier must update the original select value");
+
+document.getElementById("slipReviseFields").innerHTML = window.buildReviseFields(
+  "shipping",
+  window.eval("APP_DATA.shipments.find((record) => record.id === 'SH-2026-0004')"),
+);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(document.getElementById("rv-destination")?.dataset.partnerSearchEnhanced, "true",
+  "dynamically rendered slip-revision partner selects must also support free-word search");
 assert.ok(window.doAppLogin("admin", "admin123"), "reference admin login must succeed");
 assert.equal(window.currentRole(), "admin");
 assert.equal(window.currentUser()?.name, "管理者");
@@ -249,6 +321,7 @@ window.navigateTo("dashboard");
 const pages = [
   "dashboard",
   "market",
+  "market-entry",
   "inventory",
   "purchase-entry",
   "purchase",
@@ -904,7 +977,7 @@ assert.equal(inventory[0].purchasePrice, 850000, "purchase price must stay in JP
 assert.equal(inventory[0].salePrice, 7613, "legacy sale price must be converted to USD at 155 JPY/USD");
 assert.equal(window.formatPrice(inventory[0].purchasePrice), "¥850,000");
 assert.equal(window.formatSalePrice(inventory[0].salePrice), "$7,613");
-const seededReservedItem = inventory.find(item => item.code === "20260303001");
+const seededReservedItem = inventory.find(item => item.code === "0303260001");
 assert.equal(seededReservedItem.status, "取置中", "an already-approved purchase request must restore its reservation on load");
 assert.equal(seededReservedItem.reservationRequestId, "PR-003");
 assert.equal(document.body.textContent.includes("売価（円）"), false, "sale price labels must not claim JPY");
@@ -1144,11 +1217,64 @@ assert.match(appSource, /clientCompanyCode,/u, "shipping slips must retain the c
 
 window.navigateTo("inventory");
 window.execInventorySearch();
-assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePrice"]').textContent.trim(), "¥850,000", "inventory purchase price must stay JPY");
-assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), "$7,613", "inventory sale price must display USD");
+assert.match(document.querySelector('a[data-page="inventory"]').textContent, /在庫管理/u, "the inventory sidebar label must use 在庫管理");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseType"]').textContent.trim(), "国内業者仕入／オークション", "legacy inventory must be assigned the domestic purchase category");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), "1 JPY = ¥1.00", "inventory must show the registered purchase rate");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').textContent.trim(), "¥850,000", "inventory must show cost converted at the registered rate");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').classList.contains("inv-purchase-currency-match"), true,
+  "purchase-time cost must be blue-highlighted when the linked display currency matches the actual purchase currency");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePrice"]').textContent.trim(), "¥850,000", "inventory must show cost converted at the current rate");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), "¥1,180,015", "inventory sale price must initially share the linked JPY display");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="grossMargin"]').textContent.trim(), "28.0%", "inventory must show gross margin after sale price");
+const inventoryCodeCopyButton = document.querySelector('#inventoryTableBody tr:first-child .inv-management-number-copy');
+assert.ok(inventoryCodeCopyButton, "each management number must have a one-tap copy button");
+assert.equal(inventoryCodeCopyButton.getAttribute("aria-label"), `管理番号 ${inventory[0].code} をコピー`);
+assert.equal(typeof window.copyInventoryManagementNumber, "function");
+assert.equal(document.getElementById("itemDetailModal").classList.contains("hidden"), true);
+inventoryCodeCopyButton.click();
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(window.__lastClipboardText, inventory[0].code, "copy button must write the management number to the clipboard");
+assert.equal(inventoryCodeCopyButton.classList.contains("copied"), true, "copy success must be visible on the button");
+assert.match(inventoryCodeCopyButton.getAttribute("aria-label"), /コピーしました/u);
+assert.equal(document.getElementById("itemDetailModal").classList.contains("hidden"), true,
+  "copying a management number must not open the row detail modal");
 assert.match(document.querySelector("#page-inventory thead").textContent, /売価/u);
-assert.equal(document.getElementById("inv-purchase-jpy").getAttribute("aria-pressed"), "true");
+assert.match(document.querySelector("#page-inventory thead").textContent, /粗利率/u);
+const inventoryColumnOrder = [...document.querySelectorAll('#inventoryTable thead th')].map(th => th.dataset.invCol);
+assert.equal(inventoryColumnOrder.indexOf('purchaseType') + 1, inventoryColumnOrder.indexOf('purchaseRate'), "purchase category must appear immediately before purchase rate");
+assert.equal(document.querySelectorAll('#page-inventory th[data-inv-col="purchasePriceAtPurchaseRate"] .inv-price-currency-btn').length, 3,
+  "purchase-time cost must support JPY, USD, and HKD display");
+assert.equal(document.querySelectorAll('#page-inventory th[data-inv-col="purchasePrice"] .inv-price-currency-btn').length, 3,
+  "current-rate cost must support JPY, USD, and HKD display");
+assert.equal(document.querySelectorAll('#page-inventory th[data-inv-col="salePrice"] .inv-price-currency-btn').length, 3,
+  "sale price must support the same JPY, USD, and HKD display currencies");
+assert.equal(typeof window.switchInventoryCostCurrency, "function");
+window.switchInventoryCostCurrency("purchase-time", "USD");
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').textContent.trim(), /^\$/u,
+  "purchase-time cost must convert to USD");
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePrice"]').textContent.trim(), /^\$/u,
+  "changing purchase-time cost currency must also switch the current-rate column");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), "$7,613",
+  "changing purchase-time cost currency must also switch the sale-price column");
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), /^1 USD = ¥/u,
+  "purchase rate must follow the linked currency using the purchase-time rate");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').classList.contains("inv-purchase-currency-match"), false,
+  "the purchase-time cost highlight must clear when the display currency differs from the actual purchase currency");
+assert.equal(document.getElementById("inv-purchase-time-usd").getAttribute("aria-pressed"), "true");
+assert.equal(document.getElementById("inv-purchase-current-usd").getAttribute("aria-pressed"), "true");
 assert.equal(document.getElementById("inv-sale-usd").getAttribute("aria-pressed"), "true");
+window.switchInventoryCostCurrency("current", "HKD");
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').textContent.trim(), /^HK\$/u,
+  "changing current-rate cost currency must also switch the purchase-time column");
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePrice"]').textContent.trim(), /^HK\$/u,
+  "current-rate cost must convert to HKD");
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), /^HK\$/u,
+  "current-rate switch must also convert sale price to HKD");
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), /^1 HKD = ¥/u,
+  "purchase rate must use the item's purchase-time HKD rate when HKD is selected");
+assert.equal(document.getElementById("inv-purchase-time-hkd").getAttribute("aria-pressed"), "true");
+assert.equal(document.getElementById("inv-purchase-current-hkd").getAttribute("aria-pressed"), "true");
+assert.equal(document.getElementById("inv-sale-hkd").getAttribute("aria-pressed"), "true");
 assert.equal(typeof window.switchInventoryPriceCurrency, "function");
 assert.equal(typeof window._invColumnVisibilityChanged, "function");
 window._invToggleColumnMenu({ stopPropagation() {} });
@@ -1157,22 +1283,71 @@ assert.equal(document.getElementById("inv-column-trigger").getAttribute("aria-ex
 window._invCloseColumnMenu();
 assert.equal(document.getElementById("inv-column-trigger").getAttribute("aria-expanded"), "false");
 
-window.switchInventoryPriceCurrency("purchase", "USD");
 window.switchInventoryPriceCurrency("sale", "JPY");
-assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePrice"]').textContent.trim(), "$5,484", "purchase price must convert from JPY to USD using the master rate");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), "¥1,180,015", "sale price must convert from USD to JPY using the master rate");
-assert.equal(document.getElementById("inv-purchase-usd").getAttribute("aria-pressed"), "true");
 assert.equal(document.getElementById("inv-sale-jpy").getAttribute("aria-pressed"), "true");
-assert.match(document.getElementById("inv-purchase-heading").textContent, /USD/u);
+assert.equal(document.getElementById("inv-purchase-time-jpy").getAttribute("aria-pressed"), "true");
+assert.equal(document.getElementById("inv-purchase-current-jpy").getAttribute("aria-pressed"), "true");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').classList.contains("inv-purchase-currency-match"), true);
 assert.match(document.getElementById("inv-sale-heading").textContent, /JPY/u);
+
+const foreignInventoryItem = {
+  purchaseCurrency: "USD", purchaseOriginalPrice: 1000, purchasePrice: 150000,
+  purchaseFxRateScaled: 15000000000, purchaseFxScale: 100000000,
+  salePrice: 2000,
+};
+assert.equal(window.formatInventoryRegisteredPurchaseRate(foreignInventoryItem), "1 USD = ¥150.00");
+assert.equal(window.formatInventoryPurchaseTimeRate(foreignInventoryItem, "USD"), "1 USD = ¥150.00");
+assert.equal(window.isInventoryOriginalPurchaseCurrency(foreignInventoryItem, "USD"), true);
+assert.equal(window.formatInventoryPurchaseCostAtRegisteredRate(foreignInventoryItem), "¥150,000");
+assert.equal(window.formatInventoryPurchaseCostAtCurrentRate(foreignInventoryItem), "¥155,000");
+assert.equal(window.formatInventoryGrossMargin(foreignInventoryItem), "50.0%", "gross margin must compare the current-rate JPY cost with the current-rate JPY sale price");
+assert.equal(window.formatInventoryGrossMargin({ salePrice: 0, purchasePrice: 1000 }), "—", "zero sale price must not divide by zero");
 
 window.showItemDetail(inventory[0].code);
 assert.equal(document.getElementById("itemDetailModal").classList.contains("hidden"), false, "item detail modal must open");
 assert.match(document.getElementById("itemDetailTitle").textContent, new RegExp(inventory[0].code));
-assert.match(document.getElementById("itemDetailBody").textContent, /\$5,484/u, "item detail purchase price must follow the selected USD display");
+assert.match(document.getElementById("itemDetailBody").textContent, /¥850,000/u, "item detail purchase price must remain available in JPY");
 assert.match(document.getElementById("itemDetailBody").textContent, /¥1,180,015/u, "item detail sale price must follow the selected JPY display");
 const itemDetailInfoPanel = document.getElementById("itemDetailInfoPanel");
 const itemDetailLabels = [...itemDetailInfoPanel.querySelectorAll(".detail-label")].map(label => label.textContent.trim());
+assert.ok(itemDetailLabels.includes("原価（現在レート）"), "product details must label current-rate cost explicitly");
+assert.deepEqual(
+  [...itemDetailInfoPanel.querySelectorAll(".item-detail-summary-field > .detail-label")].map(label => label.textContent.trim()),
+  ["原価（現在レート）", "売価", "粗利率", "ステータス"],
+  "cost, sale price, gross margin, and status must share one four-column summary row",
+);
+assert.equal(document.getElementById("item-detail-gross-margin-value").textContent, window.formatInventoryGrossMargin(inventory[0]));
+assert.equal(itemDetailInfoPanel.querySelectorAll('[data-item-detail-price="purchase"] .item-detail-currency-btn').length, 3,
+  "current-rate cost must support JPY, USD, and HKD display");
+assert.equal(itemDetailInfoPanel.querySelectorAll('[data-item-detail-price="sale"] .item-detail-currency-btn').length, 3,
+  "sale price must support JPY, USD, and HKD display");
+assert.equal(typeof window.switchItemDetailPriceCurrency, "function");
+window.switchItemDetailPriceCurrency("purchase", "USD");
+assert.equal(document.getElementById("item-detail-purchase-value").textContent,
+  window.formatItemDetailPurchasePrice(inventory[0], "USD"));
+assert.equal(document.getElementById("item-detail-sale-value").textContent,
+  window.formatItemDetailSalePrice(inventory[0], "USD"), "switching the cost currency must also update the sale price");
+assert.equal(itemDetailInfoPanel.querySelector('[data-item-detail-price="purchase"] [data-currency="USD"]').getAttribute("aria-pressed"), "true");
+assert.equal(itemDetailInfoPanel.querySelector('[data-item-detail-price="sale"] [data-currency="USD"]').getAttribute("aria-pressed"), "true",
+  "cost and sale price currency buttons must stay linked");
+window.switchItemDetailPriceCurrency("purchase", "HKD");
+assert.match(document.getElementById("item-detail-purchase-value").textContent, /^HK\$/u);
+assert.match(document.getElementById("item-detail-sale-value").textContent, /^HK\$/u,
+  "switching the cost to HKD must also update the sale price");
+window.switchItemDetailPriceCurrency("sale", "USD");
+assert.equal(document.getElementById("item-detail-sale-value").textContent, "$7,613");
+assert.equal(document.getElementById("item-detail-purchase-value").textContent,
+  window.formatItemDetailPurchasePrice(inventory[0], "USD"), "switching the sale price currency must also update the cost");
+assert.equal(itemDetailInfoPanel.querySelector('[data-item-detail-price="purchase"] [data-currency="USD"]').getAttribute("aria-pressed"), "true");
+assert.equal(itemDetailInfoPanel.querySelector('[data-item-detail-price="sale"] [data-currency="USD"]').getAttribute("aria-pressed"), "true");
+window.switchItemDetailPriceCurrency("sale", "HKD");
+assert.match(document.getElementById("item-detail-sale-value").textContent, /^HK\$/u);
+assert.match(document.getElementById("item-detail-purchase-value").textContent, /^HK\$/u,
+  "switching the sale price to HKD must also update the cost");
+window.switchItemDetailPriceCurrency("purchase", "JPY");
+assert.equal(itemDetailInfoPanel.querySelector('[data-item-detail-price="purchase"] [data-currency="JPY"]').getAttribute("aria-pressed"), "true");
+assert.equal(itemDetailInfoPanel.querySelector('[data-item-detail-price="sale"] [data-currency="JPY"]').getAttribute("aria-pressed"), "true");
 assert.ok(itemDetailLabels.includes("型番"), "product details must use the unified 型番 label");
 assert.ok(itemDetailLabels.includes("素材"), "product details must use the unified 素材 label");
 assert.equal(itemDetailLabels.some(label => /Ref\.|本体/u.test(label)), false,
@@ -1242,7 +1417,7 @@ serialVisibility.checked = false;
 window._invColumnVisibilityChanged(serialVisibility);
 assert.equal(document.querySelector('th[data-inv-col="serial"]').classList.contains("inv-col-hidden"), true);
 assert.equal(document.querySelector('#inventoryTableBody td[data-inv-col="serial"]').classList.contains("inv-col-hidden"), true);
-assert.equal(document.getElementById("inv-column-count").textContent, "15/17");
+assert.equal(document.getElementById("inv-column-count").textContent, "19/21");
 
 const purchaseVisibility = document.querySelector('#inv-column-panel input[value="purchasePrice"]');
 const saleVisibility = document.querySelector('#inv-column-panel input[value="salePrice"]');
@@ -1253,7 +1428,7 @@ window._invColumnVisibilityChanged(saleVisibility);
 assert.equal(document.querySelector('th[data-inv-col="purchasePrice"]').classList.contains("inv-col-hidden"), true);
 assert.equal(document.querySelector('th[data-inv-col="salePrice"]').classList.contains("inv-col-hidden"), true);
 window._invShowAllColumns();
-assert.equal(document.getElementById("inv-column-count").textContent, "17/17");
+assert.equal(document.getElementById("inv-column-count").textContent, "21/21");
 assert.equal(document.querySelectorAll("#inventoryTable .inv-col-hidden").length, 0);
 
 assert.equal(typeof window.openInventoryQr, "function", "inventory QR display must be globally callable");
@@ -1380,9 +1555,35 @@ assert.equal(window.eval("APP_DATA.purchaseSlips[0].lines[0].salePrice"), 7613, 
 
 window.navigateTo("purchase");
 assert.match(document.querySelector('label[for="pu-code"]').textContent, /管理番号/u);
+assert.equal(document.getElementById("pu-currency-jpy").getAttribute("aria-checked"), "true",
+  "product registration must default the original-cost currency to JPY");
+assert.equal(document.getElementById("pu-purchase-type-domestic").getAttribute("aria-checked"), "true",
+  "product registration must default the purchase category to domestic dealer / auction");
+assert.equal(document.getElementById("pu-tax-category").value, "consumption_tax",
+  "product registration must default the tax category to consumption tax");
+window.puSetPurchaseCurrency("USD");
+assert.equal(document.getElementById("pu-currency-usd").getAttribute("aria-checked"), "true");
+assert.match(document.getElementById("pu-price-label").textContent, /USD/u);
+assert.match(document.getElementById("pu-purchase-rate").textContent, /1 USD = ¥/u,
+  "selecting an original-cost currency must show its current purchase rate");
+window.puSetPurchaseType("personal");
+assert.equal(document.getElementById("pu-purchase-type-personal").getAttribute("aria-checked"), "true");
+window.puSetTaxCategory("tax_equivalent");
+assert.match(document.getElementById("pu-tax-category-description").textContent, /社内参考値/u);
+window.puSetPurchaseCurrency("JPY");
+window.puSetPurchaseType("domestic");
+window.puSetTaxCategory("consumption_tax");
 assert.equal(document.getElementById("pu-code").getAttribute("oninput"), "puManagementNumberInput(this)");
 assert.ok(document.querySelector('button[onclick="openBarcodeScanner(\'product-registration\')"]'),
   "product registration management number must expose a QR camera button");
+const productDetailControlOrder = [...document.querySelectorAll("#page-purchase .card")]
+  .find((card) => /商品詳細/u.test(card.querySelector(".card-header")?.textContent || ""))
+  .querySelectorAll("input, select");
+const productDetailControlIds = [...productDetailControlOrder].map((control) => control.id).filter(Boolean);
+assert.ok(productDetailControlIds.indexOf("pu-shape") > productDetailControlIds.indexOf("pu-dial"),
+  "shape must appear below the dial field in product details");
+assert.ok(productDetailControlIds.indexOf("pu-marking") > productDetailControlIds.indexOf("pu-sale-price"),
+  "marking must appear below the sale-price field in product details");
 const purchaseSlips = window.eval("APP_DATA.purchaseSlips");
 const existingManagementNumber = inventory[0].code;
 const inventoryCountBeforeExistingLookup = inventory.length;
@@ -1407,11 +1608,17 @@ assert.equal(inventory[0].images.length, existingImagesBeforeProductRegistration
 assert.equal(document.getElementById("pu-code").value, "", "successful image save must clear the management number to prevent duplicate submission");
 inventory[0].images = existingImagesBeforeProductRegistration;
 
-const singlePurchaseCode = "20991230001";
+const singlePurchaseCode = "3012990001";
 const inventoryCountBeforeSinglePurchase = inventory.length;
 const purchaseSlipCountBeforeSinglePurchase = purchaseSlips.length;
 document.getElementById("pu-date").value = "2099-12-30";
-document.getElementById("pu-supplier").value = "S001";
+window.puSetPurchaseType("personal");
+window.puSetTaxCategory("out_of_scope");
+document.getElementById("pu-supplier").value = "";
+assert.equal(document.getElementById("pu-supplier").required, false,
+  "personal product registration must not require a supplier");
+assert.equal(document.getElementById("pu-supplier-required").style.display, "none",
+  "personal product registration must hide the supplier required mark");
 document.getElementById("pu-code").disabled = false;
 document.getElementById("pu-code").value = singlePurchaseCode;
 document.getElementById("pu-price").value = "123000";
@@ -1428,6 +1635,10 @@ assert.equal(savedSinglePurchaseSlip.lines.length, 1);
 assert.equal(savedSinglePurchaseSlip.lines[0].code, singlePurchaseCode);
 assert.equal(savedSinglePurchaseSlip.lines[0].purchasePrice, 123000);
 assert.equal(savedSinglePurchaseSlip.lines[0].salePrice, 2500);
+assert.equal(savedSinglePurchaseSlip.purchaseCurrency, "JPY");
+assert.equal(savedSinglePurchaseSlip.purchaseTaxMode, "personal");
+assert.equal(savedSinglePurchaseSlip.taxCategory, "out_of_scope");
+assert.equal(savedSinglePurchaseSlip.supplier, "");
 assert.equal(savedSingleInventory.status, "在庫中");
 assert.equal(savedSingleInventory.purchaseSlipId, savedSinglePurchaseSlip.id, "inventory must link back to its auto-issued purchase slip");
 const purchaseApprovalDetailHtml = window.buildReadableApprovalDetail({
@@ -1574,9 +1785,33 @@ purchaseSlips.splice(purchaseSlips.indexOf(savedSinglePurchaseSlip), 1);
 window.navigateTo("purchase-entry");
 assert.equal(typeof window.peGetStaffDisplayName, "function", "purchase slips must expose the shared staff-name resolver");
 assert.ok(document.getElementById("pe-tax-domestic"), "purchase entry must expose a domestic purchase switch");
+assert.ok(document.getElementById("pe-tax-personal"), "purchase entry must expose a personal purchase switch");
 assert.ok(document.getElementById("pe-tax-overseas"), "purchase entry must expose an overseas purchase switch");
 assert.equal(document.getElementById("pe-tax-domestic").getAttribute("aria-checked"), "true");
-assert.match(document.getElementById("pe-tax-mode-badge").textContent, /消費税（10%）/u);
+assert.equal(document.getElementById("pe-supplier-master-container").classList.contains("hidden"), false);
+assert.equal(document.getElementById("pe-personal-supplier-container").classList.contains("hidden"), true);
+assert.deepEqual(["cash", "bank-transfer", "card"].map(method => Boolean(document.getElementById(`pe-payment-${method}`))), [true, true, true],
+  "purchase entry must expose cash, bank transfer, and card payment methods");
+assert.equal(document.getElementById("pe-payment-bank-transfer").getAttribute("aria-checked"), "true",
+  "new purchase slips must default to bank transfer");
+window.peSetPaymentMethod("card");
+assert.equal(document.getElementById("pe-payment-card").getAttribute("aria-checked"), "true");
+assert.equal(window.eval("_peSlipData.paymentMethod"), "card");
+assert.deepEqual(["jpy", "usd", "hkd"].map(code => Boolean(document.getElementById(`pe-currency-${code}`))), [true, true, true],
+  "purchase currency must be selectable from JPY, USD, and HKD");
+assert.equal(document.getElementById("pe-tax-mode-label").textContent.replace(/\s+/gu, " ").trim(), "仕入区分");
+assert.equal(document.getElementById("pe-tax-category-label").textContent.replace(/\s+/gu, " ").trim(), "税区分");
+assert.deepEqual(
+  ["consumption", "equivalent", "out-of-scope"].map(category => Boolean(document.getElementById(`pe-tax-category-${category}`))),
+  [true, true, true],
+  "purchase entry must expose three independent tax category choices",
+);
+assert.equal(document.getElementById("pe-tax-category-consumption").getAttribute("aria-checked"), "true");
+window.peSetTaxCategory("tax_equivalent");
+assert.equal(document.getElementById("pe-tax-category-equivalent").getAttribute("aria-checked"), "true");
+assert.equal(window.eval("_peSlipData.taxCategory"), "tax_equivalent");
+assert.match(document.getElementById("pe-tax-category-description").textContent, /支払合計には加算しません/u);
+window.peSetTaxCategory("consumption_tax");
 assert.ok(document.querySelector('#page-purchase-entry button[onclick="peDownloadCSVTemplate()"]'), "purchase entry must expose a CSV template download");
 assert.ok(document.getElementById("pe-csv-import-button"), "purchase entry must expose CSV detail staging");
 assert.match(document.getElementById("pe-csv-import-button").textContent, /CSV取込/u);
@@ -1596,11 +1831,18 @@ assert.equal(document.getElementById("pe-list-tbody").textContent.includes(purch
 window.peViewSlip(staffDisplaySlip.id);
 assert.equal(document.getElementById("peViewModalBody").textContent.includes(purchaseStaffRecord.name), true, "purchase-slip details must display the staff name");
 assert.equal(document.getElementById("peViewModalBody").textContent.includes(purchaseStaffRecord.code), false, "purchase-slip details must hide the internal staff code");
+assert.deepEqual(
+  [...document.querySelectorAll("#peViewModalBody .form-label")].map(label => label.textContent.trim()).filter(label => ["仕入区分", "税区分"].includes(label)),
+  ["仕入区分", "税区分"],
+  "purchase-slip details must show purchase category and tax category separately",
+);
 document.getElementById("peViewModal").style.display = "none";
 const purchaseSlipDetailHtml = window.buildSlipDetailBody("purchase", staffDisplaySlip);
 assert.equal(purchaseSlipDetailHtml.includes("${purchaseTax.taxLabel}"), false,
   "purchase-slip details must render the tax label instead of exposing the template expression");
 assert.match(purchaseSlipDetailHtml, /消費税（10%）/u);
+assert.match(purchaseSlipDetailHtml, /支払い方法/u);
+assert.match(purchaseSlipDetailHtml, /銀行振込/u);
 assert.match(purchaseSlipDetailHtml, /purchase-slip-tax-cell/u,
   "purchase-slip details must use a dedicated balanced tax column");
 assert.match(purchaseSlipDetailHtml, /purchase-slip-grand-total-row/u,
@@ -1617,12 +1859,74 @@ assert.equal(typeof window.peHandleAddCountKey, "function");
 const purchaseSaveButton = document.getElementById("pe-save-button");
 assert.ok(purchaseSaveButton, "purchase entry must expose a save button with a stable id");
 
+const originalPurchaseConfirm = window.confirm;
+let blankSkuConfirmMessage = "";
+window.confirm = (message) => {
+  blankSkuConfirmMessage = message;
+  return false;
+};
+assert.equal(window._peConfirmBlankSKURegistration([{ sku: "" }]), false,
+  "cancelling the blank-SKU confirmation must stop registration");
+assert.equal(blankSkuConfirmMessage, "SKUが空欄の商品があります。このまま進めますか");
+window.confirm = () => true;
+assert.equal(window._peConfirmBlankSKURegistration([{ sku: "   " }]), true,
+  "confirming must allow a blank SKU to remain blank and continue");
+let nonBlankSkuConfirmCalls = 0;
+window.confirm = () => {
+  nonBlankSkuConfirmCalls += 1;
+  return true;
+};
+assert.equal(window._peConfirmBlankSKURegistration([{ sku: "SKU-001" }]), true);
+assert.equal(nonBlankSkuConfirmCalls, 0,
+  "non-blank SKUs must not show the confirmation popup");
+window.confirm = originalPurchaseConfirm;
+
 document.getElementById("pe-date").value = "2099-12-27";
 window.peOnDateChange();
-document.getElementById("pe-supplier").value = window.eval("APP_DATA.suppliers[0].code");
 document.getElementById("pe-staff").value = document.getElementById("pe-staff").options[1].value;
+window.peSetPurchaseTaxMode("personal");
+document.getElementById("pe-supplier").value = "";
+const personalSupplierInput = document.getElementById("pe-personal-supplier-name");
+assert.ok(personalSupplierInput, "personal purchase slips must expose a transaction-only supplier-name input");
+assert.equal(document.getElementById("pe-supplier-master-container").classList.contains("hidden"), true,
+  "personal purchases must hide the supplier master selector");
+assert.equal(document.getElementById("pe-personal-supplier-container").classList.contains("hidden"), false,
+  "personal purchases must show the transaction-only supplier input");
+assert.equal(personalSupplierInput.disabled, false);
+personalSupplierInput.value = "個人買取テスト 太郎";
+window.peOnHeaderChange();
+assert.equal(window.eval("_peSlipData.supplier"), "", "temporary personal suppliers must not create a master-code reference");
+assert.equal(window.eval("_peSlipData.supplierName"), "個人買取テスト 太郎");
+assert.equal(window.peGetSupplierDisplayName(window.eval("_peSlipData")), "個人買取テスト 太郎");
+assert.equal(document.getElementById("pe-supplier").required, false,
+  "personal purchase slips must not require a supplier");
+assert.equal(document.getElementById("pe-supplier-required").style.display, "none",
+  "personal purchase slips must hide the supplier required mark");
+assert.equal(window.eval("_peHeaderReady()"), true,
+  "personal purchase slips must be ready when date and staff are present without a supplier");
 addLineCountInput.value = "1";
 window.peAddLine();
+const modalTestLineId = window.eval("_peSlipData.lines[0].lineId");
+const modalTestShape = window.eval("getProductSpecMasterRecords('shape')[0]?.code || ''");
+const modalTestMarking = window.eval("getProductSpecMasterRecords('marking')[0]?.code || ''");
+window.eval(`_peSlipData.lines[0].productDetail = {
+  brand: "ロレックス",
+  model: "モーダル編集前",
+  shape: ${JSON.stringify(modalTestShape)},
+  marking: ${JSON.stringify(modalTestMarking)},
+  accessories: []
+};`);
+assert.doesNotThrow(() => window.peOpenProductModal(modalTestLineId),
+  "the purchase detail registration button must open its editable product modal");
+assert.equal(document.getElementById("peProductModal").style.display, "flex");
+assert.equal(document.getElementById("pep-model").value, "モーダル編集前");
+assert.equal(document.getElementById("pep-shape").value, modalTestShape);
+assert.equal(document.getElementById("pep-marking").value, modalTestMarking);
+document.getElementById("pep-model").value = "モーダル編集後";
+window.peSaveProduct();
+assert.equal(document.getElementById("peProductModal").style.display, "none");
+assert.equal(window.eval("_peSlipData.lines[0].productDetail.model"), "モーダル編集後",
+  "confirming the product modal must write edits back to the purchase detail line");
 window.eval(`
   _peSlipData.lines[0].sku = "SAVE-RESET-TEST";
   _peSlipData.lines[0].purchasePrice = 100000;
@@ -1630,20 +1934,26 @@ window.eval(`
   _peSlipData.lines[0].productDetail = { brand: "", model: "Reset Test" };
 `);
 document.querySelector(".pe-sku-input").value = "SAVE-RESET-TEST";
-window.peSetPurchaseTaxMode("overseas");
 
 let purchaseSaveCalls = 0;
+let savedPurchasePaymentMethod = "";
+let savedPersonalSupplierName = "";
 let completePurchaseSave;
 const pendingPurchaseSave = new Promise((resolve) => { completePurchaseSave = resolve; });
 window.ZaikoAPI = {
-  savePurchaseSlip: async () => {
+  savePurchaseSlip: async (slip) => {
     purchaseSaveCalls += 1;
+    savedPurchasePaymentMethod = slip.paymentMethod;
+    savedPersonalSupplierName = slip.supplierName;
     return pendingPurchaseSave;
   },
 };
 const firstPurchaseSave = window.peSave();
 const duplicatePurchaseSave = window.peSave();
 assert.equal(purchaseSaveCalls, 1, "a second click while saving must not submit another purchase slip");
+assert.equal(savedPurchasePaymentMethod, "card", "the selected payment method must be included in purchase registration");
+assert.equal(savedPersonalSupplierName, "個人買取テスト 太郎",
+  "the transaction-only supplier name must be included in personal purchase registration");
 assert.equal(window.eval("_peSlipData.lines[0].productDetail.brand"), "",
   "purchase registration must reach the API even when the brand is not known yet");
 assert.equal(purchaseSaveButton.disabled, true, "the purchase save button must be disabled while saving");
@@ -1657,6 +1967,8 @@ assert.equal(purchaseSaveButton.hasAttribute("aria-busy"), false);
 assert.match(purchaseSaveButton.textContent, /仕入登録する/u);
 assert.equal(document.getElementById("pe-date").value, "", "successful purchase registration must clear the purchase date");
 assert.equal(document.getElementById("pe-supplier").value, "", "successful purchase registration must clear the supplier");
+assert.equal(document.getElementById("pe-personal-supplier-name").value, "",
+  "successful purchase registration must clear the transaction-only supplier name");
 assert.equal(document.getElementById("pe-staff").value, "", "successful purchase registration must clear the staff member");
 assert.equal(document.querySelectorAll("#pe-detail-tbody tr").length, 0, "successful purchase registration must clear every detail row");
 assert.equal(document.getElementById("pe-line-count").textContent, "0");
@@ -1665,6 +1977,7 @@ assert.equal(document.getElementById("pe-total-purchase").textContent, "¥0");
 assert.equal(document.getElementById("pe-total-sale").textContent, "$0");
 assert.equal(addLineCountInput.value, "1");
 assert.equal(document.getElementById("pe-tax-domestic").getAttribute("aria-checked"), "true", "a new purchase form must restore domestic tax mode");
+assert.equal(document.getElementById("pe-payment-bank-transfer").getAttribute("aria-checked"), "true", "a new purchase form must restore bank transfer");
 delete window.ZaikoAPI;
 
 addLineCountInput.value = "１２a";
@@ -1687,7 +2000,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   [...document.querySelectorAll('[data-role="pe-item-code"]')].map((cell) => cell.textContent.trim()),
-  Array.from({ length: 10 }, (_, index) => `20991231${String(index + 1).padStart(3, "0")}`),
+  Array.from({ length: 10 }, (_, index) => `311299${String(index + 1).padStart(4, "0")}`),
   "bulk-added product codes must be sequential",
 );
 
@@ -1701,7 +2014,7 @@ assert.deepEqual(
 );
 assert.deepEqual(
   [...document.querySelectorAll('[data-role="pe-item-code"]')].map((cell) => cell.textContent.trim()),
-  Array.from({ length: 9 }, (_, index) => `20991231${String(index + 1).padStart(3, "0")}`),
+  Array.from({ length: 9 }, (_, index) => `311299${String(index + 1).padStart(4, "0")}`),
   "product codes must be reissued sequentially after a middle row is deleted",
 );
 
@@ -1729,16 +2042,39 @@ const marketCSVTemplate = window.marketDownloadTemplate();
 assert.equal(csvDownloadNames.at(-1), "相場表テンプレート.csv");
 assert.equal(marketCSVTemplate.rows.length, 2, "the market template must include one editable sample row");
 assert.equal(marketCSVTemplate.rows[1].length, marketCSVTemplate.rows[0].length);
-assert.match(marketCSVTemplate.rows[1][0], /^\d{4}-\d{2}-\d{2}$/u);
-assert.match(marketCSVTemplate.rows[1][7], /^AUC-/u, "the market sample must use an auction master code");
+assert.deepEqual([...marketCSVTemplate.rows[0]], [
+  "ブランドコード", "型番", "モデル", "素材コード", "駆動方式コード", "コンディションコード",
+  "保証年月", "取引価格", "SKU", "付属品コード", "コマ数", "備考",
+], "the market template must contain detail fields only; shared market data belongs to the basic-information section");
+assert.match(marketCSVTemplate.rows[1][6], /^\d{4}-\d{2}$/u, "the market sample must include a warranty year and month");
 const marketTemplateCSVText = marketCSVTemplate.rows.map((row) => row.map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\r\n");
 const marketCountBeforeTemplateImport = window.eval("APP_DATA.marketPrices.length");
 const marketTemplateImportResult = window.marketImportCsvText(marketTemplateCSVText, "相場表テンプレート.csv");
 assert.deepEqual({ ...marketTemplateImportResult }, { imported: 0, staged: 1, skipped: 0 }, "the downloaded market sample must stage without saving");
 assert.equal(window.eval("APP_DATA.marketPrices.length"), marketCountBeforeTemplateImport, "market sample staging must not change persisted rows");
-assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), false, "market CSV staging must open the detail preview");
+assert.equal(document.getElementById("marketDraftTableWrap").hidden, false, "market CSV staging must open the inline detail preview");
+assert.equal(document.querySelectorAll("#marketDraftTableBody tr").length, 1, "staged CSV rows must appear in the editable detail table");
+assert.deepEqual(
+  [...document.querySelectorAll("#marketDraftTable thead th")].map(th => th.textContent.replace(/\s+/gu, " ").trim()),
+  ["No.", "ブランド *", "型番", "モデル *", "素材", "駆動方式", "コンディション", "保証年月", "取引価格（JPY） *", "SKU", "付属品", "削除"],
+  "market draft columns must follow the requested product-detail order",
+);
+const templateHeader = [...marketCSVTemplate.rows[0]];
+const templateSample = [...marketCSVTemplate.rows[1]];
+const templateMaterialCode = templateSample[templateHeader.indexOf("素材コード")];
+const templateMovementCode = templateSample[templateHeader.indexOf("駆動方式コード")];
+const templateConditionCode = templateSample[templateHeader.indexOf("コンディションコード")];
+assert.equal(document.querySelector('#marketDraftTableBody select[aria-label="明細1 素材"]').value, templateMaterialCode,
+  "CSV material codes must select the matching material master option");
+assert.equal(document.querySelector('#marketDraftTableBody select[aria-label="明細1 駆動方式"]').value, templateMovementCode,
+  "CSV movement codes must select the matching movement master option");
+assert.equal(document.querySelector('#marketDraftTableBody select[aria-label="明細1 コンディション"]').value, templateConditionCode,
+  "CSV condition codes must select the matching condition master option");
+assert.equal(document.querySelector('#marketDraftTableBody input[aria-label="明細1 備考"]'), null,
+  "notes must not remain as a draft-row column");
+assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), true, "market CSV staging must remain on the registration page instead of opening a modal");
 window.marketCancelCSVImport();
-assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), true);
+assert.equal(document.getElementById("marketDraftTableWrap").hidden, true);
 const purchaseCSVHeaders = [...purchaseCSVTemplate.rows[0]];
 const supplierForCSV = window.eval("APP_DATA.suppliers[0]");
 const staffForCSV = window.eval("APP_DATA.staffRecords[0]");
@@ -1786,7 +2122,7 @@ assert.equal(document.getElementById("pe-date").value, "2099-12-29");
 assert.equal(document.getElementById("pe-supplier").value, supplierForCSV.code);
 assert.match(bulkPurchase.id, /^PI-2099-[0-9]{4}$/u, "the purchase slip number must be generated without a CSV column");
 assert.deepEqual([...bulkPurchase.lines.map((line) => line.lineNo)], [1, 2], "detail numbers must follow CSV row order automatically");
-assert.deepEqual([...bulkPurchase.lines.map((line) => line.code)], ["20991229001", "20991229002"], "management numbers must be generated sequentially without a CSV column");
+assert.deepEqual([...bulkPurchase.lines.map((line) => line.code)], ["2912990001", "2912990002"], "management numbers must be generated sequentially without a CSV column");
 assert.equal(bulkPurchase.lines[0].productDetail.brand, "", "CSV purchase registration must allow an unknown brand");
 assert.equal(bulkPurchase.lines[0].productDetail.model, "CSV Bulk Model");
 assert.equal(bulkPurchase.lines[0].productDetail.material, materialForCSV.code);
@@ -2110,6 +2446,18 @@ assert.match(document.querySelector('[data-role="pe-line-tax-label"]').textConte
 assert.equal(document.querySelector('[data-role="pe-line-tax-amount"]').textContent.trim(), "¥12,345");
 assert.equal(document.getElementById("pe-total-tax").textContent, "¥12,345");
 assert.equal(document.getElementById("pe-total-purchase").textContent, "¥135,801");
+window.peSetTaxCategory("tax_equivalent");
+assert.equal(document.getElementById("pe-tax-category-equivalent").getAttribute("aria-checked"), "true");
+assert.match(document.querySelector('[data-role="pe-line-tax-label"]').textContent, /消費税相当額/u);
+assert.equal(document.querySelector('[data-role="pe-line-tax-amount"]').textContent.trim(), "¥12,345");
+assert.equal(document.getElementById("pe-total-tax").textContent, "¥12,345（参考）");
+assert.equal(document.getElementById("pe-total-purchase").textContent, "¥123,456",
+  "tax-equivalent reference values must not be added to the payment total");
+window.peSetTaxCategory("out_of_scope");
+assert.equal(document.getElementById("pe-tax-category-out-of-scope").getAttribute("aria-checked"), "true");
+assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "対象外");
+assert.equal(document.getElementById("pe-total-tax").textContent, "対象外");
+window.peSetTaxCategory("consumption_tax");
 window.pePrintPreview();
 const purchasePrintHtml = document.getElementById("pePrintPreviewContent").innerHTML;
 assert.match(purchasePrintHtml, /仕入伝票/u);
@@ -2121,11 +2469,23 @@ assert.match(purchasePrintHtml, /商品点数：1点/u, "purchase slips must dis
 assert.match(purchasePrintHtml, /\.tpl-cover-total span\{[^}]*white-space:nowrap/u, "purchase total labels must remain on one line");
 assert.equal(purchasePrintHtml.includes("SKU:"), false, "purchase slip previews must not display SKU");
 assert.match(purchasePrintHtml, /付属品: BOX・GUARANTEE/u, "purchase slip previews must display accessories in the description");
+assert.match(purchasePrintHtml, /支払い方法：銀行振込/u, "purchase slips must print the selected payment method");
 assert.match(purchasePrintHtml, new RegExp(companyInfo.companyName));
 assert.match(purchasePrintHtml, new RegExp(companyInfo.address));
 assert.equal(purchasePrintHtml.includes("お振込先"), false, "purchase slips must not print bank details");
 window.peclosePrintModal();
+window.peSetPurchaseTaxMode("personal");
+assert.equal(document.getElementById("pe-tax-personal").getAttribute("aria-checked"), "true");
+assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "対象外");
+assert.equal(document.getElementById("pe-total-purchase").textContent, "¥123,456");
+assert.match(document.getElementById("pe-tax-mode-description").textContent, /個人買取仕入/u);
+window.peSetPurchaseCurrency("HKD");
+assert.equal(document.getElementById("pe-currency-hkd").getAttribute("aria-checked"), "true");
+assert.equal(document.getElementById("pe-total-purchase").textContent, "HK$123,456");
+assert.equal(document.getElementById("pe-currency-hkd").getAttribute("aria-checked"), "true",
+  "changing the purchase category must not reset the selected purchase currency");
 window.peSetPurchaseTaxMode("overseas");
+window.peSetPurchaseCurrency("USD");
 assert.equal(document.getElementById("pe-tax-overseas").getAttribute("aria-checked"), "true");
 assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "対象外");
 assert.equal(document.getElementById("pe-total-tax").textContent.trim(), "対象外");
@@ -2140,6 +2500,7 @@ assert.match(overseasPurchasePrintHtml, /発行日時/u, "purchase slips must la
 assert.equal(overseasPurchasePrintHtml.includes("¥135,801"), false, "overseas purchases must not add domestic consumption tax");
 window.peclosePrintModal();
 window.peSetPurchaseTaxMode("domestic");
+window.peSetPurchaseCurrency("JPY");
 
 const domesticPurchaseSummarySlip = {
   id: "PI-SUMMARY-JPY",
@@ -2506,14 +2867,122 @@ assert.equal(document.getElementById("sl-currency-jpy").getAttribute("aria-press
 
 assert.equal(typeof window.marketImportCsvText, "function", "market CSV import must be globally callable");
 assert.equal(typeof window.marketOpenEdit, "function", "market edit modal must be globally callable");
+const marketRegistrationPage = document.getElementById("page-market-entry");
+assert.ok(marketRegistrationPage, "market registration must have its own page");
+assert.ok(marketRegistrationPage.querySelector("#market-template-download-button"), "market registration must expose the CSV template");
+assert.ok(marketRegistrationPage.querySelector("#market-csv-import-button"), "market registration must expose CSV import");
+assert.ok(marketRegistrationPage.querySelector("#market-csv-file-input"), "market registration must own the CSV file input");
+assert.ok(marketRegistrationPage.querySelector("#marketEntryTable"), "market registration must show the registered market list");
+assert.ok(marketRegistrationPage.querySelector("#marketEntryTableBody"), "market registration must own a registered market table body");
+assert.ok(marketRegistrationPage.querySelector("#marketDraftTable"), "market registration must show an inline editable detail preview");
+assert.ok(marketRegistrationPage.querySelector("#market-add-draft-button"), "market registration must allow handwritten detail rows");
+assert.ok(marketRegistrationPage.querySelector("#marketDraftAddCount"), "market registration must accept a numeric bulk row count");
+assert.ok(marketRegistrationPage.querySelector("#market-entry-basic-card"), "market registration must expose shared basic information");
+assert.ok(marketRegistrationPage.querySelector("#market-basic-category"));
+assert.ok(marketRegistrationPage.querySelector("#market-basic-auction"));
+assert.ok(marketRegistrationPage.querySelector("#market-basic-research-date"));
+assert.ok(marketRegistrationPage.querySelector("#market-basic-currency"));
+assert.deepEqual(
+  [...marketRegistrationPage.querySelectorAll(".market-basic-grid > .form-group")]
+    .map(group => group.querySelector("select, input")?.id),
+  ["market-basic-research-date", "market-basic-auction", "market-basic-category", "market-basic-currency"],
+  "market research date and market category must appear in the swapped positions",
+);
+assert.equal(document.getElementById("market-basic-currency-group").hidden, false,
+  "transaction currency must remain visible so domestic JPY is explicit");
+assert.deepEqual(
+  [...document.getElementById("market-basic-currency").options].map(option => option.value),
+  ["JPY", "USD", "HKD"],
+  "transaction currency must support JPY, USD, and HKD",
+);
+assert.equal(document.getElementById("market-basic-currency").value, "JPY");
+assert.equal(document.getElementById("market-basic-currency").disabled, true,
+  "domestic market categories must lock transaction currency to JPY");
+assert.equal(document.getElementById("market-basic-currency-lock-note").hidden, false);
+assert.equal(document.getElementById("market-basic-rate").textContent, "1 JPY = ¥1.00");
+document.getElementById("market-basic-category").value = "overseas";
+window.marketApplyBasicInfoToDrafts();
+assert.equal(document.getElementById("market-basic-currency").disabled, false,
+  "overseas market research must enable transaction currency selection");
+assert.equal(document.getElementById("market-basic-currency-lock-note").hidden, true);
+document.getElementById("market-basic-currency").value = "HKD";
+window.marketApplyBasicInfoToDrafts();
+assert.equal(document.getElementById("market-basic-currency").value, "HKD");
+document.getElementById("market-basic-category").value = "domestic-retail";
+window.marketApplyBasicInfoToDrafts();
+assert.equal(document.getElementById("market-basic-currency").value, "JPY",
+  "switching from overseas to a domestic category must reset currency to JPY");
+assert.equal(document.getElementById("market-basic-currency").disabled, true);
+assert.equal(marketRegistrationPage.querySelectorAll(".market-entry-step").length, 2,
+  "the redundant handwritten-entry guide card must be removed");
+assert.equal(marketRegistrationPage.querySelector(".market-entry-step-manual"), null);
+assert.ok(marketRegistrationPage.querySelector("#marketDraftRegisterButton"), "market registration must place a final registration button in the detail footer");
+assert.equal(typeof window.marketAddDraftRow, "function");
+assert.equal(typeof window.marketAddDraftRows, "function");
+assert.equal(typeof window.marketConfirmDraftRegistration, "function");
+assert.equal(document.querySelector("#page-market #market-csv-import-button"), null, "market table must not expose CSV import");
+assert.equal(document.querySelector("#page-market #market-template-download-button"), null, "market table must not expose the registration template");
+window.navigateTo("market-entry");
+assert.equal(marketRegistrationPage.classList.contains("hidden"), false, "market registration navigation must open the registration page");
+assert.equal(document.getElementById("pageTitle").textContent, "相場登録");
+assert.match(marketRegistrationPage.querySelector("#market-entry-result-area h3").textContent, /登録済み相場一覧表/u);
+assert.equal(document.querySelectorAll("#marketEntryTableBody tr").length, Math.min(inventory.length, 10), "market registration must render persisted rows below the import controls");
+const marketEntryColumns = [...document.querySelectorAll("#marketEntryTable thead th")].map(th => th.dataset.marketCol);
+const marketMainColumns = [...document.querySelectorAll("#marketTable thead th")].map(th => th.dataset.marketCol);
+assert.deepEqual(marketEntryColumns, marketMainColumns, "market registration list must use the same columns as the market list");
+assert.deepEqual(marketMainColumns.slice(0, 4), ["importDate", "brand", "ref", "model"], "market list columns must follow date, brand, reference number, model order");
+assert.deepEqual(marketMainColumns.slice(4, 6), ["auctionName", "marketCategory"], "market category must be immediately to the right of auction name");
+const marketAccessoryColumnIndex = marketMainColumns.indexOf("accessories");
+assert.deepEqual(
+  marketMainColumns.slice(marketAccessoryColumnIndex, marketAccessoryColumnIndex + 4),
+  ["accessories", "material", "movement", "condition"],
+  "material, movement, and condition must appear immediately to the right of accessories",
+);
 window.navigateTo("market");
+assert.equal(document.getElementById("pageTitle").textContent, "相場表");
+assert.match(document.querySelector("#market-result-area h3").textContent, /相場表/u);
 const marketRows = window.eval("APP_DATA.marketPrices");
 assert.equal(marketRows.length, inventory.length, "market preview must start from inventory rows");
 assert.equal(document.querySelectorAll("#marketTableBody tr").length, inventory.length);
-assert.doesNotMatch(document.getElementById("marketTableBody").textContent, /\$/u, "winning bid prices must be displayed in JPY only");
-assert.match(document.querySelector("#page-market thead").textContent, /オークション開催日/u);
+assert.deepEqual(
+  [...document.querySelector("#marketTableBody tr").children].slice(0, 4).map(cell => cell.dataset.marketCol),
+  ["importDate", "brand", "ref", "model"],
+  "market table body must follow the same brand, reference number, model order as the header",
+);
+const marketAmountsBeforeCurrencySwitch = JSON.stringify(marketRows.map(row => ({
+  id: row.id,
+  marketPrice: row.marketPrice,
+  marketPriceJpy: row.marketPriceJpy,
+  marketCurrency: row.marketCurrency,
+})));
+assert.equal(typeof window.marketSwitchDisplayCurrency, "function");
+assert.equal(typeof window.getMarketDisplayAmount, "function");
+assert.equal(document.querySelectorAll("[data-market-display-currency]").length, 6, "both market lists must expose JPY, USD, and HKD switches");
+window.marketSwitchDisplayCurrency("USD");
+assert.equal(document.querySelectorAll('[data-market-display-currency="USD"][aria-pressed="true"]').length, 2);
+assert.match(document.querySelector("#marketTableBody td[data-market-col=\"marketPrice\"] strong").textContent, /^\$/u);
+assert.match(document.querySelector("#marketEntryTableBody td[data-market-col=\"marketPrice\"] strong").textContent, /^\$/u);
+assert.match(document.querySelector("#marketTableBody td[data-market-col=\"marketPrice\"]").textContent, /円換算/u);
+window.marketSwitchDisplayCurrency("HKD");
+assert.equal(document.querySelectorAll('[data-market-display-currency="HKD"][aria-pressed="true"]').length, 2);
+assert.match(document.querySelector("#marketTableBody td[data-market-col=\"marketPrice\"] strong").textContent, /^HK\$/u);
+assert.match(document.querySelector("#marketEntryTableBody td[data-market-col=\"marketPrice\"] strong").textContent, /^HK\$/u);
+window.marketSwitchDisplayCurrency("JPY");
+assert.equal(document.querySelectorAll('[data-market-display-currency="JPY"][aria-pressed="true"]').length, 2);
+assert.match(document.querySelector("#marketTableBody td[data-market-col=\"marketPrice\"] strong").textContent, /^¥/u);
+assert.match(document.querySelector("#marketEntryTableBody td[data-market-col=\"marketPrice\"] strong").textContent, /^¥/u);
+assert.equal(
+  JSON.stringify(marketRows.map(row => ({ id: row.id, marketPrice: row.marketPrice, marketPriceJpy: row.marketPriceJpy, marketCurrency: row.marketCurrency }))),
+  marketAmountsBeforeCurrencySwitch,
+  "display currency switching must not mutate registered market prices",
+);
+assert.doesNotMatch(document.getElementById("marketTableBody").textContent, /\$/u, "domestic winning bid prices must be displayed in JPY");
+assert.match(document.querySelector("#page-market thead").textContent, /市場調査日/u);
 assert.match(document.querySelector("#page-market thead").textContent, /オークション名/u);
-assert.match(document.querySelector("#page-market thead").textContent, /落札価格（JPY）/u);
+assert.match(document.querySelector("#page-market thead").textContent, /市場区分/u);
+assert.match(document.querySelector("#page-market thead").textContent, /取引価格/u);
+assert.match(document.querySelector("#page-market thead").textContent, /市場調査レート/u);
+assert.match(document.querySelector("#page-market thead").textContent, /付属品\s*素材\s*駆動方式\s*コンディション/u);
 assert.match(document.querySelector("#page-market thead").textContent, /備考/u);
 assert.doesNotMatch(document.querySelector("#page-market thead").textContent, /シリアル|仕入日|仕入れ価格|担当者|ステータス|BOX/u);
 assert.equal(document.getElementById("market-f-serial"), null, "market filters must not include serial number");
@@ -2521,6 +2990,13 @@ assert.equal(document.getElementById("market-f-staff"), null, "market filters mu
 assert.equal(document.getElementById("market-f-supplier"), null, "market filters must not include supplier");
 const marketAuctionFilter = document.getElementById("market-f-auction");
 assert.notEqual(marketAuctionFilter, null, "market filters must include auction name");
+const marketCategoryFilter = document.getElementById("market-f-category");
+assert.notEqual(marketCategoryFilter, null, "market filters must include market category beside auction name");
+assert.deepEqual(
+  [...marketCategoryFilter.options].map(option => option.value),
+  ["", "domestic-auction", "overseas", "domestic-retail"],
+  "market category filter must expose all supported categories",
+);
 const auctionMasters = window.eval("APP_DATA.auctionRecords");
 assert.deepEqual(
   [...marketAuctionFilter.options].map(option => option.value),
@@ -2542,6 +3018,14 @@ const expectedAuctionRows = marketRows.filter(row => row.auctionCode === auction
 assert.equal(document.querySelectorAll("#marketTableBody tr").length, expectedAuctionRows, "auction filter must match by master code");
 assert.match(document.getElementById("marketTableBody").textContent, new RegExp(auctionMasters[0].name, "u"));
 window.marketResetFilters();
+const firstMarketCategoryBeforeFilter = marketRows[0].marketCategory;
+marketRows[0].marketCategory = "overseas";
+marketCategoryFilter.value = "overseas";
+window.marketApplyFilters();
+assert.equal(document.querySelectorAll("#marketTableBody tr").length, 1, "market category filter must restrict the market list");
+assert.match(document.querySelector("#marketTableBody").textContent, /海外/u);
+marketRows[0].marketCategory = firstMarketCategoryBeforeFilter;
+window.marketResetFilters();
 assert.equal(document.getElementById("market-f-status"), null, "market filters must not include inventory status");
 for (const removedKey of ["serial", "purchaseDate", "purchasePrice", "staff", "supplier", "status", "box"]) {
   assert.equal(document.querySelector(`#market-column-panel input[value="${removedKey}"]`), null, `${removedKey} must not be a market column option`);
@@ -2549,8 +3033,24 @@ for (const removedKey of ["serial", "purchaseDate", "purchasePrice", "staff", "s
 }
 assert.equal(document.getElementById("market-purchase-jpy"), null);
 assert.equal(document.getElementById("market-price-usd"), null);
-assert.equal(document.getElementById("market-price-heading").textContent, "落札価格（JPY）");
+assert.equal(document.getElementById("market-price-heading").textContent, "取引価格");
 assert.equal(document.querySelector('#marketTableBody td[data-market-col="marketPrice"]').textContent.trim(), "¥1,224,500");
+assert.equal(document.querySelector('#marketTableBody td[data-market-col="marketResearchRate"]').textContent.trim(), "1 JPY = ¥1.00");
+assert.equal(
+  document.querySelector('#marketTableBody td[data-market-col="material"]').textContent.trim(),
+  window.getProductSpecName("material", marketRows[0].material) || "—",
+  "market material cells must display the master name",
+);
+assert.equal(
+  document.querySelector('#marketTableBody td[data-market-col="movement"]').textContent.trim(),
+  window.getProductSpecName("movement", marketRows[0].movement) || "—",
+  "market movement cells must display the master name",
+);
+assert.equal(
+  document.querySelector('#marketTableBody td[data-market-col="condition"]').textContent.trim(),
+  window.getConditionName(marketRows[0].condition) || "—",
+  "market condition cells must display the master name",
+);
 assert.equal(marketRows[0].marketPriceJpy, 1224500, "legacy preview prices must normalize to JPY once");
 
 window.marketToggleColumnMenu({ stopPropagation() {} });
@@ -2563,21 +3063,47 @@ for (const key of marketHiddenKeys) {
   assert.equal(document.querySelector(`th[data-market-col="${key}"]`).classList.contains("market-col-hidden"), true);
   assert.equal(document.querySelector(`#marketTableBody td[data-market-col="${key}"]`).classList.contains("market-col-hidden"), true);
 }
-assert.equal(document.getElementById("market-column-count").textContent, "8/10");
+assert.equal(document.getElementById("market-column-count").textContent, "14/16");
 window.marketShowAllColumns();
-assert.equal(document.getElementById("market-column-count").textContent, "10/10");
+assert.equal(document.getElementById("market-column-count").textContent, "16/16");
 assert.equal(document.querySelectorAll("#marketTable .market-col-hidden").length, 0);
 window.marketCloseColumnMenu();
 const firstMarketId = marketRows[0].id;
 window.marketOpenEdit(firstMarketId);
 assert.equal(document.getElementById("marketEditModal").classList.contains("hidden"), false, "market edit modal must open");
+assert.deepEqual(
+  [...document.getElementById("me-marketCurrency").options].map(option => option.value),
+  ["JPY", "USD", "HKD"],
+  "market edit must allow all transaction currencies",
+);
+assert.equal(document.getElementById("me-marketPriceLabel").textContent, "取引価格（JPY）");
+const marketEditPriceInput = document.getElementById("me-marketPriceJpy");
+const marketEditCurrencySelect = document.getElementById("me-marketCurrency");
+const marketEditDate = document.getElementById("me-importDate").value;
+const marketEditJpyBasis = Number(marketEditPriceInput.dataset.jpyAmount);
+marketEditCurrencySelect.value = "USD";
+window.marketEditCurrencyChanged({ recalculatePrice: true });
+const marketEditUsdRate = window.getMarketJpyRateAtDate("USD", marketEditDate);
+assert.equal(window.getPriceValue(marketEditPriceInput), Math.round(marketEditJpyBasis / marketEditUsdRate),
+  "changing transaction currency to USD must recalculate the price with the market-date rate");
+assert.equal(Number(document.getElementById("me-marketFxRate").dataset.rate), marketEditUsdRate);
+assert.match(document.getElementById("me-marketConversionNote").textContent, new RegExp(marketEditDate, "u"));
+marketEditCurrencySelect.value = "HKD";
+window.marketEditCurrencyChanged({ recalculatePrice: true });
+const marketEditHkdRate = window.getMarketJpyRateAtDate("HKD", marketEditDate);
+assert.equal(window.getPriceValue(marketEditPriceInput), Math.round(marketEditJpyBasis / marketEditHkdRate),
+  "changing transaction currency to HKD must recalculate the price with the market-date rate");
+marketEditCurrencySelect.value = "JPY";
+window.marketEditCurrencyChanged({ recalculatePrice: true });
+assert.equal(window.getPriceValue(marketEditPriceInput), marketEditJpyBasis,
+  "round-tripping transaction currencies must preserve the registered JPY basis");
 assert.equal(document.getElementById("me-purchaseDate"), null, "market edit must not include purchase date");
 assert.equal(document.getElementById("me-status"), null, "market edit must not include inventory status");
 assert.equal(document.getElementById("me-box"), null, "market edit must not include BOX assignment");
 assert.equal(document.getElementById("me-serial"), null, "market edit must not include serial number");
 assert.equal(document.getElementById("me-staff"), null, "market edit must not include staff");
 assert.equal(document.getElementById("me-purchasePrice"), null, "market edit must not include purchase price");
-document.getElementById("me-marketPriceJpy").value = "1,259,500";
+marketEditPriceInput.value = "1,259,500";
 document.getElementById("me-auctionCode").value = "AUC-001";
 document.getElementById("me-note").value = "落札結果を確認済み";
 window.marketSaveEdit();
@@ -2587,9 +3113,20 @@ assert.equal(marketRows[0].auctionCode, "AUC-001");
 assert.equal(marketRows[0].note, "落札結果を確認済み");
 assert.equal(document.getElementById("marketEditModal").classList.contains("hidden"), true, "market edit modal must close after save");
 
+document.getElementById("market-basic-category").value = "overseas";
+document.getElementById("market-basic-auction").value = "AUC-001";
+document.getElementById("market-basic-research-date").value = "2026-08-01";
+window.marketApplyBasicInfoToDrafts();
+assert.equal(document.getElementById("market-basic-currency-group").hidden, false,
+  "overseas market research must expose the transaction currency selector");
+assert.equal(document.getElementById("market-basic-currency").disabled, false,
+  "overseas market research must allow transaction currency changes");
+document.getElementById("market-basic-currency").value = "HKD";
+window.marketApplyBasicInfoToDrafts();
+assert.match(document.getElementById("market-basic-rate").textContent, /^1 HKD = ¥/u);
 const csvResult = window.marketImportCsvText(
-  "オークション開催日,ブランドコード,モデル,型番,オークションコード,落札価格（JPY）,SKU,付属品コード,備考\n" +
-  "2026-08-01,BRD-001,自由入力モデル,自由入力型番,AUC-001,565750,FREE-SKU-001,ACC-001,自由入力備考",
+  "ブランドコード,モデル,型番,取引価格,SKU,付属品コード,備考\n" +
+  "BRD-001,自由入力モデル,自由入力型番,565750,FREE-SKU-001,ACC-001,自由入力備考",
   "market-test.csv",
 );
 const marketCountBeforeCsvPreview = marketRows.length;
@@ -2597,20 +3134,104 @@ assert.equal(csvResult.imported, 0);
 assert.equal(csvResult.staged, 1);
 assert.equal(csvResult.skipped, 0);
 assert.equal(marketRows.length, marketCountBeforeCsvPreview, "market CSV staging must not append a row before confirmation");
-assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), false);
-assert.match(document.getElementById("marketCsvPreviewBody").textContent, /ロレックス/u);
+assert.equal(document.getElementById("marketDraftTableWrap").hidden, false);
+assert.equal(document.querySelector('#marketDraftTableBody input[aria-label="明細1 モデル名"]').value, "自由入力モデル");
+assert.equal(document.querySelector('#marketDraftTableBody input[type="text"][aria-label="明細1 付属品"]'), null,
+  "market draft accessories must no longer use a free-text field");
+const importedAccessoryButton = document.querySelector('[data-market-draft-accessories="0"] .market-draft-accessory-button');
+assert.ok(importedAccessoryButton, "market draft accessories must expose a multi-select button");
+assert.match(importedAccessoryButton.getAttribute("aria-label"), /複数選択/u);
+assert.match(importedAccessoryButton.textContent, /BOX/u, "CSV accessory values must be reflected in the selected summary");
+window.marketToggleDraftAccessoryMenu(0, { stopPropagation() {} });
+const importedAccessoryMenu = document.getElementById("market-draft-accessory-menu-0");
+assert.equal(importedAccessoryMenu.hidden, false);
+assert.equal(importedAccessoryMenu.querySelector('input[value="BOX"]').checked, true,
+  "CSV accessory values must be checked in the multi-select");
+const importedGuarantee = importedAccessoryMenu.querySelector('input[value="GUARANTEE"]');
+importedGuarantee.checked = true;
+window.marketDraftAccessoryChanged(0);
+assert.match(importedAccessoryButton.textContent, /2件/u, "multi-select must display the selected accessory count");
+assert.deepEqual(Array.from(window.eval("_marketPendingImport.rows[0].accessories")), ["BOX", "GUARANTEE"],
+  "multiple checked accessories must be stored in the draft row");
+assert.equal(document.getElementById("marketDraftRegisterButton").disabled, false, "registration must become available after staging a valid row");
 const marketConfirmResult = await window.marketConfirmCSVImport();
 assert.equal(marketConfirmResult.imported, 1);
 assert.equal(marketRows.length, marketCountBeforeCsvPreview + 1, "market CSV confirmation must append the staged row");
 assert.equal(marketRows.at(-1).importDate, "2026-08-01");
+assert.equal(marketRows.at(-1).marketCategory, "overseas");
 assert.equal(marketRows.at(-1).auctionName, "東京オークション");
 assert.equal(marketRows.at(-1).auctionCode, "AUC-001");
 assert.equal(marketRows.at(-1).brand, "ロレックス");
-assert.equal(marketRows.at(-1).accessories[0], "BOX");
-assert.equal(marketRows.at(-1).marketPriceJpy, 565750);
+assert.deepEqual([...marketRows.at(-1).accessories], ["BOX", "GUARANTEE"],
+  "all accessories selected in the draft must be registered");
+assert.equal(marketRows.at(-1).marketCurrency, "HKD");
+assert.equal(marketRows.at(-1).marketPrice, 565750);
+assert.equal(marketRows.at(-1).marketPriceJpy, Math.round(565750 * marketRows.at(-1).marketFxRate));
+assert.equal(marketRows.at(-1).marketFxRate, window.getMarketJpyRate("HKD"));
 assert.equal(marketRows.at(-1).note, "自由入力備考");
 assert.equal(document.getElementById("marketImportSummary").classList.contains("show"), true);
 assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), true);
+assert.equal(document.getElementById("marketDraftTableWrap").hidden, true, "confirmed rows must leave the draft preview");
+assert.equal(document.getElementById("marketDraftRegisterButton").disabled, true);
+
+const marketCountBeforeManualEntry = marketRows.length;
+document.getElementById("marketDraftAddCount").value = "3";
+assert.equal(window.marketAddDraftRows(), 3);
+assert.equal(document.querySelectorAll("#marketDraftTableBody tr").length, 3, "manual entry must add the requested number of editable rows");
+window.marketRemoveDraftRow(2);
+window.marketRemoveDraftRow(1);
+assert.equal(document.querySelectorAll("#marketDraftTableBody tr").length, 1);
+const invalidManualResult = await window.marketConfirmDraftRegistration();
+assert.equal(invalidManualResult.validationError, true, "blank handwritten rows must not be registered");
+assert.equal(document.querySelector("#marketDraftTableBody tr").classList.contains("market-draft-row-invalid"), true);
+document.getElementById("market-basic-category").value = "domestic-retail";
+document.getElementById("market-basic-currency").value = "JPY";
+document.getElementById("market-basic-auction").value = "";
+document.getElementById("market-basic-research-date").value = "2026-08-30";
+window.marketApplyBasicInfoToDrafts();
+window.marketUpdateDraftRow(0, "brand", "ロレックス");
+window.marketUpdateDraftRow(0, "model", "手入力モデル");
+window.marketUpdateDraftRow(0, "ref", "MANUAL-001");
+const manualMarketMaterial = window.eval("APP_DATA.materials[0].code");
+const manualMarketMovement = window.eval("APP_DATA.movements[0].code");
+const manualMarketCondition = window.eval("APP_DATA.conditions[0].code");
+window.marketUpdateDraftRow(0, "material", manualMarketMaterial);
+window.marketUpdateDraftRow(0, "movement", manualMarketMovement);
+window.marketUpdateDraftRow(0, "condition", manualMarketCondition);
+window.marketUpdateDraftRow(0, "marketPrice", "777,000");
+window.marketUpdateDraftRow(0, "sku", "MANUAL-SKU-001");
+assert.equal(document.querySelector('[data-market-draft-bracelet-qty="0"]').hidden, true,
+  "bracelet quantity must stay hidden until BRACELET PARTS is selected");
+window.marketUpdateDraftRow(0, "accessories", ["BOX", "BRACELET PARTS"]);
+window.marketRenderDraftRows();
+const manualBraceletQuantity = document.querySelector('[data-market-draft-bracelet-qty="0"]');
+assert.equal(manualBraceletQuantity.hidden, false,
+  "selecting BRACELET PARTS must expose the bracelet quantity input");
+const manualBraceletQuantityInput = manualBraceletQuantity.querySelector("input");
+manualBraceletQuantityInput.value = "8";
+window.marketDraftBraceletQtyChanged(0, manualBraceletQuantityInput);
+assert.match(document.querySelector('[data-market-draft-accessory-summary]').textContent, /BRACELET PARTS（8コマ）/u,
+  "the selected accessory summary must include the recorded bracelet quantity");
+window.marketUpdateDraftRow(0, "warrantyYearMonth", "2026-08");
+window.marketUpdateDraftRow(0, "note", "画面から手入力");
+const manualMarketResult = await window.marketConfirmDraftRegistration();
+assert.equal(manualMarketResult.imported, 1);
+assert.equal(marketRows.length, marketCountBeforeManualEntry + 1, "confirmed handwritten rows must be appended to registered market data");
+assert.equal(marketRows.at(-1).model, "手入力モデル");
+assert.equal(marketRows.at(-1).marketCategory, "domestic-retail");
+assert.equal(marketRows.at(-1).auctionCode, "", "auction selection must be optional");
+assert.equal(marketRows.at(-1).marketPriceJpy, 777000);
+assert.equal(marketRows.at(-1).material, manualMarketMaterial);
+assert.equal(marketRows.at(-1).movement, manualMarketMovement);
+assert.equal(marketRows.at(-1).condition, manualMarketCondition);
+assert.equal(marketRows.at(-1).accessories.join("・"), "BOX・BRACELET PARTS");
+assert.equal(marketRows.at(-1).braceletQty, 8, "the bracelet quantity must persist with the registered market row");
+window.eval("marketEntryPage = Math.ceil(APP_DATA.marketPrices.length / MARKET_ITEMS_PER_PAGE)");
+window.marketRenderEntryTable();
+assert.match(document.getElementById("marketEntryTableBody").textContent, /手入力モデル/u,
+  "the confirmed handwritten row must appear in the registered list below");
+window.eval("marketEntryPage = 1");
+window.marketRenderEntryTable();
 
 // 管理者／作業者の画面権限と、ログイン切替をまたぐ承認フロー
 window.localStorage.removeItem("inv_approval_workflow_v2");
@@ -2620,6 +3241,7 @@ assert.equal(window.currentRoleLabel(), "作業者");
 window.applyRoleUI();
 assert.equal(document.querySelector(".sidebar-user div div:last-child").textContent, "作業者");
 assert.equal(document.querySelector('.nav-item[data-page="market"]').style.display, "", "worker must see the market table");
+assert.equal(document.querySelector('.nav-item[data-page="market-entry"]').style.display, "", "worker must see market registration");
 assert.equal(document.querySelector('.nav-item[data-page="approval"]').style.display, "none", "worker must not see approval management");
 assert.equal(document.querySelector('.nav-item[data-page="login-info"]'), null, "duplicate login information navigation must remain removed for workers");
 
@@ -2726,14 +3348,44 @@ assert.deepEqual(
   `inline handlers reference missing functions: ${[...missingHandlerFunctions].sort().join(", ")}`,
 );
 
-assert.equal(document.querySelectorAll(".page-panel").length, 19);
-assert.equal(document.querySelectorAll(".nav-item").length, 16);
+assert.equal(document.querySelectorAll(".page-panel").length, 20);
+assert.equal(document.querySelectorAll(".nav-item").length, 18);
 assert.equal(document.querySelectorAll(".modal-overlay").length, 47);
+const desktopSidebar = document.getElementById("appSidebar");
+const desktopSidebarToggle = document.getElementById("sidebarVisibilityToggle");
+assert.ok(desktopSidebar, "desktop sidebar must have a stable controlled element");
+assert.ok(desktopSidebarToggle, "desktop topbar must expose a sidebar visibility button");
+assert.equal(typeof window.toggleDesktopSidebar, "function");
+window.setDesktopSidebarHidden(false);
+assert.equal(desktopSidebarToggle.getAttribute("aria-expanded"), "true");
+window.toggleDesktopSidebar();
+assert.equal(desktopSidebar.classList.contains("sidebar-hidden"), true, "sidebar toggle must completely hide the left navigation");
+assert.equal(desktopSidebarToggle.getAttribute("aria-expanded"), "false");
+assert.match(desktopSidebarToggle.textContent, /メニューを表示/u, "the remaining button must explain how to restore the sidebar");
+window.toggleDesktopSidebar();
+assert.equal(desktopSidebar.classList.contains("sidebar-hidden"), false, "the same button must restore the left navigation");
+assert.equal(window.localStorage.getItem("inv_admin_sidebar_hidden_v1"), "0", "sidebar visibility must persist across reloads");
 const sidebarGroups = [...document.querySelectorAll(".sidebar-nav > .nav-group")];
 assert.equal(sidebarGroups[0].querySelector(".nav-group-label").textContent.trim(), "メイン");
+const marketNavGroup = document.getElementById("marketNavGroup");
+const marketNavToggle = document.getElementById("marketNavToggle");
+const marketNavSubmenu = document.getElementById("marketNavSubmenu");
+assert.ok(marketNavGroup, "market navigation links must be grouped under one parent");
+assert.match(marketNavToggle.textContent, /相場関連/u);
+window.navigateTo("dashboard");
+assert.equal(marketNavToggle.getAttribute("aria-expanded"), "false");
+assert.equal(marketNavSubmenu.hidden, true, "market child links must be collapsed outside market pages");
+marketNavToggle.click();
+await Promise.resolve();
+assert.equal(marketNavToggle.getAttribute("aria-expanded"), "true");
+assert.equal(marketNavSubmenu.hidden, false, "clicking the market parent must reveal both child links");
+window.syncMarketNavGroup("market-entry");
+assert.equal(marketNavToggle.getAttribute("aria-expanded"), "true");
+assert.equal(marketNavGroup.classList.contains("has-active"), true,
+  "the market parent must stay highlighted while a market child page is active");
 assert.deepEqual(
-  [...sidebarGroups[0].querySelectorAll(".nav-item")].map((item) => item.dataset.page),
-  ["dashboard", "market", "inventory", "purchase-entry", "purchase"],
+  [...sidebarGroups[0].querySelectorAll(".nav-item[data-page]")].map((item) => item.dataset.page),
+  ["dashboard", "market-entry", "market", "inventory", "purchase-entry", "purchase"],
   "main navigation order must follow the inventory workflow",
 );
 assert.equal(sidebarGroups[1].querySelector(".nav-group-label").textContent.trim(), "経理・会計");
@@ -2747,7 +3399,7 @@ assert.ok(document.getElementById("deletedSlipListBody"), "deleted document arch
 assert.ok(document.getElementById("page-consignment"), "consignment registration page must be present");
 assert.ok(document.getElementById("sltab-consignment"), "document list must include the consignment tab");
 const shipmentDetailTable = window.buildItemsTable(
-  [{ code: "20260804004", brand: "グランドセイコー", model: "Heritage Collection", salePrice: 5975 }],
+  [{ code: "0408260004", brand: "グランドセイコー", model: "Heritage Collection", salePrice: 5975 }],
   "shipping",
   { currency: "USD", rate: 155.25 },
 );
@@ -2848,7 +3500,7 @@ const guestDocument = guestWindow.document;
 assert.deepEqual(guestRuntimeErrors, [], `guest boot emitted errors: ${guestRuntimeErrors.map(String).join("\n")}`);
 const publishedGuestItems = guestWindow.eval("guestCatalogItems");
 assert.equal(publishedGuestItems.length, 7, "G001 must only see available products from boxes published to B004");
-assert.equal(publishedGuestItems.some(item => item.code === "20260303001"), false, "reserved products must not appear in the guest catalog");
+assert.equal(publishedGuestItems.some(item => item.code === "0303260001"), false, "reserved products must not appear in the guest catalog");
 assert.equal(guestDocument.querySelectorAll(".guest-product-card").length, 7);
 assert.match(guestDocument.getElementById("guest-publish-summary").textContent, /公開BOX: 2/u);
 assert.match(guestDocument.querySelector(".guest-product-price").textContent, /¥1,180,000/u);

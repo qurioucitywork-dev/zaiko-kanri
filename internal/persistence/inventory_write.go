@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,8 @@ var (
 	ErrDuplicateSerialReason = errors.New("duplicate serial reason is required")
 	ErrPurchaseDateMismatch  = errors.New("product purchase date must match its purchase slip")
 	ErrDuplicateProductCode  = errors.New("duplicate product code")
+	ErrInvalidProductCode    = errors.New("invalid product code format")
+	ErrDailyProductLimit     = errors.New("daily product code limit reached")
 )
 
 type SingleProductInput struct {
@@ -27,6 +30,8 @@ type SingleProductInput struct {
 	SupplierCode          string
 	StaffCode             string
 	PurchaseDate          string
+	PurchaseTaxMode       string
+	TaxCategory           string
 	SKU                   string
 	BrandCode             string
 	ModelNumber           string
@@ -61,13 +66,28 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 	if err != nil {
 		return SingleProductResult{}, fmt.Errorf("invalid purchase date: %w", err)
 	}
+	purchaseTaxMode, _, err := normalizePurchaseTaxMode(input.PurchaseTaxMode)
+	if err != nil {
+		return SingleProductResult{}, err
+	}
+	taxCategory, taxRateBasisPoints, err := normalizePurchaseTaxCategory(input.TaxCategory, purchaseTaxMode)
+	if err != nil {
+		return SingleProductResult{}, err
+	}
 	var result SingleProductResult
 	var createdProductID string
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().UTC()
-		supplierRoleID, err := lookupSupplierRole(tx, input.OrganizationID, input.SupplierCode)
-		if err != nil {
-			return err
+		var supplierRoleID string
+		if strings.TrimSpace(input.SupplierCode) == "" {
+			if PurchaseSupplierRequired(purchaseTaxMode) {
+				return ErrSupplierNotFound
+			}
+		} else {
+			supplierRoleID, err = lookupSupplierRole(tx, input.OrganizationID, input.SupplierCode)
+			if err != nil {
+				return err
+			}
 		}
 		staffID, err := lookupStaffProfile(tx, input.OrganizationID, input.ActorUserID, input.StaffCode)
 		if err != nil {
@@ -124,8 +144,11 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			if err != nil {
 				return err
 			}
-			productCode = date.Format("20060102") + fmt.Sprintf("%03d", productSequence)
+			productCode = formatProductCode(date, productSequence)
 		} else {
+			if !isProductCodeForDate(productCode, date) {
+				return ErrInvalidProductCode
+			}
 			var duplicates int64
 			if err := tx.Table("products").Where(
 				"organization_id = ? AND UPPER(BTRIM(product_code)) = ?",
@@ -134,6 +157,9 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			}
 			if duplicates > 0 {
 				return ErrDuplicateProductCode
+			}
+			if err := reserveProductSequence(tx, input.OrganizationID, date, productCode, now); err != nil {
+				return err
 			}
 		}
 		purchaseID, err := database.NewID("pur")
@@ -159,10 +185,10 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 		if err := tx.Exec(`
 			INSERT INTO purchase_slips(
 				id,organization_id,slip_number,supplier_role_id,purchase_staff_profile_id,purchase_date,status,
-				is_simple,notes,confirmed_at,confirmed_by,created_by,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,'confirmed',TRUE,?,?,?,?,?,?)`,
-			purchaseID, input.OrganizationID, result.PurchaseSlipNumber, supplierRoleID, staffID, date,
-			strings.TrimSpace(input.Notes), now, input.ActorUserID, input.ActorUserID, now, now).Error; err != nil {
+				is_simple,purchase_tax_mode,tax_category,tax_rate_basis_points,notes,confirmed_at,confirmed_by,created_by,created_at,updated_at
+			) VALUES(?,?,?,?,?,?,'confirmed',TRUE,?,?,?,?,?,?,?,?,?)`,
+			purchaseID, input.OrganizationID, result.PurchaseSlipNumber, nullIfEmpty(supplierRoleID), staffID, date,
+			purchaseTaxMode, taxCategory, taxRateBasisPoints, strings.TrimSpace(input.Notes), now, input.ActorUserID, input.ActorUserID, now, now).Error; err != nil {
 			return fmt.Errorf("insert purchase slip: %w", err)
 		}
 		productType := strings.TrimSpace(input.ProductType)
@@ -200,7 +226,7 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'in_stock','private',?,?,?,?,?,?,?,?)`,
 			productID, input.OrganizationID, productCode, strings.TrimSpace(input.SKU), brandName, brandID,
 			strings.TrimSpace(input.ModelNumber), strings.TrimSpace(input.ReferenceNumber), strings.TrimSpace(input.SerialNumber), productType,
-			nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), nullIfEmpty(shapeID), nullIfEmpty(markingID), supplierRoleID, supplierRoleID, staffID, lineID,
+			nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), nullIfEmpty(shapeID), nullIfEmpty(markingID), supplierRoleID, nullIfEmpty(supplierRoleID), staffID, lineID,
 			date, input.CostAmountMinor, input.CostCurrency, input.BaseSalePriceMinor, input.BaseSaleCurrency,
 			conditionName, strings.Join(accessoryNames, ", "), strings.TrimSpace(input.BeltText), strings.TrimSpace(input.DialText),
 			input.BraceletQuantity, strings.TrimSpace(input.Notes), now, now).Error; err != nil {
@@ -275,15 +301,52 @@ func nextDocumentSequence(tx *gorm.DB, organizationID, documentType string, year
 
 func nextProductSequence(tx *gorm.DB, organizationID string, date time.Time, now time.Time) (int, error) {
 	var sequence int
-	err := tx.Raw(`
+	result := tx.Raw(`
 		INSERT INTO product_code_sequences(organization_id,business_date,last_sequence,updated_at)
-		SELECT ?,?,COALESCE(MAX(RIGHT(product_code,3)::INTEGER),0)+1,?
+		SELECT ?,?,COALESCE(MAX(RIGHT(product_code,4)::INTEGER),0)+1,?
 		FROM products
-		WHERE organization_id=? AND purchase_date=? AND product_code ~ '^[0-9]{11}$'
+		WHERE organization_id=? AND purchase_date=? AND product_code ~ '^[0-9]{10}$'
 		ON CONFLICT (organization_id,business_date)
 		DO UPDATE SET last_sequence=product_code_sequences.last_sequence+1,updated_at=EXCLUDED.updated_at
-		RETURNING last_sequence`, organizationID, date, now, organizationID, date).Scan(&sequence).Error
-	return sequence, err
+		WHERE product_code_sequences.last_sequence < 9999
+		RETURNING last_sequence`, organizationID, date, now, organizationID, date).Scan(&sequence)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	if result.RowsAffected == 0 || sequence < 1 || sequence > 9999 {
+		return 0, ErrDailyProductLimit
+	}
+	return sequence, nil
+}
+
+// formatProductCode returns DDMMYY + a four-digit daily sequence.
+func formatProductCode(date time.Time, sequence int) string {
+	return date.Format("020106") + fmt.Sprintf("%04d", sequence)
+}
+
+func isProductCodeForDate(code string, date time.Time) bool {
+	if len(code) != 10 || !strings.HasPrefix(code, date.Format("020106")) {
+		return false
+	}
+	for _, char := range code {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return code[6:] != "0000"
+}
+
+func reserveProductSequence(tx *gorm.DB, organizationID string, date time.Time, code string, now time.Time) error {
+	sequence, err := strconv.Atoi(code[6:])
+	if err != nil || sequence < 1 || sequence > 9999 {
+		return ErrInvalidProductCode
+	}
+	return tx.Exec(`
+		INSERT INTO product_code_sequences(organization_id,business_date,last_sequence,updated_at)
+		VALUES(?,?,?,?)
+		ON CONFLICT (organization_id,business_date)
+		DO UPDATE SET last_sequence=GREATEST(product_code_sequences.last_sequence,EXCLUDED.last_sequence),updated_at=EXCLUDED.updated_at`,
+		organizationID, date, sequence, now).Error
 }
 
 func lookupSupplierRole(tx *gorm.DB, organizationID, code string) (string, error) {

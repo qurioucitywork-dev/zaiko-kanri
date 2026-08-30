@@ -13,7 +13,7 @@ func TestCreatePurchaseReturnRequiresNotes(t *testing.T) {
 		TransactionDate: "2026-08-16",
 		SupplierCode:    "S001",
 		PurchaseSlipNo:  "PI-2026-0001",
-		ProductCodes:    []string{"20260816001"},
+		ProductCodes:    []string{"1608260001"},
 		Notes:           "   ",
 	})
 	if !errors.Is(err, ErrReturnState) {

@@ -19,12 +19,21 @@ var (
 	ErrQuantitySerialConflict = errors.New("serial number cannot be used when quantity is greater than one")
 	ErrPurchaseQuantity       = errors.New("purchase line quantity must be one")
 	ErrPurchaseTaxMode        = errors.New("invalid purchase tax mode")
+	ErrPurchaseTaxCategory    = errors.New("invalid purchase tax category")
+	ErrPurchasePaymentMethod  = errors.New("invalid purchase payment method")
 	ErrPurchaseInUse          = errors.New("purchase slip has products already used by another operation")
 )
 
 const (
-	PurchaseTaxModeDomestic = "domestic"
-	PurchaseTaxModeOverseas = "overseas"
+	PurchaseTaxModeDomestic           = "domestic"
+	PurchaseTaxModePersonal           = "personal"
+	PurchaseTaxModeOverseas           = "overseas"
+	PurchaseTaxCategoryConsumptionTax = "consumption_tax"
+	PurchaseTaxCategoryEquivalent     = "tax_equivalent"
+	PurchaseTaxCategoryOutOfScope     = "out_of_scope"
+	PurchasePaymentMethodCash         = "cash"
+	PurchasePaymentMethodBankTransfer = "bank_transfer"
+	PurchasePaymentMethodCard         = "card"
 )
 
 type PurchaseLineInput struct {
@@ -56,9 +65,12 @@ type PurchaseCreateInput struct {
 	OrganizationID  string
 	ActorUserID     string
 	SupplierCode    string              `json:"supplierCode"`
+	SupplierName    string              `json:"supplierName"`
 	StaffCode       string              `json:"staffCode"`
 	PurchaseDate    string              `json:"purchaseDate"`
 	PurchaseTaxMode string              `json:"purchaseTaxMode"`
+	TaxCategory     string              `json:"taxCategory"`
+	PaymentMethod   string              `json:"paymentMethod"`
 	Notes           string              `json:"notes"`
 	Lines           []PurchaseLineInput `json:"lines"`
 }
@@ -104,6 +116,8 @@ type PurchaseSlipRecord struct {
 	StaffCode             string               `json:"staffCode"`
 	PurchaseDate          DateString           `json:"purchaseDate"`
 	PurchaseTaxMode       string               `json:"purchaseTaxMode"`
+	TaxCategory           string               `json:"taxCategory"`
+	PaymentMethod         string               `json:"paymentMethod"`
 	TaxRateBasisPoints    int                  `json:"taxRateBasisPoints"`
 	Status                string               `json:"status"`
 	IsSimple              bool                 `json:"isSimple"`
@@ -130,10 +144,49 @@ func normalizePurchaseTaxMode(value string) (string, int, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "", PurchaseTaxModeDomestic:
 		return PurchaseTaxModeDomestic, 1000, nil
-	case PurchaseTaxModeOverseas:
-		return PurchaseTaxModeOverseas, 0, nil
+	case PurchaseTaxModePersonal, PurchaseTaxModeOverseas:
+		return strings.ToLower(strings.TrimSpace(value)), 0, nil
 	default:
 		return "", 0, ErrPurchaseTaxMode
+	}
+}
+
+// PurchaseSupplierRequired reports whether a supplier must be selected for
+// the requested purchase mode. Unknown and omitted modes are treated as the
+// safer domestic default, where the supplier remains mandatory.
+func PurchaseSupplierRequired(value string) bool {
+	mode, _, err := normalizePurchaseTaxMode(value)
+	return err != nil || mode != PurchaseTaxModePersonal
+}
+
+func normalizePurchaseTaxCategory(value, purchaseTaxMode string) (string, int, error) {
+	category := strings.ToLower(strings.TrimSpace(value))
+	if category == "" {
+		if purchaseTaxMode == PurchaseTaxModeDomestic {
+			return PurchaseTaxCategoryConsumptionTax, 1000, nil
+		}
+		return PurchaseTaxCategoryOutOfScope, 0, nil
+	}
+	switch category {
+	case PurchaseTaxCategoryConsumptionTax:
+		return category, 1000, nil
+	case PurchaseTaxCategoryEquivalent, PurchaseTaxCategoryOutOfScope:
+		return category, 0, nil
+	default:
+		return "", 0, ErrPurchaseTaxCategory
+	}
+}
+
+func normalizePurchasePaymentMethod(value string) (string, error) {
+	method := strings.ToLower(strings.TrimSpace(value))
+	if method == "" {
+		return PurchasePaymentMethodBankTransfer, nil
+	}
+	switch method {
+	case PurchasePaymentMethodCash, PurchasePaymentMethodBankTransfer, PurchasePaymentMethodCard:
+		return method, nil
+	default:
+		return "", ErrPurchasePaymentMethod
 	}
 }
 
@@ -162,15 +215,15 @@ func (r *Repository) PurchaseSlipsPage(ctx context.Context, organizationID strin
 	}
 	var records []PurchaseSlipRecord
 	err := r.db.WithContext(ctx).Table("purchase_slips AS p").
-		Select(`p.id,p.slip_number,pr.role_code AS supplier_code,bp.legal_name AS supplier_name,
-			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_rate_basis_points,
+		Select(`p.id,p.slip_number,COALESCE(pr.role_code,'') AS supplier_code,COALESCE(NULLIF(p.supplier_name_text,''),bp.legal_name,'') AS supplier_name,
+			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_category,p.payment_method,p.tax_rate_basis_points,
 			p.status,p.is_simple,p.notes,
 			p.confirmed_at,p.issued_at,COALESCE(p.issued_by,'') AS issued_by,p.paid_at,COALESCE(p.paid_by,'') AS paid_by,
 			COALESCE(p.issue_fx_rate_snapshot_id,'') AS issue_fx_rate_snapshot_id,
 			COALESCE(p.issue_fx_rate_scaled,0) AS issue_fx_rate_scaled,
 			COALESCE(p.issue_fx_scale,0) AS issue_fx_scale,p.created_at,p.updated_at`).
-		Joins("JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
-		Joins("JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
+		Joins("LEFT JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
+		Joins("LEFT JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
 		Where("p.organization_id=? AND p.status<>'cancelled'", organizationID).
 		Order("p.purchase_date DESC,p.slip_number DESC").
@@ -194,12 +247,12 @@ func (r *Repository) DeletedPurchaseSlipsPage(ctx context.Context, organizationI
 	}
 	var records []PurchaseSlipRecord
 	err := r.db.WithContext(ctx).Table("purchase_slips AS p").
-		Select(`p.id,p.slip_number,pr.role_code AS supplier_code,bp.legal_name AS supplier_name,
-			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_rate_basis_points,
+		Select(`p.id,p.slip_number,COALESCE(pr.role_code,'') AS supplier_code,COALESCE(NULLIF(p.supplier_name_text,''),bp.legal_name,'') AS supplier_name,
+			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_category,p.payment_method,p.tax_rate_basis_points,
 			p.status,p.is_simple,p.notes,p.cancelled_at,COALESCE(p.cancelled_by,'') AS cancelled_by,
 			p.cancel_reason,p.created_at,p.updated_at`).
-		Joins("JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
-		Joins("JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
+		Joins("LEFT JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
+		Joins("LEFT JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
 		Where("p.organization_id=? AND p.status='cancelled'", organizationID).
 		Order("p.cancelled_at DESC NULLS LAST,p.slip_number DESC").
@@ -210,15 +263,15 @@ func (r *Repository) DeletedPurchaseSlipsPage(ctx context.Context, organizationI
 func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseID string) (PurchaseSlipRecord, error) {
 	var record PurchaseSlipRecord
 	result := r.db.WithContext(ctx).Table("purchase_slips AS p").
-		Select(`p.id,p.slip_number,pr.role_code AS supplier_code,bp.legal_name AS supplier_name,
-			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_rate_basis_points,
+		Select(`p.id,p.slip_number,COALESCE(pr.role_code,'') AS supplier_code,COALESCE(NULLIF(p.supplier_name_text,''),bp.legal_name,'') AS supplier_name,
+			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_category,p.payment_method,p.tax_rate_basis_points,
 			p.status,p.is_simple,p.notes,
 			p.confirmed_at,p.issued_at,COALESCE(p.issued_by,'') AS issued_by,p.paid_at,COALESCE(p.paid_by,'') AS paid_by,
 			COALESCE(p.issue_fx_rate_snapshot_id,'') AS issue_fx_rate_snapshot_id,
 			COALESCE(p.issue_fx_rate_scaled,0) AS issue_fx_rate_scaled,
 			COALESCE(p.issue_fx_scale,0) AS issue_fx_scale,p.created_at,p.updated_at`).
-		Joins("JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
-		Joins("JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
+		Joins("LEFT JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
+		Joins("LEFT JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
 		Where("p.organization_id=? AND p.id=? AND p.status<>'cancelled'", organizationID, purchaseID).Take(&record)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -302,7 +355,15 @@ func (r *Repository) DeletePurchase(ctx context.Context, organizationID, purchas
 }
 
 func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInput) (PurchaseSlipRecord, error) {
-	purchaseTaxMode, taxRateBasisPoints, err := normalizePurchaseTaxMode(input.PurchaseTaxMode)
+	purchaseTaxMode, _, err := normalizePurchaseTaxMode(input.PurchaseTaxMode)
+	if err != nil {
+		return PurchaseSlipRecord{}, err
+	}
+	taxCategory, taxRateBasisPoints, err := normalizePurchaseTaxCategory(input.TaxCategory, purchaseTaxMode)
+	if err != nil {
+		return PurchaseSlipRecord{}, err
+	}
+	paymentMethod, err := normalizePurchasePaymentMethod(input.PaymentMethod)
 	if err != nil {
 		return PurchaseSlipRecord{}, err
 	}
@@ -313,12 +374,23 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 	if len(input.Lines) == 0 || len(input.Lines) > 100 {
 		return PurchaseSlipRecord{}, fmt.Errorf("purchase must contain between 1 and 100 lines")
 	}
+	supplierName := strings.TrimSpace(input.SupplierName)
+	if purchaseTaxMode != PurchaseTaxModePersonal {
+		supplierName = ""
+	}
 	var purchaseID string
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().UTC()
-		supplierRoleID, err := lookupSupplierRole(tx, input.OrganizationID, input.SupplierCode)
-		if err != nil {
-			return err
+		var supplierRoleID string
+		if strings.TrimSpace(input.SupplierCode) == "" {
+			if PurchaseSupplierRequired(purchaseTaxMode) {
+				return ErrSupplierNotFound
+			}
+		} else {
+			supplierRoleID, err = lookupSupplierRole(tx, input.OrganizationID, input.SupplierCode)
+			if err != nil {
+				return err
+			}
 		}
 		staffID, err := lookupStaffProfile(tx, input.OrganizationID, input.ActorUserID, input.StaffCode)
 		if err != nil {
@@ -334,10 +406,10 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 		}
 		slipNumber := fmt.Sprintf("PI-%04d-%04d", date.Year(), sequence)
 		if err := tx.Exec(`INSERT INTO purchase_slips(
-			id,organization_id,slip_number,supplier_role_id,purchase_staff_profile_id,purchase_date,status,is_simple,
-			purchase_tax_mode,tax_rate_basis_points,notes,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,'draft',FALSE,?,?,?,?,?,?)`, purchaseID, input.OrganizationID, slipNumber,
-			supplierRoleID, staffID, date, purchaseTaxMode, taxRateBasisPoints, strings.TrimSpace(input.Notes), input.ActorUserID, now, now).Error; err != nil {
+			id,organization_id,slip_number,supplier_role_id,supplier_name_text,purchase_staff_profile_id,purchase_date,status,is_simple,
+			purchase_tax_mode,tax_category,payment_method,tax_rate_basis_points,notes,created_by,created_at,updated_at
+		) VALUES(?,?,?,?,?,?,?,'draft',FALSE,?,?,?,?,?,?,?,?)`, purchaseID, input.OrganizationID, slipNumber,
+			nullIfEmpty(supplierRoleID), supplierName, staffID, date, purchaseTaxMode, taxCategory, paymentMethod, taxRateBasisPoints, strings.TrimSpace(input.Notes), input.ActorUserID, now, now).Error; err != nil {
 			return fmt.Errorf("insert purchase slip: %w", err)
 		}
 
@@ -446,7 +518,7 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 			SupplierRoleID         string
 			PurchaseStaffProfileID string
 		}
-		result := tx.Raw(`SELECT status,purchase_date,supplier_role_id,COALESCE(purchase_staff_profile_id,'') AS purchase_staff_profile_id
+		result := tx.Raw(`SELECT status,purchase_date,COALESCE(supplier_role_id,'') AS supplier_role_id,COALESCE(purchase_staff_profile_id,'') AS purchase_staff_profile_id
 			FROM purchase_slips WHERE organization_id=? AND id=? FOR UPDATE`, organizationID, purchaseID).Scan(&slip)
 		if result.Error != nil {
 			return result.Error
@@ -504,7 +576,7 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 				if err != nil {
 					return err
 				}
-				productCode := slip.PurchaseDate.Format("20060102") + fmt.Sprintf("%03d", sequence)
+				productCode := formatProductCode(slip.PurchaseDate, sequence)
 				if err := tx.Exec(`INSERT INTO products(
 					id,organization_id,product_code,sku,brand,brand_id,model_number,reference_number,serial_number,
 					product_type,material_id,movement_id,condition_id,shape_id,marking_id,supplier_id,supplier_role_id,
@@ -515,7 +587,7 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 					productID, organizationID, productCode, item.SKU, item.BrandText, nullIfEmpty(item.BrandID), item.ModelNumber,
 					item.ReferenceNumber, item.SerialNumber, item.ProductType, nullIfEmpty(item.MaterialID),
 					nullIfEmpty(item.MovementID), nullIfEmpty(item.ConditionID), nullIfEmpty(item.ShapeID), nullIfEmpty(item.MarkingID), slip.SupplierRoleID,
-					slip.SupplierRoleID, nullIfEmpty(slip.PurchaseStaffProfileID), item.ID, slip.PurchaseDate,
+					nullIfEmpty(slip.SupplierRoleID), nullIfEmpty(slip.PurchaseStaffProfileID), item.ID, slip.PurchaseDate,
 					item.UnitCostMinor, item.CostCurrency, item.BaseSalePriceMinor, item.BaseSaleCurrency,
 					conditionName, strings.Join(accessoryNames, ", "), item.BeltText, item.DialText,
 					item.BraceletQuantity, item.Notes, now, now).Error; err != nil {

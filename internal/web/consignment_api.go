@@ -70,6 +70,10 @@ func (s *Server) apiConsignment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiConsignmentCreate(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireAPIAdmin(w, r, "委託伝票の登録")
+	if !ok {
+		return
+	}
 	var input persistence.ConsignmentCreateInput
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<10))
 	decoder.DisallowUnknownFields()
@@ -86,7 +90,6 @@ func (s *Server) apiConsignmentCreate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_consignment_date", "委託日はYYYY-MM-DDで指定してください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
 	input.OrganizationID, input.ActorUserID = user.OrganizationID, user.ID
 	record, err := s.repository.CreateConsignment(r.Context(), input)
 	if err != nil {
@@ -104,6 +107,10 @@ func (s *Server) apiConsignmentCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiConsignmentReturnScan(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireAPIAdmin(w, r, "委託伝票の商品返却")
+	if !ok {
+		return
+	}
 	var input struct {
 		Code string `json:"code"`
 	}
@@ -113,7 +120,6 @@ func (s *Server) apiConsignmentReturnScan(w http.ResponseWriter, r *http.Request
 		writeAPIError(w, http.StatusBadRequest, "invalid_product_code", "商品管理番号を読み取ってください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
 	result, err := s.repository.ReturnConsignmentProduct(r.Context(), user.OrganizationID, r.PathValue("id"), input.Code, user.ID)
 	if err != nil {
 		switch {

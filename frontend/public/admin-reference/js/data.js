@@ -87,7 +87,7 @@ const APP_DATA = {
   // サンプル在庫データ
   inventory: [
     {
-      code: "20260301001", brand: "ロレックス", brandEn: "Rolex", model: "サブマリーナ", modelEn: "Submariner",
+      code: "0103260001", brand: "ロレックス", brandEn: "Rolex", model: "サブマリーナ", modelEn: "Submariner",
       ref: "116610LN", serial: "ZX123456", supplier: "S001", staff: "山本 太郎",
       purchasePrice: 850000, salePrice: 1180000, purchaseDate: "2026-03-01", status: "在庫中",
       material: "MAT-001", movement: "MOV-001", condition: "CON-003", accessories: ["BOX", "GUARANTEE"],
@@ -102,7 +102,7 @@ const APP_DATA = {
       revisions: []
     },
     {
-      code: "20260303001", brand: "オメガ", brandEn: "Omega", model: "スピードマスター", modelEn: "Speedmaster",
+      code: "0303260001", brand: "オメガ", brandEn: "Omega", model: "スピードマスター", modelEn: "Speedmaster",
       ref: "311.30.42.30.01.005", serial: "87654321", supplier: "S002", staff: "佐藤 花子",
       purchasePrice: 320000, salePrice: 498000, purchaseDate: "2026-03-03", status: "在庫中",
       material: "MAT-001", movement: "MOV-002", condition: "CON-004", accessories: ["BOX"],
@@ -115,7 +115,7 @@ const APP_DATA = {
       revisions: []
     },
     {
-      code: "20260305001", brand: "パテック・フィリップ", brandEn: "Patek Philippe", model: "アクアノート", modelEn: "Aquanaut",
+      code: "0503260001", brand: "パテック・フィリップ", brandEn: "Patek Philippe", model: "アクアノート", modelEn: "Aquanaut",
       ref: "5167A-001", serial: "PH112233", supplier: "S005", staff: "山本 太郎",
       purchasePrice: 2800000, purchasePlannedPrice: 2600000, purchaseDate: "2026-03-05", status: "売上済",
       material: "MAT-001", movement: "MOV-001", condition: "CON-003", accessories: ["BOX", "GUARANTEE"],
@@ -123,7 +123,7 @@ const APP_DATA = {
       revisions: []
     },
     {
-      code: "20260307001", brand: "カルティエ", brandEn: "Cartier", model: "サントス", modelEn: "Santos",
+      code: "0703260001", brand: "カルティエ", brandEn: "Cartier", model: "サントス", modelEn: "Santos",
       ref: "WSSA0009", serial: "CT445566", supplier: "S003", staff: "鈴木 一郎",
       purchasePrice: 480000, purchasePlannedPrice: 450000, salePrice: 720000, purchaseDate: "2026-03-07", status: "在庫中",
       material: "MAT-001", movement: "MOV-003", condition: "CON-004", accessories: ["BOX", "GUARANTEE"],
@@ -137,7 +137,7 @@ const APP_DATA = {
       revisions: []
     },
     {
-      code: "20260310001", brand: "ロレックス", brandEn: "Rolex", model: "デイトナ", modelEn: "Daytona",
+      code: "1003260001", brand: "ロレックス", brandEn: "Rolex", model: "デイトナ", modelEn: "Daytona",
       ref: "116500LN", serial: "ZX789012", supplier: "S001", staff: "山本 太郎",
       purchasePrice: 1950000, purchasePlannedPrice: 1850000, purchaseDate: "2026-03-10", status: "出荷済",
       material: "MAT-001", movement: "MOV-001", condition: "CON-003", accessories: ["BOX", "GUARANTEE", "BRACELET PARTS"],
@@ -145,7 +145,7 @@ const APP_DATA = {
       revisions: []
     },
     {
-      code: "20260312001", brand: "IWC", brandEn: "IWC", model: "ポルトギーゼ", modelEn: "Portugieser",
+      code: "1203260001", brand: "IWC", brandEn: "IWC", model: "ポルトギーゼ", modelEn: "Portugieser",
       ref: "IW500705", serial: "IW334455", supplier: "S004", staff: "田中 美香",
       purchasePrice: 560000, salePrice: 840000, purchaseDate: "2026-03-12", status: "在庫中",
       material: "MAT-003", movement: "MOV-001", condition: "CON-004", accessories: ["BOX"],
@@ -158,7 +158,7 @@ const APP_DATA = {
       revisions: []
     },
     {
-      code: "20260314001", brand: "グランドセイコー", brandEn: "Grand Seiko", model: "エレガンスコレクション", modelEn: "Elegance Collection",
+      code: "1403260001", brand: "グランドセイコー", brandEn: "Grand Seiko", model: "エレガンスコレクション", modelEn: "Elegance Collection",
       ref: "SBGW047", serial: "GS556677", supplier: "S002", staff: "伊藤 健司",
       purchasePrice: 280000, salePrice: 430000, purchaseDate: "2026-03-14", status: "在庫中",
       material: "MAT-005", movement: "MOV-002", condition: "CON-003", accessories: ["BOX", "GUARANTEE"],
@@ -171,7 +171,7 @@ const APP_DATA = {
       revisions: []
     },
     {
-      code: "20260315001", brand: "ブライトリング", brandEn: "Breitling", model: "ナビタイマー", modelEn: "Navitimer",
+      code: "1503260001", brand: "ブライトリング", brandEn: "Breitling", model: "ナビタイマー", modelEn: "Navitimer",
       ref: "AB0121211B1A1", serial: "BR667788", supplier: "S003", staff: "鈴木 一郎",
       purchasePrice: 420000, salePrice: 610000, purchaseDate: "2026-03-15", status: "在庫中",
       material: "MAT-001", movement: "MOV-001", condition: "CON-005", accessories: ["GUARANTEE"],
@@ -186,7 +186,7 @@ const APP_DATA = {
     },
     // APR-002 出荷修正で参照される商品
     {
-      code: "20260301002", brand: "ロレックス", brandEn: "Rolex", model: "デイトナ（ホワイトゴールド）", modelEn: "Daytona WG",
+      code: "0103260002", brand: "ロレックス", brandEn: "Rolex", model: "デイトナ（ホワイトゴールド）", modelEn: "Daytona WG",
       ref: "116519LN", serial: "ZX234567", supplier: "S001", staff: "山本 太郎",
       purchasePrice: 1680000, salePrice: 2200000, purchaseDate: "2026-03-01", status: "在庫中",
       material: "MAT-003", movement: "MOV-001", condition: "CON-002", accessories: ["BOX", "CASE", "GUARANTEE"],
@@ -195,7 +195,7 @@ const APP_DATA = {
     },
     // APR-007 仕入修正で参照される商品
     {
-      code: "20260310002", brand: "ブライトリング", brandEn: "Breitling", model: "ナビタイマー（ブラック）", modelEn: "Navitimer Black",
+      code: "1003260002", brand: "ブライトリング", brandEn: "Breitling", model: "ナビタイマー（ブラック）", modelEn: "Navitimer Black",
       ref: "AB0127211B1A1", serial: "XY001234", supplier: "S002", staff: "佐藤 花子",
       purchasePrice: 480000, salePrice: 720000, purchaseDate: "2026-03-10", status: "在庫中",
       material: "MAT-002", movement: "MOV-001", condition: "CON-003", accessories: ["BOX", "GUARANTEE"],
@@ -209,7 +209,7 @@ const APP_DATA = {
     {
       id: "SL-2026-0001", date: "2026-03-08",
       items: [
-        { code: "20260305001", brand: "パテック・フィリップ", model: "アクアノート", salePrice: 3200000,
+        { code: "0503260001", brand: "パテック・フィリップ", model: "アクアノート", salePrice: 3200000,
           returnType: null, returnStatus: null }
       ],
       total: 3200000, buyer: "B001", note: "",
@@ -218,7 +218,7 @@ const APP_DATA = {
     {
       id: "SL-2026-0002", date: "2026-03-11",
       items: [
-        { code: "20260310001", brand: "ロレックス", model: "デイトナ", salePrice: 2350000,
+        { code: "1003260001", brand: "ロレックス", model: "デイトナ", salePrice: 2350000,
           returnType: null, returnStatus: null }
       ],
       total: 2350000, buyer: "B002", note: "",
@@ -231,13 +231,13 @@ const APP_DATA = {
       id: "SL-2026-0003", date: "2026-04-01",
       items: [
         {
-          code: "20260307001", brand: "カルティエ", model: "サントス",
+          code: "0703260001", brand: "カルティエ", model: "サントス",
           salePrice: 720000,
           returnType: "return",       // 返品
           returnStatus: "pending"
         },
         {
-          code: "20260314001", brand: "グランドセイコー", model: "エレガンスコレクション",
+          code: "1403260001", brand: "グランドセイコー", model: "エレガンスコレクション",
           salePrice: 430000,
           returnType: null, returnStatus: null   // 通常販売
         }
@@ -250,13 +250,13 @@ const APP_DATA = {
       id: "SL-2026-0004", date: "2026-04-05",
       items: [
         {
-          code: "20260312001", brand: "IWC", model: "ポルトギーゼ",
+          code: "1203260001", brand: "IWC", model: "ポルトギーゼ",
           salePrice: 840000,
           returnType: "takeback",     // 持ち帰り
           returnStatus: "pending"
         },
         {
-          code: "20260315001", brand: "ブライトリング", model: "ナビタイマー",
+          code: "1503260001", brand: "ブライトリング", model: "ナビタイマー",
           salePrice: 610000,
           returnType: "return",       // 返品
           returnStatus: "pending"
@@ -269,7 +269,7 @@ const APP_DATA = {
     {
       id: "SL-2026-0005", date: "2026-03-28",
       items: [
-        { code: "20260307001", brand: "カルティエ", model: "サントス", salePrice: 1150000,
+        { code: "0703260001", brand: "カルティエ", model: "サントス", salePrice: 1150000,
           returnType: null, returnStatus: null }
       ],
       total: 1150000, buyer: "B001", note: "端数値引き対応",
@@ -281,9 +281,9 @@ const APP_DATA = {
     {
       id: "SL-2026-0008", date: "2026-04-12",
       items: [
-        { code: "20260301003", brand: "オメガ", model: "シーマスター", salePrice: 620000,
+        { code: "0103260003", brand: "オメガ", model: "シーマスター", salePrice: 620000,
           returnType: null, returnStatus: null },
-        { code: "20260301004", brand: "パネライ", model: "ルミノール", salePrice: 880000,
+        { code: "0103260004", brand: "パネライ", model: "ルミノール", salePrice: 880000,
           returnType: null, returnStatus: null }
       ],
       total: 1500000, buyer: "B002", note: "2点セット割引成約",
@@ -299,7 +299,7 @@ const APP_DATA = {
     {
       id: "SL-2026-0009", date: "2026-04-15",
       items: [
-        { code: "20260301001", brand: "ロレックス", model: "サブマリーナ", salePrice: 1200000,
+        { code: "0103260001", brand: "ロレックス", model: "サブマリーナ", salePrice: 1200000,
           returnType: null, returnStatus: null }
       ],
       total: 1200000, buyer: "B003", note: "新規取引先への売上",
@@ -314,7 +314,7 @@ const APP_DATA = {
     {
       id: "SL-2026-0010", date: "2026-04-16",
       items: [
-        { code: "20260310002", brand: "ブライトリング", model: "ナビタイマー（ブラック）", salePrice: 750000,
+        { code: "1003260002", brand: "ブライトリング", model: "ナビタイマー（ブラック）", salePrice: 750000,
           returnType: null, returnStatus: null }
       ],
       total: 750000, buyer: "B001", note: "差戻し対応中",
@@ -326,7 +326,7 @@ const APP_DATA = {
     {
       id: "SL-2026-0011", date: "2026-04-17",
       items: [
-        { code: "20260301002", brand: "ロレックス", model: "デイトナ（WG）", salePrice: 2100000,
+        { code: "0103260002", brand: "ロレックス", model: "デイトナ（WG）", salePrice: 2100000,
           returnType: null, returnStatus: null }
       ],
       total: 2100000, buyer: "B004", note: "",
@@ -341,7 +341,7 @@ const APP_DATA = {
     {
       id: "SH-2026-0001", date: "2026-03-12",
       destination: "B001",
-      items: [{ code: "20260310001", brand: "ロレックス", model: "デイトナ", wholesale: 2300000 }],
+      items: [{ code: "1003260001", brand: "ロレックス", model: "デイトナ", wholesale: 2300000 }],
       total: 2300000, note: "",
       status: "処理済",
       revisions: []
@@ -350,7 +350,7 @@ const APP_DATA = {
     {
       id: "SH-2026-0003", date: "2026-04-08",
       destination: "B001",
-      items: [{ code: "20260301002", brand: "ロレックス", model: "デイトナ（ホワイトゴールド）", wholesale: 2200000 }],
+      items: [{ code: "0103260002", brand: "ロレックス", model: "デイトナ（ホワイトゴールド）", wholesale: 2200000 }],
       total: 2200000, note: "値引き交渉により金額修正申請中",
       pendingApprovalId: "APR-002",
       status: "承認待ち",
@@ -364,7 +364,7 @@ const APP_DATA = {
     {
       id: "SH-2026-0004", date: "2026-04-11",
       destination: "B002",
-      items: [{ code: "20260305001", brand: "ロレックス", model: "サブマリーナ", wholesale: 1150000 }],
+      items: [{ code: "0503260001", brand: "ロレックス", model: "サブマリーナ", wholesale: 1150000 }],
       total: 1150000, note: "承認申請中",
       status: "承認待ち",
       approvalNote: "新規取引先への出荷です。確認をお願いします。",
@@ -377,7 +377,7 @@ const APP_DATA = {
     {
       id: "SH-2026-0005", date: "2026-04-13",
       destination: "B003",
-      items: [{ code: "20260303001", brand: "オメガ", model: "スピードマスター", wholesale: 490000 }],
+      items: [{ code: "0303260001", brand: "オメガ", model: "スピードマスター", wholesale: 490000 }],
       total: 490000, note: "差戻し対応中",
       status: "差戻し",
       revisionComment: "出荷先住所が不正確です。確認して再申請してください。",
@@ -388,8 +388,8 @@ const APP_DATA = {
       id: "SH-2026-0006", date: "2026-04-14",
       destination: "B004",
       items: [
-        { code: "20260307001", brand: "カルティエ", model: "サントス", wholesale: 680000 },
-        { code: "20260312001", brand: "IWC", model: "ポルトギーゼ", wholesale: 650000 }
+        { code: "0703260001", brand: "カルティエ", model: "サントス", wholesale: 680000 },
+        { code: "1203260001", brand: "IWC", model: "ポルトギーゼ", wholesale: 650000 }
       ],
       total: 1330000, note: "",
       status: "差戻し",
@@ -413,8 +413,8 @@ const APP_DATA = {
       status: "未対応",   // 未対応 / 対応済 / 保留中
       note: "至急確認お願いします",
       items: [
-        { itemCode: "20260301001", itemName: "ロレックス サブマリーナ", salePrice: 1180000, itemStatus: "pending" },
-        { itemCode: "20260307001", itemName: "カルティエ サントス", salePrice: 780000, itemStatus: "pending" },
+        { itemCode: "0103260001", itemName: "ロレックス サブマリーナ", salePrice: 1180000, itemStatus: "pending" },
+        { itemCode: "0703260001", itemName: "カルティエ サントス", salePrice: 780000, itemStatus: "pending" },
       ]
     },
     {
@@ -427,7 +427,7 @@ const APP_DATA = {
       status: "未対応",
       note: "",
       items: [
-        { itemCode: "20260312001", itemName: "IWC ポルトギーゼ", salePrice: 890000, itemStatus: "pending" },
+        { itemCode: "1203260001", itemName: "IWC ポルトギーゼ", salePrice: 890000, itemStatus: "pending" },
       ]
     },
     {
@@ -440,8 +440,8 @@ const APP_DATA = {
       status: "対応済",
       note: "急ぎではありません",
       items: [
-        { itemCode: "20260303001", itemName: "オメガ スピードマスター", salePrice: 650000, itemStatus: "approved" },
-        { itemCode: "20260310001", itemName: "グランドセイコー エレガンス", salePrice: 420000, itemStatus: "rejected" },
+        { itemCode: "0303260001", itemName: "オメガ スピードマスター", salePrice: 650000, itemStatus: "approved" },
+        { itemCode: "1003260001", itemName: "グランドセイコー エレガンス", salePrice: 420000, itemStatus: "rejected" },
       ]
     },
   ],
@@ -462,7 +462,7 @@ const APP_DATA = {
       date: "2026-03-20",
       supplier: "S001",
       items: [
-        { code: "20260301001", brand: "ロレックス", model: "サブマリーナ",
+        { code: "0103260001", brand: "ロレックス", model: "サブマリーナ",
           ref: "116610LN", serial: "ZX123456", purchasePrice: 850000, status: "処理済" }
       ],
       reason: "商品不良",
@@ -478,9 +478,9 @@ const APP_DATA = {
       date: "2026-04-02",
       supplier: "S003",
       items: [
-        { code: "20260307001", brand: "カルティエ", model: "サントス",
+        { code: "0703260001", brand: "カルティエ", model: "サントス",
           ref: "WSSA0009", serial: "CT445566", purchasePrice: 480000, status: "未処理" },
-        { code: "20260315001", brand: "ブライトリング", model: "ナビタイマー",
+        { code: "1503260001", brand: "ブライトリング", model: "ナビタイマー",
           ref: "AB0121211B1A1", serial: "BR667788", purchasePrice: 420000, status: "未処理" },
       ],
       reason: "注文違い",
@@ -496,7 +496,7 @@ const APP_DATA = {
       date: "2026-04-10",
       supplier: "S002",
       items: [
-        { code: "20260410001", brand: "パテック・フィリップ", model: "アクアノート",
+        { code: "1004260001", brand: "パテック・フィリップ", model: "アクアノート",
           ref: "5167A-001", serial: "PP556677", purchasePrice: 2600000, status: "未処理" }
       ],
       reason: "品質不適合",
@@ -516,7 +516,7 @@ const APP_DATA = {
       date: "2026-04-14",
       supplier: "S004",
       items: [
-        { code: "20260415001", brand: "ロレックス", model: "デイトジャスト",
+        { code: "1504260001", brand: "ロレックス", model: "デイトジャスト",
           ref: "126300", serial: "RX445566", purchasePrice: 1350000, status: "未処理" }
       ],
       reason: "説明と相違",
@@ -536,7 +536,7 @@ const APP_DATA = {
       date: "2026-04-16",
       supplier: "S005",
       items: [
-        { code: "20260416001", brand: "オメガ", model: "アクアテラ",
+        { code: "1604260001", brand: "オメガ", model: "アクアテラ",
           ref: "220.10.38.20", serial: "", purchasePrice: 280000, status: "未処理" }
       ],
       reason: "シリアル番号不一致",
@@ -556,7 +556,7 @@ const APP_DATA = {
       date: "2026-04-15",
       supplier: "S002",
       items: [
-        { code: "20260417001", brand: "パテック・フィリップ", model: "カラトラバ",
+        { code: "1704260001", brand: "パテック・フィリップ", model: "カラトラバ",
           ref: "5396G-001", serial: "PP667788", purchasePrice: 3200000, status: "未処理" }
       ],
       reason: "商品説明相違",
@@ -573,7 +573,7 @@ const APP_DATA = {
       date: "2026-04-17",
       supplier: "S003",
       items: [
-        { code: "20260414001", brand: "IWC", model: "ポルトギーゼ",
+        { code: "1404260001", brand: "IWC", model: "ポルトギーゼ",
           ref: "IW500704", serial: "IW334455", purchasePrice: 450000, status: "未処理" }
       ],
       reason: "梱包不良",
@@ -590,7 +590,7 @@ const APP_DATA = {
       date: "2026-04-17",
       supplier: "S001",
       items: [
-        { code: "20260414002", brand: "ブライトリング", model: "ナビタイマー",
+        { code: "1404260002", brand: "ブライトリング", model: "ナビタイマー",
           ref: "AB0121", serial: "BR778899", purchasePrice: 390000, status: "未処理" }
       ],
       reason: "不良品",
@@ -607,10 +607,10 @@ const APP_DATA = {
       date: "2026-04-10",
       supplier: "S001",
       items: [
-        { code: "20260301001", brand: "ロレックス", model: "サブマリーナ",
+        { code: "0103260001", brand: "ロレックス", model: "サブマリーナ",
           ref: "116610LN", serial: "ZX223300", purchasePrice: 850000,
           status: "処理済", trackingNo: "JMOV-0012345678JP" },
-        { code: "20260303001", brand: "オメガ", model: "スピードマスター",
+        { code: "0303260001", brand: "オメガ", model: "スピードマスター",
           ref: "310.30.42.50.01.001", serial: "OM112233", purchasePrice: 320000,
           status: "処理済", trackingNo: "" }
       ],
@@ -627,7 +627,7 @@ const APP_DATA = {
       date: "2026-04-12",
       supplier: "S002",
       items: [
-        { code: "20260305001", brand: "パテック・フィリップ", model: "カラトラバ",
+        { code: "0503260001", brand: "パテック・フィリップ", model: "カラトラバ",
           ref: "5196G", serial: "PP334455", purchasePrice: 2800000,
           status: "処理済", trackingNo: "SF123456789JP" }
       ],
@@ -649,7 +649,7 @@ const APP_DATA = {
       slipId: "SL-2026-0003",
       buyer: "B001",
       items: [
-        { code: "20260307001", brand: "カルティエ", model: "サントス",
+        { code: "0703260001", brand: "カルティエ", model: "サントス",
           ref: "WSSA0009", serial: "CT445566", salePrice: 720000 }
       ],
       total: 720000,
@@ -667,9 +667,9 @@ const APP_DATA = {
       slipId: "SL-2026-0004",
       buyer: "B002",
       items: [
-        { code: "20260312001", brand: "IWC", model: "ポルトギーゼ",
+        { code: "1203260001", brand: "IWC", model: "ポルトギーゼ",
           ref: "IW500704", serial: "IW334455", salePrice: 840000 },
-        { code: "20260315001", brand: "ブライトリング", model: "ナビタイマー",
+        { code: "1503260001", brand: "ブライトリング", model: "ナビタイマー",
           ref: "AB0121211B1A1", serial: "BR667788", salePrice: 610000 }
       ],
       total: 1450000,
@@ -690,7 +690,7 @@ const APP_DATA = {
       slipId: "SL-2026-0001",
       buyer: "B001",
       items: [
-        { code: "20260305001", brand: "パテック・フィリップ", model: "アクアノート",
+        { code: "0503260001", brand: "パテック・フィリップ", model: "アクアノート",
           ref: "5167A-001", serial: "PH112233", salePrice: 3200000 }
       ],
       total: 3200000,
@@ -711,7 +711,7 @@ const APP_DATA = {
       slipId: "SL-2026-0002",
       buyer: "B002",
       items: [
-        { code: "20260310001", brand: "ロレックス", model: "デイトナ",
+        { code: "1003260001", brand: "ロレックス", model: "デイトナ",
           ref: "116500LN", serial: "ZX789012", salePrice: 2350000 }
       ],
       total: 2350000,
@@ -732,7 +732,7 @@ const APP_DATA = {
       slipId: "SL-2026-0005",
       buyer: "B001",
       items: [
-        { code: "20260307001", brand: "カルティエ", model: "サントス",
+        { code: "0703260001", brand: "カルティエ", model: "サントス",
           ref: "WSSA0009", serial: "CT445566", salePrice: 1150000 }
       ],
       total: 1150000,
@@ -751,7 +751,7 @@ const APP_DATA = {
       slipId: "SL-2026-0008",
       buyer: "B002",
       items: [
-        { code: "20260301003", brand: "オメガ", model: "シーマスター",
+        { code: "0103260003", brand: "オメガ", model: "シーマスター",
           ref: "", serial: "", salePrice: 620000 }
       ],
       total: 620000,
@@ -770,7 +770,7 @@ const APP_DATA = {
       slipId: "SL-2026-0009",
       buyer: "B003",
       items: [
-        { code: "20260301001", brand: "ロレックス", model: "サブマリーナ",
+        { code: "0103260001", brand: "ロレックス", model: "サブマリーナ",
           ref: "116610LN", serial: "ZX123456", salePrice: 1200000 }
       ],
       total: 1200000,
@@ -789,7 +789,7 @@ const APP_DATA = {
       slipId: "SL-2026-0001",
       buyer: "B001",
       items: [
-        { code: "20260305001", brand: "パテック・フィリップ", model: "アクアノート",
+        { code: "0503260001", brand: "パテック・フィリップ", model: "アクアノート",
           ref: "5167A-001", serial: "PH112233", salePrice: 3200000 }
       ],
       total: 3200000,
@@ -860,7 +860,7 @@ const APP_DATA = {
       type: "purchase_edit",
       typeLabel: "仕入伝票 修正",
       detail: {
-        slipId: "20260301001",
+        slipId: "0103260001",
         brand: "ロレックス", model: "サブマリーナ",
         ref: "116610LN", serial: "ZX123456",
         supplier: "S001",
@@ -886,8 +886,8 @@ const APP_DATA = {
         slipId: "SH-2026-0003",
         destination: "B001",
         shipDate: "2026-04-08",
-        before: { total: 2360000, items: ["20260301002"] },
-        after:  { total: 2200000, items: ["20260301002"], note: "値引き交渉により単価修正" },
+        before: { total: 2360000, items: ["0103260002"] },
+        after:  { total: 2200000, items: ["0103260002"], note: "値引き交渉により単価修正" },
         reason: "販売先との合意により出荷金額を修正しました。",
       },
       status: "pending",
@@ -908,8 +908,8 @@ const APP_DATA = {
         buyer: "B002",
         saleDate: "2026-04-12",
         items: [
-          { code: "20260301003", brand: "オメガ", model: "シーマスター", salePrice: 620000 },
-          { code: "20260301004", brand: "パネライ", model: "ルミノール",  salePrice: 880000 },
+          { code: "0103260003", brand: "オメガ", model: "シーマスター", salePrice: 620000 },
+          { code: "0103260004", brand: "パネライ", model: "ルミノール",  salePrice: 880000 },
         ],
         total: 1500000,
         note: "2点セットでのご成約。割引条件あり。",
@@ -1003,7 +1003,7 @@ const APP_DATA = {
       type: "purchase_edit",
       typeLabel: "仕入伝票 修正",
       detail: {
-        slipId: "20260310002",
+        slipId: "1003260002",
         brand: "ブライトリング", model: "ナビタイマー",
         ref: "AB0127211B1A1",
         supplier: "S002",
@@ -1054,7 +1054,7 @@ const APP_DATA = {
       fromName: "山本 太郎",
       type: "approval_request",
       title: "承認リクエスト：仕入伝票 修正",
-      body: "山本 太郎 さんが仕入伝票（20260301001）の修正承認を申請しました。内容を確認してください。",
+      body: "山本 太郎 さんが仕入伝票（0103260001）の修正承認を申請しました。内容を確認してください。",
       relatedId: "APR-001",
       read: false,
       createdAt: "2026-04-10 09:32",
@@ -1114,7 +1114,7 @@ const APP_DATA = {
       fromName: "佐藤 花子",
       type: "approval_request",
       title: "承認リクエスト：仕入伝票 修正",
-      body: "佐藤 花子 さんが仕入伝票（20260310002）のシリアル番号修正承認を申請しました。",
+      body: "佐藤 花子 さんが仕入伝票（1003260002）のシリアル番号修正承認を申請しました。",
       relatedId: "APR-007",
       read: false,
       createdAt: "2026-04-14 08:55",
@@ -1174,7 +1174,7 @@ const APP_DATA = {
         publicTo: ["B001", "B002", "B003", "B004"],
         items: [
           {
-            code: "20260301001", brand: "ロレックス", brandEn: "Rolex",
+            code: "0103260001", brand: "ロレックス", brandEn: "Rolex",
             model: "サブマリーナ", modelEn: "Submariner",
             ref: "116610LN", serial: "ZX123456",
             salePrice: 1180000, condition: "CON-003", status: "在庫中", boxNo: 1,
@@ -1186,7 +1186,7 @@ const APP_DATA = {
             note: "文字盤：黒　ベゼル：黒　コマ数：8"
           },
           {
-            code: "20260301002", brand: "ロレックス", brandEn: "Rolex",
+            code: "0103260002", brand: "ロレックス", brandEn: "Rolex",
             model: "デイトナ（ホワイトゴールド）", modelEn: "Daytona WG",
             ref: "116519LN", serial: "ZX234567",
             salePrice: 2200000, condition: "CON-002", status: "在庫中", boxNo: 1,
@@ -1202,7 +1202,7 @@ const APP_DATA = {
         publicTo: ["B001", "B002", "B003", "B004"],
         items: [
           {
-            code: "20260303001", brand: "オメガ", brandEn: "Omega",
+            code: "0303260001", brand: "オメガ", brandEn: "Omega",
             model: "スピードマスター", modelEn: "Speedmaster",
             ref: "311.30.42.30.01.005", serial: "87654321",
             salePrice: 498000, condition: "CON-004", status: "在庫中", boxNo: 3,
@@ -1214,7 +1214,7 @@ const APP_DATA = {
             note: "文字盤：黒　ベゼル：タキメーター"
           },
           {
-            code: "20260307001", brand: "カルティエ", brandEn: "Cartier",
+            code: "0703260001", brand: "カルティエ", brandEn: "Cartier",
             model: "サントス", modelEn: "Santos",
             ref: "WSSA0009", serial: "CT445566",
             salePrice: 720000, condition: "CON-004", status: "在庫中", boxNo: 3,
@@ -1226,7 +1226,7 @@ const APP_DATA = {
             note: "文字盤：シルバー"
           },
           {
-            code: "20260312001", brand: "IWC", brandEn: "IWC",
+            code: "1203260001", brand: "IWC", brandEn: "IWC",
             model: "ポルトギーゼ", modelEn: "Portugieser",
             ref: "IW500705", serial: "IW334455",
             salePrice: 840000, condition: "CON-004", status: "在庫中", boxNo: 3,
@@ -1238,7 +1238,7 @@ const APP_DATA = {
             note: ""
           },
           {
-            code: "20260314001", brand: "グランドセイコー", brandEn: "Grand Seiko",
+            code: "1403260001", brand: "グランドセイコー", brandEn: "Grand Seiko",
             model: "エレガンスコレクション", modelEn: "Elegance Collection",
             ref: "SBGW047", serial: "GS556677",
             salePrice: 430000, condition: "CON-003", status: "在庫中", boxNo: 3,
@@ -1250,7 +1250,7 @@ const APP_DATA = {
             note: ""
           },
           {
-            code: "20260315001", brand: "ブライトリング", brandEn: "Breitling",
+            code: "1503260001", brand: "ブライトリング", brandEn: "Breitling",
             model: "ナビタイマー", modelEn: "Navitimer",
             ref: "AB0121211B1A1", serial: "BR667788",
             salePrice: 610000, condition: "CON-005", status: "在庫中", boxNo: 3,
@@ -1262,7 +1262,7 @@ const APP_DATA = {
             note: "コマ数：7　リューズ使用感あり"
           },
           {
-            code: "20260310002", brand: "ブライトリング", brandEn: "Breitling",
+            code: "1003260002", brand: "ブライトリング", brandEn: "Breitling",
             model: "ナビタイマー（ブラック）", modelEn: "Navitimer Black",
             ref: "AB0127211B1A1", serial: "XY001234",
             salePrice: 720000, condition: "CON-003", status: "在庫中", boxNo: 3,
@@ -1275,17 +1275,17 @@ const APP_DATA = {
     ],
   },
 
-  // 日付ごとの通し番号管理（キー: "YYYYMMDD", 値: 次の番号）
+  // 日付ごとの通し番号管理（キー: "DDMMYY", 値: 次の番号）
   // サンプルデータの仕入日に合わせて初期値を設定
   itemNumberByDate: {
-    "20260301": 2,  // INV: ロレックス サブマリーナ
-    "20260303": 2,  // INV: オメガ スピードマスター
-    "20260305": 2,  // INV: パテック・フィリップ アクアノート
-    "20260307": 2,  // INV: カルティエ サントス
-    "20260310": 2,  // INV: ロレックス デイトナ
-    "20260312": 2,  // INV: IWC ポルトギーゼ
-    "20260314": 2,  // INV: グランドセイコー エレガンス
-    "20260315": 2,  // INV: ブライトリング ナビタイマー
+    "010326": 2,  // INV: ロレックス サブマリーナ
+    "030326": 2,  // INV: オメガ スピードマスター
+    "050326": 2,  // INV: パテック・フィリップ アクアノート
+    "070326": 2,  // INV: カルティエ サントス
+    "100326": 2,  // INV: ロレックス デイトナ
+    "120326": 2,  // INV: IWC ポルトギーゼ
+    "140326": 2,  // INV: グランドセイコー エレガンス
+    "150326": 2,  // INV: ブライトリング ナビタイマー
   },
 
   // ===== 取引先会社 =====
@@ -1360,13 +1360,13 @@ const APP_DATA = {
       date: "2026-03-05",
       supplier: "S001",
       staff: "山本 太郎",
-      note: "3月第1弾仕入れ",
+      note: "3月第1弾仕入",
       status: "処理済",
       registeredAt: "2026-03-05 10:30",
       revisions: [],
       lines: [
         {
-          lineNo: 1, code: "20260305001", sku: "ROL-SUB-116610",
+          lineNo: 1, code: "0503260001", sku: "ROL-SUB-116610",
           purchasePrice: 820000, salePrice: 1180000,
           productDetail: {
             brand: "ロレックス", model: "サブマリーナ", ref: "116610LN",
@@ -1374,7 +1374,7 @@ const APP_DATA = {
           }
         },
         {
-          lineNo: 2, code: "20260305002", sku: "OMG-SPD-311",
+          lineNo: 2, code: "0503260002", sku: "OMG-SPD-311",
           purchasePrice: 310000, salePrice: 490000,
           productDetail: {
             brand: "オメガ", model: "スピードマスター", ref: "311.30.42.30",
@@ -1388,7 +1388,7 @@ const APP_DATA = {
       date: "2026-04-10",
       supplier: "S002",
       staff: "佐藤 花子",
-      note: "4月仕入れ・要確認あり",
+      note: "4月仕入・要確認あり",
       status: "承認待ち",
       approvalNote: "仕入価格の変更について確認が必要です。担当者より申請中。",
       approvalBy: "佐藤 花子",
@@ -1401,7 +1401,7 @@ const APP_DATA = {
       ],
       lines: [
         {
-          lineNo: 1, code: "20260410001", sku: "PAT-AQU-5167",
+          lineNo: 1, code: "1004260001", sku: "PAT-AQU-5167",
           purchasePrice: 2600000, salePrice: 3500000,
           productDetail: {
             brand: "パテック・フィリップ", model: "アクアノート", ref: "5167A-001",
@@ -1420,7 +1420,7 @@ const APP_DATA = {
       revisions: [],
       lines: [
         {
-          lineNo: 1, code: "20260414001", sku: "IWC-POR-IW500",
+          lineNo: 1, code: "1404260001", sku: "IWC-POR-IW500",
           purchasePrice: 450000, salePrice: 680000,
           productDetail: {
             brand: "IWC", model: "ポルトギーゼ", ref: "IW500704",
@@ -1428,7 +1428,7 @@ const APP_DATA = {
           }
         },
         {
-          lineNo: 2, code: "20260414002", sku: "BRL-NAV-AB012",
+          lineNo: 2, code: "1404260002", sku: "BRL-NAV-AB012",
           purchasePrice: 390000, salePrice: 580000,
           productDetail: {
             brand: "ブライトリング", model: "ナビタイマー", ref: "AB0121",
@@ -1451,7 +1451,7 @@ const APP_DATA = {
       approvalChanges: [{ field: "仕入金額", before: "¥1,200,000", after: "¥1,350,000", reason: "最終交渉後の確定価格" }],
       revisions: [{ at: "2026-04-15 09:00", by: "田中 美香", note: "金額修正申請" }],
       lines: [{
-        lineNo: 1, code: "20260415001", sku: "ROL-DATE-126300",
+        lineNo: 1, code: "1504260001", sku: "ROL-DATE-126300",
         purchasePrice: 1350000, salePrice: 1850000,
         productDetail: { brand: "ロレックス", model: "デイトジャスト", ref: "126300", serial: "RX445566", condition: "CON-002", accessories: ["BOX","GUARANTEE"] }
       }],
@@ -1467,7 +1467,7 @@ const APP_DATA = {
       revisionComment: "シリアル番号が不明瞭です。確認の上再申請してください。",
       revisions: [{ at: "2026-04-16 11:30", by: "伊藤 健司", note: "仕入登録申請 → 差戻し" }],
       lines: [{
-        lineNo: 1, code: "20260416001", sku: "OMG-AQT-220",
+        lineNo: 1, code: "1604260001", sku: "OMG-AQT-220",
         purchasePrice: 280000, salePrice: 420000,
         productDetail: { brand: "オメガ", model: "アクアテラ", ref: "220.10.38.20", serial: "", condition: "CON-004", accessories: ["BOX"] }
       }],
@@ -1483,7 +1483,7 @@ const APP_DATA = {
       revisionComment: "コンディション評価が甘いです。再評価して再申請してください。",
       revisions: [{ at: "2026-04-17 10:00", by: "山本 太郎", note: "承認申請 → 差戻し" }],
       lines: [{
-        lineNo: 1, code: "20260417001", sku: "PAT-CAL-5396",
+        lineNo: 1, code: "1704260001", sku: "PAT-CAL-5396",
         purchasePrice: 3200000, salePrice: 4500000,
         productDetail: { brand: "パテック・フィリップ", model: "カラトラバ", ref: "5396G-001", serial: "PP667788", condition: "CON-003", accessories: ["BOX","GUARANTEE","CERTIFICATE"] }
       }],
@@ -1547,20 +1547,20 @@ function formatDate(str) {
   return str;
 }
 
-// 商品コード生成: YYYYMMDDNNN 形式
+// 管理番号生成: DDMMYYNNNN 形式
 // dateStr: "YYYY-MM-DD" 形式の仕入日（省略時は今日）
 // peek: true を渡すとカウンターを増やさずにプレビューを返す
 function generateItemCode(dateStr, peek) {
   const d = dateStr ? new Date(dateStr) : new Date();
-  const ymd = d.getFullYear().toString()
+  const datePrefix = String(d.getDate()).padStart(2, '0')
     + String(d.getMonth() + 1).padStart(2, '0')
-    + String(d.getDate()).padStart(2, '0');
+    + String(d.getFullYear()).slice(-2);
 
   if (!APP_DATA.itemNumberByDate) APP_DATA.itemNumberByDate = {};
-  const current = APP_DATA.itemNumberByDate[ymd] || 1;
-  const code = `${ymd}${String(current).padStart(3, '0')}`;
+  const current = APP_DATA.itemNumberByDate[datePrefix] || 1;
+  const code = `${datePrefix}${String(current).padStart(4, '0')}`;
   if (!peek) {
-    APP_DATA.itemNumberByDate[ymd] = current + 1;
+    APP_DATA.itemNumberByDate[datePrefix] = current + 1;
   }
   return code;
 }

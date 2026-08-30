@@ -11,7 +11,7 @@ func TestRenderCreatesFixedLayoutPDF(t *testing.T) {
 		IssuedAt: "2026-08-16 12:34:56 JST", PartnerLabel: "仕入先", PartnerName: "田中商事",
 		CompanyName: "株式会社ウォッチプレミアム", Currency: "JPY", Subtotal: "¥100,000",
 		TaxAmount: "¥10,000", Total: "¥110,000", TaxLabel: "消費税（10%）",
-		Lines: []Line{{Number: 1, Description: "ロレックス / サブマリーナ", Amount: "¥100,000", Tax: "消費税(10%)", ProductCode: "20260816001"}},
+		Lines: []Line{{Number: 1, Description: "ロレックス / サブマリーナ", Amount: "¥100,000", Tax: "消費税(10%)", ProductCode: "1608260001"}},
 	}
 	contents, err := Render(document)
 	if err != nil {

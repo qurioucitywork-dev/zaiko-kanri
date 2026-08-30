@@ -65,7 +65,7 @@ func (r *Repository) SeedPreviewInventory(ctx context.Context) error {
 				condition_id,supplier_id,supplier_role_id,purchase_staff_profile_id,purchase_slip_line_id,purchase_date,
 				cost_amount_minor,cost_currency,base_sale_price_minor,base_sale_currency,inventory_status,publication_status,
 				condition_text,accessories,notes,created_at,updated_at
-			) VALUES('product_preview_001',?,'20260726001','ROLEX-SUB-001','ロレックス',?,'サブマリーナ','116610LN','ZX123456','腕時計',?, ?,?,?,
+			) VALUES('product_preview_001',?,'2607260001','ROLEX-SUB-001','ロレックス',?,'サブマリーナ','116610LN','ZX123456','腕時計',?, ?,?,?,
 				'purchase_line_preview_001','2026-07-26',850000,'JPY',7613,'USD','in_stock','private','極美品 (S)','BOX, GUARANTEE','プレビュー用在庫',?,?)
 			ON CONFLICT (organization_id,product_code) DO NOTHING`,
 			organizationID, brandID, conditionID, supplierRoleID, supplierRoleID, staffID, now, now).Error; err != nil {

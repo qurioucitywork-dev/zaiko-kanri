@@ -273,10 +273,16 @@ func seedRolesAndPermissions(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		if key != "approval.approve" && key != "audit.read" && key != "users.manage" && key != "settings.manage" &&
+			key != "purchase.confirm" && key != "sales.confirm" && key != "shipment.confirm" && key != "market.write" &&
 			key != "sales.cancel" && key != "shipment.cancel" {
 			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO role_permissions(role_key,permission_key) VALUES(?,?)`, RoleWorker, key); err != nil {
 				return err
 			}
+		}
+	}
+	for _, key := range []string{"purchase.confirm", "sales.confirm", "shipment.confirm", "market.write"} {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_key=? AND permission_key=?`, RoleWorker, key); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -12,26 +12,26 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":               "9ce2cd8be9337c3b29234939f344ca674c03704cda6ffd86a43ee7c0689bc25b",
+		"app.html":               "d048fa378d361ba959d0c0a82a7650d7493d6c2d241666dc7d0108f154729603",
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
-		"css/market-table.css":   "1bf42fc24cd9ac5d84fc2584942d5c8863a727cddf5796f47c7f92f514f377e2",
-		"css/style.css":          "c09a28c46ff7771252dc3f14645c520ab4ec236d5e87a8e78eb3987f9ceee129",
+		"css/market-table.css":   "f5615d993bc0d13845fe4e77162fbac64430689ba02f94955fe44cca3c8b5af8",
+		"css/style.css":          "49a67719c226ffb4a582498d5ab1ad1c4d68678bd32b58c9b23b9ff643901452",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
-		"js/api_bridge.js":       "d2767c608d9200b5696727c66215e2188bb941d0ce1b3d819729a52abecdb4d5",
-		"js/app.js":              "b4d81d69408080121fe103912f26e563d4a6990bdf41545d446ab575a5e281cc",
+		"js/api_bridge.js":       "6b19d539da09a039dcb43224e05573e4fa768ec45ea2c4e4c4c663c12125f94e",
+		"js/app.js":              "9778cc05ab1336d3310371491d2e1447d1049a35fdc31d2e2320a9436039ac35",
 		"js/approval.js":         "43de68681b060a67bf00af6eb2a993e01d4acbcff55a1928c795cb4f0f031c1d",
-		"js/auth.js":             "a9f0cc7a928b801342241f4740c055f4f34eb208ac6ed61e25ef82191ad97c50",
+		"js/auth.js":             "8a37d5385ade35fba91ccd0fb2fa9acc45b5828b1b3af4c86f9d0406758ee694",
 		"js/box.js":              "4ae711817115c0d62cdaa99e11920acc5ec67a0fa4d2e1879488368235840575",
-		"js/data.js":             "5b161fb936913295f78e031b317ce0b510375eb4215116d449a0ef1982e9a432",
+		"js/data.js":             "4b52333f77699ba52b1dededddd8a3a56990794319503e73c3f49f860ffde312",
 		"js/guest.js":            "174dc03d5c978e514e5a674b9967ecf6b2d0caf2d0cc8b8fdbd7305687aa2401",
 		"js/guest_shared.js":     "da6589099b995f457d44e2b6eeb05ac07d8ad1c7bef937f4230dd8afd2ca38e4",
 		"js/login_info.js":       "3331838630b5a5f539de8a1e842d8bd75a0202692a865e3aa5cdf04bc8b0a77f",
-		"js/market_table.js":     "8b90c10b5a26854ce3cdd1cc82cd8956dbdf847d7b5a11f77cf9891e4c77af51",
+		"js/market_table.js":     "9fd2ce64136e250052f26adfffa40e3fe489dbdc861f2d65a1087c6512dcb5d3",
 		"js/notify.js":           "edae1bc1187f3f29f87086018425aec3f628c5d342a0d8a3d22f854948cb6321",
-		"js/purchase_entry.js":   "044141a561c60e3f0a02703c9deebe709008afc05cab9e5b729aa32e7e22f90e",
+		"js/purchase_entry.js":   "09a45a2ab0c7325cf0735b0e836683e8ad2d3b5c6bd87b34e8a4524947cda5d5",
 		"js/stocktake.js":        "fd7b6cf4ae52ba64ed5c08839098551e191737a93a1c7be1681fc366142ee8d1",
-		"js/consignment.js":      "b5e54c342e0bb61a9c30ee0851b01101714eba9e194f414ed01a67b39f653586",
+		"js/consignment.js":      "e449946cfc6010e45a939a6af45603c7cff8f1e1557abc6ca2059228996931e8",
 		"js/qrcode-generator.js": "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
 		"js/jsQR.js":             "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
 		"js/qr_inventory.js":     "e9c87a9ab707bfa793a3c1907e34c2296f60fcf68713f06ce7cdbd5ed867bae0",
@@ -57,7 +57,7 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 	}
 	html := string(content)
 	pages := []string{
-		"dashboard", "market", "inventory", "purchase-entry", "purchase", "sales",
+		"dashboard", "market", "market-entry", "inventory", "purchase-entry", "purchase", "sales",
 		"sales-list", "deleted-slips", "shipping", "consignment", "master", "box", "performance",
 		"stocktake", "approval", "purchase-list", "client", "company", "password",
 	}
@@ -88,9 +88,29 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 	if !strings.Contains(html, `> 相場表テンプレート`) {
 		t.Error("reference admin is missing the market-table template label")
 	}
+	for _, marker := range []string{`id="marketNavGroup"`, `id="marketNavToggle"`, `id="marketNavSubmenu"`, `>相場関連<`, `data-page="market-entry"`, `id="page-market-entry"`, `id="market-csv-import-button"`, `id="market-basic-category"`, `id="market-basic-auction"`, `id="market-basic-research-date"`, `id="marketDraftAddCount"`} {
+		if !strings.Contains(html, marker) {
+			t.Errorf("reference admin is missing market registration marker %q", marker)
+		}
+	}
 	for _, marker := range []string{`class="card-body pe-slip-list-scroll"`, `class="data-table pe-slip-list-table"`, `原価小計 / 原価合計`, `入金日付`} {
 		if !strings.Contains(html, marker) {
 			t.Errorf("reference admin is missing purchase-slip list layout marker %q", marker)
+		}
+	}
+	for _, marker := range []string{`id="pe-payment-cash"`, `id="pe-payment-bank-transfer"`, `id="pe-payment-card"`} {
+		if !strings.Contains(html, marker) {
+			t.Errorf("reference admin is missing purchase payment-method control %q", marker)
+		}
+	}
+	for _, marker := range []string{`id="pu-currency-jpy"`, `id="pu-currency-usd"`, `id="pu-currency-hkd"`, `id="pu-purchase-type-personal"`, `id="pu-tax-category"`} {
+		if !strings.Contains(html, marker) {
+			t.Errorf("reference admin is missing product-registration procurement control %q", marker)
+		}
+	}
+	for _, marker := range []string{`data-page="inventory"`, `> 在庫管理`, `data-inv-col="purchaseRate"`, `data-inv-col="purchasePriceAtPurchaseRate"`, `原価（現在レート）`, `data-inv-col="grossMargin"`, `粗利率`} {
+		if !strings.Contains(html, marker) {
+			t.Errorf("reference admin is missing inventory rate-comparison marker %q", marker)
 		}
 	}
 
@@ -124,6 +144,11 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 		`['return_pending', '仕入返品', '仕入返品中', '仕入返品処理中']`,
 		`['cancelled', '取消', '取消済', '取り消し', '仕入返品済', '仕入返品処理済']`,
 		`normalizeInventoryCollectionStatuses();`,
+		`getInventoryRegisteredPurchaseRate(item)`,
+		`getInventoryCurrentPurchaseRate(getInventoryPurchaseCurrency(item))`,
+		`getInventoryGrossMarginPercent(item)`,
+		`switchItemDetailPriceCurrency(priceType, currency)`,
+		`原価（現在レート）`,
 	} {
 		if !strings.Contains(appJS, marker) {
 			t.Errorf("inventory status label contract is missing %q", marker)

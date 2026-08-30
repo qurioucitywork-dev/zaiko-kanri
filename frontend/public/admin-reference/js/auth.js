@@ -33,7 +33,7 @@ const ROLE_LABELS = { admin: '管理者', buyer: '作業者', worker: '作業者
 const ROLE_ADMIN_ONLY_PAGES = ['approval', 'password', 'company', 'login-info'];
 const ROLE_ADMIN_AUTH_PAGES = ['master', 'box'];
 const ROLE_WORKSPACE_PAGES = [
-  'dashboard', 'market', 'inventory', 'purchase-entry', 'purchase', 'sales',
+  'dashboard', 'market', 'market-entry', 'inventory', 'purchase-entry', 'purchase', 'sales',
   'sales-list', 'shipping', 'consignment', 'returns', 'master', 'box', 'performance',
   'stocktake', 'purchase-list', 'client',
 ];
@@ -47,6 +47,19 @@ function isWorker() { return currentRole() === 'buyer' || currentRole() === 'wor
 function isBuyer()  { return isWorker(); } // 旧プロトタイプ互換
 function isGuest()  { return currentRole() === 'guest';  }
 function currentRoleLabel() { return ROLE_LABELS[currentRole()] || '未ログイン'; }
+
+/**
+ * 金額・価格・伝票内容を直接確定する操作の共通ガード。
+ * 未ログインの制作プレビューは従来どおり管理者相当とする。
+ */
+function requireAdminForSensitiveOperation(operationLabel) {
+  if (!currentUser() || isAdmin()) return true;
+  const message = `${operationLabel}には管理者権限または管理者承認が必要です。`;
+  if (typeof showToast === 'function') {
+    showToast('warning', '管理者承認が必要です', message);
+  }
+  return false;
+}
 
 /** 画面ごとのロール権限。未ログイン時は制作プレビューとして管理者相当で表示する。 */
 function canAccessPage(page) {

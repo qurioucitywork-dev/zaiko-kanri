@@ -23,7 +23,8 @@ var platformPermissions = map[string]string{
 
 var workerDeniedPermissions = map[string]bool{
 	"approval.approve": true, "audit.read": true, "users.manage": true, "settings.manage": true,
-	"sales.cancel": true, "shipment.cancel": true,
+	"purchase.confirm": true, "sales.confirm": true, "shipment.confirm": true,
+	"sales.cancel": true, "shipment.cancel": true, "market.write": true,
 }
 
 type previewIdentitySeed struct {
@@ -83,6 +84,14 @@ func (r *Repository) SeedPreviewIdentity(ctx context.Context, adminPassword, wor
 					database.RoleWorker, key).Error; err != nil {
 					return err
 				}
+			}
+		}
+		// Security policy changes must also be applied to organizations that were
+		// seeded before the permission was made administrator-only.
+		for key := range workerDeniedPermissions {
+			if err := tx.Exec(`DELETE FROM role_permissions WHERE role_key=? AND permission_key=?`,
+				database.RoleWorker, key).Error; err != nil {
+				return err
 			}
 		}
 

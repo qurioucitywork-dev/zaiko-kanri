@@ -47,6 +47,18 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 		if result.Error != nil {
 			return ErrProductUnavailable
 		}
+		var effectivePurchaseDate time.Time
+		if input.ProductCode != nil {
+			purchaseDate := string(current.PurchaseDate)
+			if input.PurchaseDate != nil {
+				purchaseDate = strings.TrimSpace(*input.PurchaseDate)
+			}
+			parsedDate, parseErr := time.Parse("2006-01-02", purchaseDate)
+			if parseErr != nil {
+				return ErrPurchaseDateMismatch
+			}
+			effectivePurchaseDate = parsedDate
+		}
 		updates := map[string]any{"updated_at": time.Now().UTC()}
 		setText := func(value *string, column string) {
 			if value != nil {
@@ -61,8 +73,8 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 		setText(input.Notes, "notes")
 		if input.ProductCode != nil {
 			productCode := strings.TrimSpace(*input.ProductCode)
-			if productCode == "" {
-				return ErrProductConflict
+			if productCode == "" || !isProductCodeForDate(productCode, effectivePurchaseDate) {
+				return ErrInvalidProductCode
 			}
 			var duplicateCount int64
 			if err := tx.Table("products").Where(
@@ -72,6 +84,9 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 			}
 			if duplicateCount > 0 {
 				return ErrDuplicateProductCode
+			}
+			if err := reserveProductSequence(tx, organizationID, effectivePurchaseDate, productCode, time.Now().UTC()); err != nil {
+				return err
 			}
 			updates["product_code"] = productCode
 		}

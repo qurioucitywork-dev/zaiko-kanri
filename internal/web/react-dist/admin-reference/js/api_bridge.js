@@ -237,12 +237,14 @@
       ref: product.referenceNumber || '',
       serial: product.serialNumber,
       supplier: (product.supplierRoleId || '').replace('partner_role_', ''),
+      supplierName: product.supplierName || '',
       staff: staffName(product.purchaseStaffProfileId),
       // The JPY acquisition value is the immutable purchase-line snapshot.
       // Do not recalculate it with the latest master rate when hydrating stock.
       purchasePrice: Number(product.fixedPurchaseCostJpyMinor)
         || (product.costCurrency === 'JPY' ? Number(product.costAmountMinor) || 0 : Math.round((Number(product.costAmountMinor) || 0) * rate)),
       purchaseCurrency: product.purchaseSourceCurrency || product.costCurrency,
+      purchaseType: ['personal', 'overseas'].includes(product.purchaseTaxMode) ? product.purchaseTaxMode : 'domestic',
       purchaseOriginalPrice: Number(product.purchaseSourceAmountMinor) || Number(product.costAmountMinor) || 0,
       purchaseFxRateScaled: Number(product.purchaseFxRateScaled) || 0,
       purchaseFxScale: Number(product.purchaseFxScale) || 0,
@@ -283,15 +285,19 @@
     };
     return {
       _id: record.id, id: record.slipNumber, date: record.purchaseDate, supplier: record.supplierCode,
+      supplierName: record.supplierName || '',
       staff: staffName, staffCode: record.staffCode, note: record.notes,
       rawStatus: record.status, status: statusLabel[record.status] || record.status,
-      purchaseTaxMode: record.purchaseTaxMode === 'overseas' ? 'overseas' : 'domestic',
-      purchaseCurrency: record.purchaseTaxMode === 'overseas'
-        ? (record.lines?.[0]?.costCurrency || 'USD') : 'JPY',
+      purchaseTaxMode: ['personal', 'overseas'].includes(record.purchaseTaxMode) ? record.purchaseTaxMode : 'domestic',
+      taxCategory: ['tax_equivalent', 'out_of_scope'].includes(record.taxCategory)
+        ? record.taxCategory : (record.purchaseTaxMode === 'domestic' ? 'consumption_tax' : 'out_of_scope'),
+      paymentMethod: ['cash', 'card'].includes(record.paymentMethod) ? record.paymentMethod : 'bank_transfer',
+      purchaseCurrency: ['JPY', 'USD', 'HKD'].includes(String(record.lines?.[0]?.costCurrency || '').toUpperCase())
+        ? String(record.lines[0].costCurrency).toUpperCase() : 'JPY',
       registrationPurchaseCurrency: record.lines?.[0]?.costCurrency || 'JPY',
       registrationPurchaseJpyRate: Number(record.lines?.[0]?.fxRateScaled) > 0 && Number(record.lines?.[0]?.fxScale) > 0
         ? Number(record.lines[0].fxRateScaled) / Number(record.lines[0].fxScale) : 1,
-      taxRateBasisPoints: record.purchaseTaxMode === 'overseas' ? 0 : 1000,
+      taxRateBasisPoints: Number(record.taxRateBasisPoints) || 0,
       registeredAt: record.createdAt, issuedAt: record.issuedAt || null, issuedBy: record.issuedBy || null,
       paidAt: record.paidAt || null, paidBy: record.paidBy || null,
       revisions: [], apiManaged: true,
@@ -569,23 +575,36 @@
     });
     APP_DATA.purchaseReturns = returnViews.filter(record => record.returnType === 'purchase_return');
     APP_DATA.salesReturns = returnViews.filter(record => record.returnType !== 'purchase_return');
-    APP_DATA.marketPrices = (market?.items || []).map(record => ({ id: record.id, importDate: record.importDate,
+    APP_DATA.marketPrices = (market?.items || []).map(record => {
+      const marketCurrency = String(record.marketCurrency || 'JPY').toUpperCase();
+      const storedRate = Number(record.marketFxRateScaled) > 0 && Number(record.marketFxScale) > 0
+        ? Number(record.marketFxRateScaled) / Number(record.marketFxScale)
+        : (marketCurrency === 'JPY' ? 1 : Number((APP_DATA.fxRates || []).find(rate => rate.code === marketCurrency)?.rate) || latestRate);
+      return ({ id: record.id, importDate: record.importDate,
       brand: record.brandName, brandCode: record.brandCode, model: record.modelNumber, ref: record.referenceNumber,
       sku: record.sku || '', supplier: record.supplierCode || '',
       staff: record.staffName || '', material: record.materialCode || '', movement: record.movementCode || '',
-      condition: record.conditionCode, purchasePrice: record.purchasePriceMinor, purchaseCurrency: record.purchaseCurrency,
+      condition: record.conditionCode, warrantyYearMonth: record.warrantyYearMonth || '', purchasePrice: record.purchasePriceMinor, purchaseCurrency: record.purchaseCurrency,
       marketPrice: record.marketPriceMinor,
-      marketPriceUsd: record.marketCurrency === 'JPY' ? Math.round(record.marketPriceMinor / latestRate) : record.marketPriceMinor,
-      marketPriceJpy: record.marketCurrency === 'USD' ? Math.round(record.marketPriceMinor * latestRate) : record.marketPriceMinor,
-      marketCurrency: record.marketCurrency,
+      marketPriceUsd: marketCurrency === 'USD' ? record.marketPriceMinor : Math.round(record.marketPriceMinor / storedRate),
+      marketPriceJpy: marketCurrency === 'JPY' ? record.marketPriceMinor : Math.round(record.marketPriceMinor * storedRate),
+      marketCurrency,
+      marketFxRate: storedRate,
+      marketFxRateScaled: Number(record.marketFxRateScaled) || Math.round(storedRate * 100000000),
+      marketFxScale: Number(record.marketFxScale) || 100000000,
       accessories: String(record.accessoryCodes || '').split(',').map(value => value.trim()).filter(Boolean).map(code =>
         masterResults.accessories?.items?.find(item => item.code === code)?.name || code),
+      braceletQty: record.braceletQuantity ?? null,
       source: record.source,
+      marketCategory: /^(domestic-auction|overseas|domestic-retail)$/i.test(record.source || '')
+        ? String(record.source).toLowerCase()
+        : 'domestic-auction',
       auctionCode: record.auctionCode || '',
-      auctionName: record.auctionName || (!record.source || /^(manual|csv|preview-seed)$/i.test(record.source)
+      auctionName: record.auctionName || (!record.source || /^(manual|csv|preview-seed|domestic-auction|overseas|domestic-retail)$/i.test(record.source)
         ? ((APP_DATA.suppliers || []).find(item => item.code === record.supplierCode)?.name || '')
         : record.source),
-      note: record.notes, apiManaged: true }));
+      note: record.notes, apiManaged: true });
+    });
     APP_DATA.boxes = (boxes?.items || []).map(record => ({ _id: record.id, no: Number(String(record.boxCode).replace(/\D/g, '')),
       code: record.boxCode, name: record.name, publicTo: record.buyerCodes || [], productCodes: record.productCodes || [],
       createdAt: record.updatedAt, active: record.isActive, apiManaged: true }));
@@ -977,8 +996,9 @@
 
   async function savePurchaseSlip(slip, requireApproval) {
     const staffCode = APP_DATA.staffRecords?.find(item => item.name === slip.staff)?.code || slip.staff || '';
-    const purchaseCurrency = slip.purchaseTaxMode === 'overseas'
-      ? (String(slip.purchaseCurrency || '').toUpperCase() === 'HKD' ? 'HKD' : 'USD') : 'JPY';
+    const requestedPurchaseCurrency = String(slip.purchaseCurrency || '').toUpperCase();
+    const purchaseCurrency = ['JPY', 'USD', 'HKD'].includes(requestedPurchaseCurrency)
+      ? requestedPurchaseCurrency : 'JPY';
     const lines = (slip.lines || []).map(line => {
       const detail = line.productDetail || {};
       const resolvedBrandCode = typeof getBrandCodeByName === 'function'
@@ -1000,8 +1020,11 @@
       };
     });
     const created = await request('/purchases', { method: 'POST', body: JSON.stringify({
-      supplierCode: slip.supplier, staffCode, purchaseDate: slip.date,
-      purchaseTaxMode: slip.purchaseTaxMode === 'overseas' ? 'overseas' : 'domestic',
+      supplierCode: slip.supplier, supplierName: slip.supplierName || '', staffCode, purchaseDate: slip.date,
+      purchaseTaxMode: ['personal', 'overseas'].includes(slip.purchaseTaxMode) ? slip.purchaseTaxMode : 'domestic',
+      taxCategory: ['tax_equivalent', 'out_of_scope'].includes(slip.taxCategory)
+        ? slip.taxCategory : 'consumption_tax',
+      paymentMethod: ['cash', 'card'].includes(slip.paymentMethod) ? slip.paymentMethod : 'bank_transfer',
       notes: slip.note || '', lines,
     }) });
     let record = created;
@@ -1093,11 +1116,13 @@
     const result = await request(`/market-prices/${encodeURIComponent(row.id)}`, { method: 'PATCH', body: JSON.stringify({
       importDate: values.importDate, brandCode: values.brandCode, modelNumber: values.model,
       referenceNumber: values.ref || '', sku: values.sku || '',
-      conditionCode: values.condition || '', purchasePriceMinor: 0,
-      purchaseCurrency: 'JPY', marketPriceMinor: Math.round(Number(values.marketPriceJpy) || 0), marketCurrency: 'JPY',
+      conditionCode: values.condition || '', warrantyYearMonth: values.warrantyYearMonth || '', purchasePriceMinor: 0,
+      purchaseCurrency: 'JPY', marketPriceMinor: Math.round(Number(values.marketPrice) || 0), marketCurrency: values.marketCurrency || 'JPY',
+      marketFxRateScaled: Number(values.marketFxRateScaled) || 100000000, marketFxScale: Number(values.marketFxScale) || 100000000,
       supplierCode: '', staffCode: '', materialCode: values.material || '', movementCode: values.movement || '',
       accessoryCodes,
-      auctionCode: values.auctionCode || '', source: values.auctionCode || 'manual', notes: values.note || '',
+      braceletQuantity: (values.accessories || []).includes('BRACELET PARTS') ? (values.braceletQty ?? null) : null,
+      auctionCode: values.auctionCode || '', source: values.marketCategory || row.marketCategory || 'domestic-auction', notes: values.note || '',
     }) });
     await hydrateAdmin();
     return result;

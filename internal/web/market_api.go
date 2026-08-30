@@ -19,10 +19,13 @@ type marketPricePayload struct {
 	SerialNumber       string   `json:"serialNumber"`
 	SKU                string   `json:"sku"`
 	ConditionCode      string   `json:"conditionCode"`
+	WarrantyYearMonth  string   `json:"warrantyYearMonth"`
 	PurchasePriceMinor int64    `json:"purchasePriceMinor"`
 	PurchaseCurrency   string   `json:"purchaseCurrency"`
 	MarketPriceMinor   int64    `json:"marketPriceMinor"`
 	MarketCurrency     string   `json:"marketCurrency"`
+	MarketFXRateScaled int64    `json:"marketFxRateScaled"`
+	MarketFXScale      int64    `json:"marketFxScale"`
 	SupplierCode       string   `json:"supplierCode"`
 	StaffCode          string   `json:"staffCode"`
 	MaterialCode       string   `json:"materialCode"`
@@ -31,6 +34,7 @@ type marketPricePayload struct {
 	StatusText         string   `json:"statusText"`
 	BoxCode            string   `json:"boxCode"`
 	AccessoryCodes     []string `json:"accessoryCodes"`
+	BraceletQuantity   *int     `json:"braceletQuantity"`
 	AuctionCode        string   `json:"auctionCode"`
 	Source             string   `json:"source"`
 	Notes              string   `json:"notes"`
@@ -47,6 +51,7 @@ func normalizeMarketPricePayload(input *marketPricePayload) {
 	input.MovementCode = strings.ToUpper(strings.TrimSpace(input.MovementCode))
 	input.BoxCode = strings.ToUpper(strings.TrimSpace(input.BoxCode))
 	input.AuctionCode = strings.ToUpper(strings.TrimSpace(input.AuctionCode))
+	input.WarrantyYearMonth = strings.TrimSpace(input.WarrantyYearMonth)
 }
 
 func marketPriceInput(user database.User, input marketPricePayload) persistence.MarketPriceInput {
@@ -54,11 +59,13 @@ func marketPriceInput(user database.User, input marketPricePayload) persistence.
 		OrganizationID: user.OrganizationID, ActorUserID: user.ID, ImportDate: input.ImportDate,
 		BrandCode: input.BrandCode, ModelNumber: input.ModelNumber, ReferenceNumber: input.ReferenceNumber,
 		SerialNumber: input.SerialNumber, SKU: input.SKU, ConditionCode: input.ConditionCode,
+		WarrantyYearMonth:  input.WarrantyYearMonth,
 		PurchasePriceMinor: input.PurchasePriceMinor, PurchaseCurrency: input.PurchaseCurrency,
 		MarketPriceMinor: input.MarketPriceMinor, MarketCurrency: input.MarketCurrency,
+		MarketFXRateScaled: input.MarketFXRateScaled, MarketFXScale: input.MarketFXScale,
 		SupplierCode: input.SupplierCode, StaffCode: input.StaffCode, MaterialCode: input.MaterialCode,
 		MovementCode: input.MovementCode, PurchaseDate: input.PurchaseDate, StatusText: input.StatusText,
-		BoxCode: input.BoxCode, AccessoryCodes: input.AccessoryCodes, AuctionCode: input.AuctionCode,
+		BoxCode: input.BoxCode, AccessoryCodes: input.AccessoryCodes, BraceletQuantity: input.BraceletQuantity, AuctionCode: input.AuctionCode,
 		Source: input.Source, Notes: input.Notes,
 	}
 }
@@ -83,6 +90,10 @@ func (s *Server) apiMarketPriceCreate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "相場表APIはPostgreSQLモードで利用してください。")
 		return
 	}
+	user, ok := requireAPIAdmin(w, r, "相場価格の登録")
+	if !ok {
+		return
+	}
 	var input marketPricePayload
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
@@ -91,12 +102,21 @@ func (s *Server) apiMarketPriceCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeMarketPricePayload(&input)
+	if input.BraceletQuantity != nil && *input.BraceletQuantity < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid_bracelet_quantity", "コマ数は0以上の整数で指定してください。")
+		return
+	}
 	if _, err := time.Parse("2006-01-02", input.ImportDate); err != nil || input.BrandCode == "" ||
 		input.PurchasePriceMinor < 0 || input.MarketPriceMinor < 0 || !validCurrency(input.PurchaseCurrency) || !validCurrency(input.MarketCurrency) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_market_price", "日付・ブランド・価格・通貨を確認してください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
+	if input.WarrantyYearMonth != "" {
+		if _, err := time.Parse("2006-01", input.WarrantyYearMonth); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_warranty_year_month", "保証年月はYYYY-MMで指定してください。")
+			return
+		}
+	}
 	record, err := s.repository.CreateMarketPrice(r.Context(), marketPriceInput(user, input))
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, "market_price_create_failed", "相場データを登録できませんでした。マスタコードを確認してください。")
@@ -112,6 +132,10 @@ func (s *Server) apiMarketPriceCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiMarketPriceUpdate(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireAPIAdmin(w, r, "相場価格の変更")
+	if !ok {
+		return
+	}
 	var input marketPricePayload
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
 	decoder.DisallowUnknownFields()
@@ -120,6 +144,10 @@ func (s *Server) apiMarketPriceUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeMarketPricePayload(&input)
+	if input.BraceletQuantity != nil && *input.BraceletQuantity < 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid_bracelet_quantity", "コマ数は0以上の整数で指定してください。")
+		return
+	}
 	if _, err := time.Parse("2006-01-02", input.ImportDate); err != nil || input.BrandCode == "" ||
 		strings.TrimSpace(input.ModelNumber) == "" || input.PurchasePriceMinor < 0 || input.MarketPriceMinor < 0 ||
 		!validCurrency(input.PurchaseCurrency) || !validCurrency(input.MarketCurrency) {
@@ -132,7 +160,12 @@ func (s *Server) apiMarketPriceUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	user, _ := currentUser(r.Context())
+	if input.WarrantyYearMonth != "" {
+		if _, err := time.Parse("2006-01", input.WarrantyYearMonth); err != nil {
+			writeAPIError(w, http.StatusBadRequest, "invalid_warranty_year_month", "保証年月はYYYY-MMで指定してください。")
+			return
+		}
+	}
 	before, err := s.repository.MarketPrice(r.Context(), user.OrganizationID, r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "market_price_not_found", "相場データが見つかりません。")

@@ -27,10 +27,10 @@ func (r *Repository) Documents(ctx context.Context, organizationID string, limit
 	var purchases []DocumentRecord
 	if err := r.db.WithContext(ctx).Table("purchase_slips AS p").
 		Select(`'purchase' AS document_type,p.id,p.slip_number AS number,p.purchase_date AS date,p.status,
-			pr.role_code AS partner_code,bp.legal_name AS partner_name,
+			COALESCE(pr.role_code,'') AS partner_code,COALESCE(bp.legal_name,'') AS partner_name,
 			COALESCE(SUM(CASE WHEN l.cost_currency='JPY' THEN l.unit_cost_minor*l.quantity ELSE 0 END),0) AS total_jpy,
 			COALESCE(SUM(CASE WHEN l.cost_currency='USD' THEN l.unit_cost_minor*l.quantity ELSE 0 END),0) AS total_usd,p.updated_at`).
-		Joins("JOIN partner_roles pr ON pr.id=p.supplier_role_id").Joins("JOIN business_partners bp ON bp.id=pr.partner_id").
+		Joins("LEFT JOIN partner_roles pr ON pr.id=p.supplier_role_id").Joins("LEFT JOIN business_partners bp ON bp.id=pr.partner_id").
 		Joins("LEFT JOIN purchase_slip_lines l ON l.purchase_slip_id=p.id").Where("p.organization_id=?", organizationID).
 		Group("p.id,pr.role_code,bp.legal_name").Scan(&purchases).Error; err != nil {
 		return nil, err

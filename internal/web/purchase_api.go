@@ -89,9 +89,18 @@ func (s *Server) apiPurchaseCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.SupplierCode = strings.ToUpper(strings.TrimSpace(input.SupplierCode))
+	input.SupplierName = strings.TrimSpace(input.SupplierName)
 	input.StaffCode = strings.ToUpper(strings.TrimSpace(input.StaffCode))
-	if input.SupplierCode == "" || len(input.Lines) == 0 || len(input.Lines) > 100 {
-		writeAPIError(w, http.StatusBadRequest, "invalid_purchase", "仕入先と1～100件の明細を指定してください。")
+	if len(input.Lines) == 0 || len(input.Lines) > 100 {
+		writeAPIError(w, http.StatusBadRequest, "invalid_purchase", "1～100件の明細を指定してください。")
+		return
+	}
+	if persistence.PurchaseSupplierRequired(input.PurchaseTaxMode) && input.SupplierCode == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_purchase", "仕入先を指定してください。")
+		return
+	}
+	if len([]rune(input.SupplierName)) > 200 {
+		writeAPIError(w, http.StatusBadRequest, "invalid_purchase", "個人買取の仕入先名は200文字以内で入力してください。")
 		return
 	}
 	if _, err := time.Parse("2006-01-02", input.PurchaseDate); err != nil {
@@ -139,7 +148,10 @@ func (s *Server) apiPurchaseConfirm(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "仕入APIはPostgreSQLモードで利用してください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
+	user, ok := requireAPIAdmin(w, r, "仕入伝票の確定")
+	if !ok {
+		return
+	}
 	record, err := s.repository.ConfirmPurchase(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
 	if err != nil {
 		writePurchaseError(w, err)
@@ -185,7 +197,10 @@ func (s *Server) apiPurchaseIssue(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiPurchasePaid(w http.ResponseWriter, r *http.Request) {
-	user, _ := currentUser(r.Context())
+	user, ok := requireAPIAdmin(w, r, "仕入伝票の入金確認")
+	if !ok {
+		return
+	}
 	record, err := s.repository.MarkPurchasePaid(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
 	if errors.Is(err, persistence.ErrPurchaseNotFound) {
 		writeAPIError(w, http.StatusNotFound, "purchase_not_found", "仕入伝票が見つかりません。")
@@ -234,7 +249,11 @@ func writePurchaseError(w http.ResponseWriter, err error) {
 	case errors.Is(err, persistence.ErrPurchaseQuantity):
 		status, code, message = http.StatusBadRequest, "invalid_purchase_quantity", "商品は1点ごとに明細を分けて登録してください。"
 	case errors.Is(err, persistence.ErrPurchaseTaxMode):
-		status, code, message = http.StatusBadRequest, "invalid_purchase_tax_mode", "仕入区分は国内仕入または海外仕入を指定してください。"
+		status, code, message = http.StatusBadRequest, "invalid_purchase_tax_mode", "仕入区分は国内業者仕入／オークション、個人買取仕入、海外仕入のいずれかを指定してください。"
+	case errors.Is(err, persistence.ErrPurchaseTaxCategory):
+		status, code, message = http.StatusBadRequest, "invalid_purchase_tax_category", "税区分は消費税、消費税相当額、対象外のいずれかを指定してください。"
+	case errors.Is(err, persistence.ErrPurchasePaymentMethod):
+		status, code, message = http.StatusBadRequest, "invalid_purchase_payment_method", "支払い方法は現金、銀行振込、カードのいずれかを指定してください。"
 	case errors.Is(err, persistence.ErrPurchaseNotFound):
 		status, code, message = http.StatusNotFound, "purchase_not_found", "仕入伝票が見つかりません。"
 	case errors.Is(err, persistence.ErrPurchaseState):

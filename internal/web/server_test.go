@@ -145,6 +145,16 @@ func TestAdminAccessCodeIsSharedRotatableAndDoesNotElevateWorker(t *testing.T) {
 	if workerSaleIssue.Code != http.StatusForbidden || !strings.Contains(workerSaleIssue.Body.String(), `"code":"admin_required"`) {
 		t.Fatalf("worker sales issue status=%d body=%s, want admin-only 403", workerSaleIssue.Code, workerSaleIssue.Body.String())
 	}
+	for _, endpoint := range []string{
+		"/api/v1/purchases/pur_example/confirm",
+		"/api/v1/sales/sale_example/confirm",
+		"/api/v1/shipments/shp_example/confirm",
+	} {
+		directConfirm := requestWithSession(http.MethodPost, endpoint, `{}`, workerCSRF, workerCookies)
+		if directConfirm.Code != http.StatusForbidden {
+			t.Fatalf("worker direct confirm %s status=%d body=%s, want 403", endpoint, directConfirm.Code, directConfirm.Body.String())
+		}
+	}
 }
 
 func TestRESTCSVExportCreatesDocumentHistory(t *testing.T) {

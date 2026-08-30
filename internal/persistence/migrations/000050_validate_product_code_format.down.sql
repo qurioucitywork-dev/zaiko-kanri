@@ -1,0 +1,1 @@
+-- Validation changes only catalog state; the check itself belongs to 000049.

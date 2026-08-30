@@ -132,6 +132,14 @@ func pdfFormatInteger(value int64) string {
 }
 
 func purchasePDF(record persistence.PurchaseSlipRecord) reportpdf.Document {
+	taxCategory := record.TaxCategory
+	if taxCategory == "" {
+		if record.PurchaseTaxMode == persistence.PurchaseTaxModeDomestic {
+			taxCategory = persistence.PurchaseTaxCategoryConsumptionTax
+		} else {
+			taxCategory = persistence.PurchaseTaxCategoryOutOfScope
+		}
+	}
 	lines := make([]reportpdf.Line, 0, len(record.Lines))
 	var subtotal int64
 	for _, item := range record.Lines {
@@ -145,22 +153,37 @@ func purchasePDF(record persistence.PurchaseSlipRecord) reportpdf.Document {
 			description += "　付属品: " + strings.Join(item.AccessoryCodes, ", ")
 		}
 		tax := "対象外"
-		if record.PurchaseTaxMode == persistence.PurchaseTaxModeDomestic {
+		if taxCategory == persistence.PurchaseTaxCategoryConsumptionTax {
 			tax = "消費税(10%)"
+		} else if taxCategory == persistence.PurchaseTaxCategoryEquivalent {
+			tax = "消費税相当額(参考)"
 		}
 		lines = append(lines, reportpdf.Line{Number: item.LineNumber, Description: description,
 			Amount: amount("JPY", lineAmount), Tax: tax})
 	}
 	taxAmount := int64(0)
 	taxLabel := "対象外"
-	if record.PurchaseTaxMode == persistence.PurchaseTaxModeDomestic {
+	if taxCategory == persistence.PurchaseTaxCategoryConsumptionTax {
 		taxAmount = subtotal * int64(record.TaxRateBasisPoints) / 10000
 		taxLabel = "消費税（10%）"
+	} else if taxCategory == persistence.PurchaseTaxCategoryEquivalent {
+		taxLabel = "消費税相当額（社内参考・合計外）"
+	}
+	paymentMethodLabel := "銀行振込"
+	switch record.PaymentMethod {
+	case persistence.PurchasePaymentMethodCash:
+		paymentMethodLabel = "現金"
+	case persistence.PurchasePaymentMethodCard:
+		paymentMethodLabel = "カード"
+	}
+	notes := "支払い方法：" + paymentMethodLabel
+	if strings.TrimSpace(record.Notes) != "" {
+		notes += "\n" + strings.TrimSpace(record.Notes)
 	}
 	return reportpdf.Document{Title: "仕入伝票", Number: record.SlipNumber, TransactionDate: string(record.PurchaseDate),
 		PartnerLabel: "仕入先", PartnerName: record.SupplierName, Currency: "JPY", Subtotal: amount("JPY", subtotal),
 		TaxAmount: amount("JPY", taxAmount), Total: amount("JPY", subtotal+taxAmount), TaxLabel: taxLabel,
-		Notes: record.Notes, Lines: lines}
+		Notes: notes, Lines: lines}
 }
 
 func salePDF(record persistence.SaleSlipRecord) reportpdf.Document {

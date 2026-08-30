@@ -32,6 +32,7 @@ const UNIFIED_TERMINOLOGY = Object.freeze([
   [/仕入担当者/g, 'バイヤー'],
   [/仕入れ日/g, '仕入日'],
   [/仕入れ先/g, '仕入先'],
+  [/仕入れ/g, '仕入'],
   [/商品コード/g, '管理番号'],
   [/モデル名/g, 'モデル'],
   [/SKU番号/g, 'SKU'],
@@ -67,6 +68,287 @@ function observeUnifiedTerminology() {
   applyUnifiedTerminology(document.body);
   new MutationObserver(mutations => mutations.forEach(mutation => mutation.addedNodes.forEach(node => applyUnifiedTerminology(node))))
     .observe(document.body, { childList: true, subtree: true });
+}
+
+// =====================================================
+// 業者選択欄 — フリーワード候補検索
+// =====================================================
+// 元の select は値の正本として残し、検索入力から選択したときに change を
+// 発火する。これにより既存の登録・検証処理を変更せず、取引先が増えても
+// 会社名や内部コードの一部から候補を絞り込める。
+const SEARCHABLE_PARTNER_SELECT_IDS = Object.freeze([
+  'pe-supplier',
+  'pu-supplier',
+  'ie-supplier',
+  'inv-f-supplier',
+  'sl-buyer',
+  'sh-dest',
+  'co-dest',
+  'slip-filter-party',
+  'rv-supplier',
+  'rv-destination',
+  'rv-buyer',
+]);
+
+function _partnerSearchNormalize(value) {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .toLocaleLowerCase('ja')
+    .replace(/[\s　]+/g, '');
+}
+
+function _partnerSearchSelectedLabel(select) {
+  const option = select?.selectedOptions?.[0];
+  return select?.value && option ? String(option.textContent || '').trim() : '';
+}
+
+function _partnerSearchFieldLabel(select) {
+  const explicit = select?.id ? document.querySelector(`label[for="${select.id}"]`) : null;
+  const nearby = explicit || select?.closest('.form-group')?.querySelector('.form-label, label');
+  return String(nearby?.textContent || '取引先').replace(/\*/g, '').trim();
+}
+
+function _enhanceSearchablePartnerSelect(select) {
+  if (!select || select.tagName !== 'SELECT' || select.dataset.partnerSearchEnhanced === 'true') return;
+  select.dataset.partnerSearchEnhanced = 'true';
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'partner-search-select';
+  if (select.classList.contains('filter-select')) wrapper.classList.add('partner-search-select--filter');
+  if (select.style.minWidth) wrapper.style.minWidth = select.style.minWidth;
+  if (select.style.width) wrapper.style.width = select.style.width;
+
+  const control = document.createElement('div');
+  control.className = 'partner-search-control';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'partner-search-input';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-expanded', 'false');
+  input.setAttribute('aria-label', `${_partnerSearchFieldLabel(select)}を検索して選択`);
+  input.dataset.partnerSearchFor = select.id || '';
+  if (select.required) input.setAttribute('aria-required', 'true');
+
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.className = 'partner-search-toggle';
+  toggle.setAttribute('aria-label', '候補を表示');
+  toggle.innerHTML = '<i class="fa-solid fa-chevron-down" aria-hidden="true"></i>';
+
+  const panel = document.createElement('div');
+  panel.className = 'partner-search-panel';
+  panel.id = `partner-search-panel-${select.id || Math.random().toString(36).slice(2)}`;
+  panel.setAttribute('role', 'listbox');
+  input.setAttribute('aria-controls', panel.id);
+
+  select.parentNode.insertBefore(wrapper, select);
+  wrapper.appendChild(control);
+  control.appendChild(input);
+  control.appendChild(toggle);
+  wrapper.appendChild(panel);
+  wrapper.appendChild(select);
+  select.classList.add('partner-search-native');
+  select.tabIndex = -1;
+
+  let activeIndex = -1;
+
+  const optionRecords = () => [...select.options].map(option => ({
+    value: option.value,
+    label: String(option.textContent || '').trim(),
+    disabled: option.disabled,
+  }));
+
+  const visibleButtons = () => [...panel.querySelectorAll('.partner-search-option')];
+
+  const setActive = index => {
+    const buttons = visibleButtons();
+    buttons.forEach(button => button.classList.remove('active'));
+    if (!buttons.length) {
+      activeIndex = -1;
+      return;
+    }
+    activeIndex = Math.max(0, Math.min(index, buttons.length - 1));
+    buttons[activeIndex].classList.add('active');
+    buttons[activeIndex].scrollIntoView({ block: 'nearest' });
+  };
+
+  const sync = (force = false) => {
+    if (!force && wrapper.classList.contains('open')) return;
+    input.value = _partnerSearchSelectedLabel(select);
+    const emptyOption = [...select.options].find(option => option.value === '');
+    const emptyLabel = String(emptyOption?.textContent || '').replace(/^-+|-+$/g, '').trim();
+    input.placeholder = emptyLabel && !/すべて/.test(emptyLabel)
+      ? `${emptyLabel}・文字入力で検索`
+      : '文字入力で候補検索';
+    input.disabled = select.disabled;
+    toggle.disabled = select.disabled;
+  };
+
+  const choose = value => {
+    const option = [...select.options].find(item => item.value === value && !item.disabled);
+    if (!option) return;
+    select.value = option.value;
+    input.value = option.value ? String(option.textContent || '').trim() : '';
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    wrapper.classList.remove('open');
+    input.setAttribute('aria-expanded', 'false');
+    activeIndex = -1;
+    sync(true);
+    input.focus();
+  };
+
+  const render = () => {
+    const query = _partnerSearchNormalize(input.value);
+    const records = optionRecords().filter(record => {
+      if (record.disabled) return false;
+      if (query && !record.value) return false;
+      return !query || _partnerSearchNormalize(`${record.label} ${record.value}`).includes(query);
+    });
+    panel.innerHTML = '';
+    activeIndex = -1;
+    if (!records.length) {
+      const empty = document.createElement('div');
+      empty.className = 'partner-search-empty';
+      empty.textContent = '一致する候補がありません';
+      panel.appendChild(empty);
+      return;
+    }
+    records.forEach(record => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'partner-search-option';
+      button.dataset.value = record.value;
+      button.setAttribute('role', 'option');
+      button.setAttribute('aria-selected', String(record.value === select.value));
+      // 表示は名称のみ。内部コードは検索照合にだけ利用する。
+      button.textContent = record.label;
+      button.addEventListener('mousedown', event => event.preventDefault());
+      button.addEventListener('click', () => choose(record.value));
+      panel.appendChild(button);
+    });
+  };
+
+  const open = () => {
+    if (select.disabled) return;
+    wrapper.classList.add('open');
+    input.setAttribute('aria-expanded', 'true');
+    render();
+  };
+
+  const close = (restore = true) => {
+    wrapper.classList.remove('open');
+    input.setAttribute('aria-expanded', 'false');
+    activeIndex = -1;
+    if (restore) sync(true);
+  };
+
+  input.addEventListener('focus', open);
+  input.addEventListener('click', open);
+  input.addEventListener('input', () => {
+    const selectedLabel = _partnerSearchSelectedLabel(select);
+    if (select.value && _partnerSearchNormalize(input.value) !== _partnerSearchNormalize(selectedLabel)) {
+      select.value = '';
+      select.dispatchEvent(new Event('input', { bubbles: true }));
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    open();
+    render();
+  });
+  input.addEventListener('keydown', event => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      open();
+      setActive(activeIndex + (event.key === 'ArrowDown' ? 1 : -1));
+      return;
+    }
+    if (event.key === 'Enter' && wrapper.classList.contains('open')) {
+      const button = visibleButtons()[activeIndex >= 0 ? activeIndex : 0];
+      if (button) {
+        event.preventDefault();
+        choose(button.dataset.value || '');
+      }
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      close(true);
+    } else if (event.key === 'Tab') {
+      close(true);
+    }
+  });
+  toggle.addEventListener('click', () => {
+    if (wrapper.classList.contains('open')) close(true);
+    else {
+      input.focus();
+      open();
+    }
+  });
+  select.addEventListener('change', () => sync(true));
+  select.addEventListener('focus', () => {
+    input.focus();
+    open();
+  });
+
+  const optionObserver = new MutationObserver(() => {
+    if (wrapper.classList.contains('open')) render();
+    else sync(true);
+  });
+  optionObserver.observe(select, { childList: true, subtree: true, characterData: true, attributes: true });
+
+  Object.defineProperty(select, '_partnerSearchController', {
+    configurable: true,
+    value: { close, input, panel, render, sync, wrapper },
+  });
+  sync(true);
+}
+
+function enhanceSearchablePartnerSelects() {
+  if (typeof document === 'undefined' || !document.body) return;
+  const targets = new Set();
+  SEARCHABLE_PARTNER_SELECT_IDS.forEach(id => {
+    const select = document.getElementById(id);
+    if (select) targets.add(select);
+  });
+  document.querySelectorAll('select[data-partner-search]').forEach(select => targets.add(select));
+  targets.forEach(_enhanceSearchablePartnerSelect);
+}
+
+let _partnerSearchScanQueued = false;
+function _queueSearchablePartnerSelectScan() {
+  if (_partnerSearchScanQueued) return;
+  _partnerSearchScanQueued = true;
+  Promise.resolve().then(() => {
+    _partnerSearchScanQueued = false;
+    if (typeof document === 'undefined' || !document.body) return;
+    enhanceSearchablePartnerSelects();
+  });
+}
+
+function observeSearchablePartnerSelects() {
+  enhanceSearchablePartnerSelects();
+  const observer = new MutationObserver(_queueSearchablePartnerSelectScan);
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  document.addEventListener('pointerdown', event => {
+    document.querySelectorAll('.partner-search-select.open').forEach(wrapper => {
+      if (!wrapper.contains(event.target)) wrapper.querySelector('select')?._partnerSearchController?.close(true);
+    });
+  });
+  document.addEventListener('click', () => {
+    Promise.resolve().then(() => SEARCHABLE_PARTNER_SELECT_IDS.forEach(id => {
+      const select = document.getElementById(id);
+      if (select && !select._partnerSearchController?.wrapper.classList.contains('open')) {
+        select._partnerSearchController?.sync(true);
+      }
+    }));
+  });
+  document.addEventListener('business-domain-updated', _queueSearchablePartnerSelectScan);
+  window.addEventListener('login-directory-updated', _queueSearchablePartnerSelectScan);
 }
 
 /**
@@ -509,6 +791,7 @@ function syncPurchaseSlipToInventory(slip) {
       accessories: [...(detail.accessories || item.accessories || [])],
       boxNo: detail.boxNo ?? item.boxNo ?? null,
       note: detail.note || item.note || '', supplier: slip.supplier || item.supplier || '',
+      supplierName: slip.supplierName || item.supplierName || '',
       staff: slip.staff || item.staff || '', purchaseDate: slip.date || item.purchaseDate || '',
       purchasePrice: Number(line.purchasePrice) || 0, salePrice: Number(line.salePrice) || 0,
       purchaseSlipId: slip.id, purchaseLineNo: line.lineNo || index + 1,
@@ -649,7 +932,9 @@ window.addEventListener('storage', event => {
 // 初期化
 // =====================================================
 document.addEventListener('DOMContentLoaded', async function () {
+  initDesktopSidebarVisibility();
   observeUnifiedTerminology();
+  observeSearchablePartnerSelects();
   // REST接続時はGoのHttpOnly Cookie Sessionを正とする。sessionStorageは
   // 画面表示用の利用者情報だけを保持し、認証判定には使わない。
   if (!window.ZaikoAPI && typeof requireLogin === 'function' && !requireLogin()) return;
@@ -1297,22 +1582,189 @@ function searchPanelEnter(event, callbackName) {
 
 const INV_COLUMN_KEYS = [
   'sku', 'marking', 'code', 'purchaseDate', 'brand', 'ref', 'model', 'serial', 'accessories',
-  'purchasePrice', 'supplier', 'staff', 'salePrice', 'status', 'box', 'shape', 'edit',
+  'purchaseType', 'purchaseRate', 'purchasePriceAtPurchaseRate', 'purchasePrice',
+  'supplier', 'staff', 'salePrice', 'grossMargin', 'status', 'box', 'shape', 'edit',
 ];
 const INV_COLUMN_WIDTHS = {
-  code: 130, brand: 100, shape: 90, marking: 42, model: 110, ref: 100, serial: 90,
-  supplier: 90, staff: 80, purchasePrice: 132, salePrice: 132,
+  code: 170, brand: 100, shape: 90, marking: 42, model: 110, ref: 100, serial: 90,
+  supplier: 90, staff: 80, purchaseType: 170, purchaseRate: 150, purchasePriceAtPurchaseRate: 195,
+  purchasePrice: 190, salePrice: 132, grossMargin: 85,
   purchaseDate: 90, sku: 90, accessories: 120, status: 80, box: 50, edit: 58,
 };
 const _invVisibleColumns = new Set(INV_COLUMN_KEYS.filter(key => key !== 'sku'));
 let _invPurchaseCurrency = 'JPY';
-let _invSaleCurrency = 'USD';
+let _invPurchaseTimeCurrency = 'JPY';
+let _invCurrentPurchaseCurrency = 'JPY';
+let _invSaleCurrency = 'JPY';
+let _itemDetailCurrency = 'JPY';
 
 /** マスタ登録のUSドル円換算レートを返す */
 function getInventoryUsdRate() {
-  const masterRate = Number((APP_DATA.fxRates || []).find(rate => rate.code === 'USD')?.rate);
+  return getInventoryCurrentPurchaseRate('USD');
+}
+
+/** 在庫商品の仕入通貨を正規化する */
+function getInventoryPurchaseCurrency(item) {
+  const currency = String(item?.purchaseCurrency || 'JPY').trim().toUpperCase();
+  return ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+}
+
+/** マスタ登録されている最新の円換算レートを返す */
+function getInventoryCurrentPurchaseRate(currency) {
+  const normalized = String(currency || 'JPY').trim().toUpperCase();
+  if (normalized === 'JPY') return 1;
+  const masterRate = Number((APP_DATA.fxRates || []).find(rate =>
+    String(rate?.code || '').toUpperCase() === normalized)?.rate);
   if (Number.isFinite(masterRate) && masterRate > 0) return masterRate;
-  return Number(SALE_PRICE_JPY_PER_USD) || 155;
+  return normalized === 'HKD' ? 19.8 : (Number(SALE_PRICE_JPY_PER_USD) || 155);
+}
+
+/** 商品登録時に固定保存された仕入レートを返す */
+function getInventoryRegisteredPurchaseRate(item) {
+  const currency = getInventoryPurchaseCurrency(item);
+  if (currency === 'JPY') return 1;
+  const scaled = Number(item?.purchaseFxRateScaled);
+  const scale = Number(item?.purchaseFxScale);
+  if (Number.isFinite(scaled) && scaled > 0 && Number.isFinite(scale) && scale > 0) {
+    return scaled / scale;
+  }
+  const legacyRate = Number(item?.purchaseRate || item?.registrationPurchaseJpyRate);
+  if (Number.isFinite(legacyRate) && legacyRate > 0) return legacyRate;
+  const sourceAmount = Number(item?.purchaseOriginalPrice);
+  const fixedJPY = Number(item?.purchasePrice);
+  if (Number.isFinite(sourceAmount) && sourceAmount > 0 && Number.isFinite(fixedJPY) && fixedJPY >= 0) {
+    return fixedJPY / sourceAmount;
+  }
+  return getInventoryCurrentPurchaseRate(currency);
+}
+
+/** 商品の仕入通貨建て原価を返す */
+function getInventoryPurchaseSourceAmount(item) {
+  const original = Number(item?.purchaseOriginalPrice);
+  if (Number.isFinite(original) && original >= 0) return original;
+  const fixedJPY = Number(item?.purchasePrice) || 0;
+  const currency = getInventoryPurchaseCurrency(item);
+  return currency === 'JPY' ? fixedJPY : fixedJPY / getInventoryRegisteredPurchaseRate(item);
+}
+
+/** 指定レートによる円換算原価を返す */
+function getInventoryPurchaseCostJPY(item, rate) {
+  return Math.round(getInventoryPurchaseSourceAmount(item) * (Number(rate) || 0));
+}
+
+/** 仕入時に確定保存された円換算原価を返す */
+function getInventoryFixedPurchaseCostJPY(item) {
+  const fixedJPY = Number(item?.purchasePrice);
+  if (Number.isFinite(fixedJPY) && fixedJPY >= 0) return Math.round(fixedJPY);
+  return getInventoryPurchaseCostJPY(item, getInventoryRegisteredPurchaseRate(item));
+}
+
+/**
+ * 指定商品の仕入日時点に最も適した通貨レートを返す。
+ * 元の仕入通貨は商品に保存された固定レートを優先し、別通貨は同日以前の直近履歴、
+ * 履歴開始前の商品は最初の履歴、履歴がない場合だけ現在レートへフォールバックする。
+ */
+function getInventoryPurchaseTimeRate(item, currency) {
+  const normalized = String(currency || 'JPY').trim().toUpperCase();
+  if (normalized === 'JPY') return 1;
+  if (normalized === getInventoryPurchaseCurrency(item)) return getInventoryRegisteredPurchaseRate(item);
+
+  const history = (APP_DATA.fxRateHistory || [])
+    .filter(record => String(record?.code || '').trim().toUpperCase() === normalized
+      && Number.isFinite(Number(record?.rate)) && Number(record.rate) > 0)
+    .map(record => ({ ...record, timestamp: Date.parse(record.observedAt || record.createdAt || '') }))
+    .filter(record => Number.isFinite(record.timestamp))
+    .sort((left, right) => left.timestamp - right.timestamp);
+  if (history.length === 0) return getInventoryCurrentPurchaseRate(normalized);
+
+  const anchor = Date.parse(item?.purchaseFxRateObservedAt || item?.purchaseDate || '');
+  if (!Number.isFinite(anchor)) return Number(history[history.length - 1].rate);
+  const preceding = history.filter(record => record.timestamp <= anchor);
+  return Number((preceding[preceding.length - 1] || history[0]).rate);
+}
+
+/** 円換算金額を選択通貨で整数表示する */
+function formatInventoryCostAmount(amount, currency) {
+  const normalized = ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+  const rounded = Math.round(Number(amount) || 0);
+  if (normalized === 'JPY') return formatPrice(rounded);
+  if (normalized === 'USD') return formatSalePrice(rounded);
+  return `HK$${rounded.toLocaleString('en-US')}`;
+}
+
+/** 仕入時の固定円原価を、仕入日時点の選択通貨レートで換算する */
+function getInventoryPurchaseCostAtRegisteredRate(item, currency = _invPurchaseTimeCurrency) {
+  const normalized = ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+  const fixedJPY = getInventoryFixedPurchaseCostJPY(item);
+  const targetRate = getInventoryPurchaseTimeRate(item, normalized);
+  return normalized === 'JPY' ? fixedJPY : Math.round(fixedJPY / targetRate);
+}
+
+/** 元通貨原価を現在レートで円換算し、さらに選択通貨の現在レートで換算する */
+function getInventoryPurchaseCostAtCurrentRate(item, currency = _invCurrentPurchaseCurrency) {
+  const normalized = ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+  const currentJPY = getInventoryPurchaseCostJPY(
+    item,
+    getInventoryCurrentPurchaseRate(getInventoryPurchaseCurrency(item)),
+  );
+  if (normalized === 'JPY') return currentJPY;
+  return Math.round(currentJPY / getInventoryCurrentPurchaseRate(normalized));
+}
+
+function formatInventoryRegisteredPurchaseRate(item) {
+  const currency = getInventoryPurchaseCurrency(item);
+  const rate = getInventoryRegisteredPurchaseRate(item);
+  return `1 ${currency} = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
+/** 選択中の表示通貨について、商品ごとの仕入日時点レートを表示する */
+function formatInventoryPurchaseTimeRate(item, currency = _invPurchaseTimeCurrency) {
+  const normalized = ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+  const rate = getInventoryPurchaseTimeRate(item, normalized);
+  return `1 ${normalized} = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
+/** 選択中の通貨が、その商品の実際の仕入通貨と一致するか */
+function isInventoryOriginalPurchaseCurrency(item, currency = _invPurchaseTimeCurrency) {
+  return getInventoryPurchaseCurrency(item) === currency;
+}
+
+/** 元の仕入伝票に保存された仕入区分を表示名へ変換する。旧データは国内業者仕入として補完する。 */
+function formatInventoryPurchaseType(item) {
+  const type = String(item?.purchaseType || item?.purchaseTaxMode || 'domestic').trim().toLowerCase();
+  if (type === 'personal') return '個人買取仕入';
+  if (type === 'overseas') return '海外仕入';
+  return '国内業者仕入／オークション';
+}
+
+function formatInventoryPurchaseCostAtRegisteredRate(item, currency = _invPurchaseTimeCurrency) {
+  return formatInventoryCostAmount(getInventoryPurchaseCostAtRegisteredRate(item, currency), currency);
+}
+
+function formatInventoryPurchaseCostAtCurrentRate(item, currency = _invCurrentPurchaseCurrency) {
+  return formatInventoryCostAmount(getInventoryPurchaseCostAtCurrentRate(item, currency), currency);
+}
+
+/** 売価を現在のUSDレートで円換算する */
+function getInventorySalePriceJPY(item) {
+  return Math.round((Number(item?.salePrice) || 0) * getInventoryUsdRate());
+}
+
+/** 指定式: (売価 - 原価（現在レート）) / 売価 × 100 */
+function getInventoryGrossMarginPercent(item) {
+  const salePriceJPY = getInventorySalePriceJPY(item);
+  if (!(salePriceJPY > 0)) return null;
+  const currentCostJPY = getInventoryPurchaseCostJPY(
+    item,
+    getInventoryCurrentPurchaseRate(getInventoryPurchaseCurrency(item)),
+  );
+  return ((salePriceJPY - currentCostJPY) / salePriceJPY) * 100;
+}
+
+function formatInventoryGrossMargin(item) {
+  const grossMargin = getInventoryGrossMarginPercent(item);
+  if (!Number.isFinite(grossMargin)) return '—';
+  return `${grossMargin.toLocaleString('ja-JP', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
 
 /** JPY基準の仕入金額を、選択中の表示通貨で整形する */
@@ -1328,48 +1780,150 @@ function formatInventoryPurchasePrice(itemOrAmount, currency = _invPurchaseCurre
 	return formatPrice(value);
 }
 
+/** USD基準の売価を、選択中の現在レート通貨へ換算する */
+function getInventorySalePriceAmount(usdAmount, currency = _invSaleCurrency) {
+  const normalized = ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+  const value = Number(usdAmount) || 0;
+  if (normalized === 'USD') return Math.round(value);
+  const salePriceJPY = Math.round(value * getInventoryUsdRate());
+  if (normalized === 'JPY') return salePriceJPY;
+  return Math.round(salePriceJPY / getInventoryCurrentPurchaseRate('HKD'));
+}
+
 /** USD基準の売価を、選択中の表示通貨で整形する */
 function formatInventorySalePrice(usdAmount, currency = _invSaleCurrency) {
-  const value = Number(usdAmount) || 0;
-  if (currency === 'JPY') return formatPrice(Math.round(value * getInventoryUsdRate()));
-  return formatSalePrice(value);
+  const normalized = ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+  return formatInventoryCostAmount(getInventorySalePriceAmount(usdAmount, normalized), normalized);
+}
+
+/** 円換算済み金額を、商品詳細で選択された現在レート通貨へ変換する */
+function formatItemDetailMoneyFromJPY(jpyAmount, currency) {
+  const normalized = ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+  const value = Number(jpyAmount) || 0;
+  if (normalized === 'JPY') return formatPrice(Math.round(value));
+  const rate = getInventoryCurrentPurchaseRate(normalized);
+  const converted = rate > 0 ? Math.round(value / rate) : 0;
+  if (normalized === 'USD') return formatSalePrice(converted);
+  return `HK$${converted.toLocaleString('en-US')}`;
+}
+
+function formatItemDetailPurchasePrice(item, currency = _itemDetailCurrency) {
+  const currentCostJPY = getInventoryPurchaseCostJPY(
+    item,
+    getInventoryCurrentPurchaseRate(getInventoryPurchaseCurrency(item)),
+  );
+  return formatItemDetailMoneyFromJPY(currentCostJPY, currency);
+}
+
+function formatItemDetailSalePrice(item, currency = _itemDetailCurrency) {
+  if (!(Number(item?.salePrice) > 0)) return '—';
+  return formatItemDetailMoneyFromJPY(getInventorySalePriceJPY(item), currency);
+}
+
+function getItemDetailCurrentRateNote() {
+  const usdRate = getInventoryCurrentPurchaseRate('USD');
+  const hkdRate = getInventoryCurrentPurchaseRate('HKD');
+  return `現在レート：1 USD = ¥${usdRate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} / 1 HKD = ¥${hkdRate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
+function renderItemDetailPriceControl(priceType, item) {
+  const isPurchase = priceType === 'purchase';
+  const selectedCurrency = _itemDetailCurrency;
+  const label = isPurchase ? '原価（現在レート）' : '売価';
+  const value = isPurchase
+    ? formatItemDetailPurchasePrice(item, selectedCurrency)
+    : formatItemDetailSalePrice(item, selectedCurrency);
+  const color = isPurchase ? 'var(--primary)' : 'var(--success)';
+  const buttonLabels = { JPY: '円', USD: '$', HKD: 'HKD' };
+  return `
+    <div class="detail-row item-detail-price-row item-detail-summary-field" data-item-detail-price="${priceType}">
+      <div class="detail-label">${label}</div>
+      <div class="detail-value item-detail-price-control">
+        <strong class="item-detail-price-amount" id="item-detail-${priceType}-value" style="color:${color};">${value}</strong>
+        <div class="item-detail-currency-switch" role="group" aria-label="原価（現在レート）と売価の連動表示通貨">
+          ${['JPY', 'USD', 'HKD'].map(currency => `
+            <button type="button" class="item-detail-currency-btn ${currency === selectedCurrency ? 'active' : ''}"
+              data-currency="${currency}" aria-label="${label}を${currency}で表示"
+              aria-pressed="${currency === selectedCurrency ? 'true' : 'false'}"
+              onclick="switchItemDetailPriceCurrency('${priceType}','${currency}')">${buttonLabels[currency]}</button>
+          `).join('')}
+        </div>
+        <span class="item-detail-price-rate">${getItemDetailCurrentRateNote()}</span>
+      </div>
+    </div>`;
+}
+
+/** 商品詳細の原価（現在レート）と売価を同じ通貨へ連動切り替えする */
+function switchItemDetailPriceCurrency(priceType, currency) {
+  if (!['JPY', 'USD', 'HKD'].includes(currency)) return;
+  if (!['purchase', 'sale'].includes(priceType)) return;
+  const item = APP_DATA.inventory.find(candidate => candidate.code === window._itemDetailCurrentCode);
+  if (!item) return;
+
+  _itemDetailCurrency = currency;
+
+  const purchaseValue = document.getElementById('item-detail-purchase-value');
+  if (purchaseValue) purchaseValue.textContent = formatItemDetailPurchasePrice(item, currency);
+  const saleValue = document.getElementById('item-detail-sale-value');
+  if (saleValue) saleValue.textContent = formatItemDetailSalePrice(item, currency);
+  document.querySelectorAll('.item-detail-currency-btn').forEach(button => {
+    const active = button.dataset.currency === currency;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
 }
 
 /** 在庫一覧の価格ヘッダーと通貨ボタンを現在状態へ同期する */
 function _invSyncPriceCurrencyUI() {
   const rate = getInventoryUsdRate();
-  const rateTitle = `マスタレート: 1 USD = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const purchaseHeading = document.getElementById('inv-purchase-heading');
+  const hkdRate = getInventoryCurrentPurchaseRate('HKD');
+  const rateTitle = `現在レート: 1 USD = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / 1 HKD = ¥${hkdRate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+  const purchaseTimeTitle = '3項目を連動して切り替えます。仕入時原価と仕入レートは、商品ごとの仕入日時点レートで換算します';
+  const purchaseTimeHeading = document.getElementById('inv-purchase-time-heading');
+  if (purchaseTimeHeading) purchaseTimeHeading.textContent = `原価（仕入時レート・${_invPurchaseTimeCurrency}）`;
+  const currentPurchaseHeading = document.getElementById('inv-purchase-current-heading');
+  if (currentPurchaseHeading) currentPurchaseHeading.textContent = `原価（現在レート・${_invCurrentPurchaseCurrency}）`;
   const saleHeading = document.getElementById('inv-sale-heading');
-  if (purchaseHeading) purchaseHeading.textContent = `仕入金額（${_invPurchaseCurrency}）`;
   if (saleHeading) saleHeading.textContent = `売価（${_invSaleCurrency}）`;
 
   [
-    ['inv-purchase-jpy', _invPurchaseCurrency === 'JPY'],
-    ['inv-purchase-usd', _invPurchaseCurrency === 'USD'],
-    ['inv-sale-jpy', _invSaleCurrency === 'JPY'],
-    ['inv-sale-usd', _invSaleCurrency === 'USD'],
-  ].forEach(([id, active]) => {
+    ['inv-purchase-time-jpy', _invPurchaseTimeCurrency === 'JPY', purchaseTimeTitle],
+    ['inv-purchase-time-usd', _invPurchaseTimeCurrency === 'USD', purchaseTimeTitle],
+    ['inv-purchase-time-hkd', _invPurchaseTimeCurrency === 'HKD', purchaseTimeTitle],
+    ['inv-purchase-current-jpy', _invCurrentPurchaseCurrency === 'JPY', rateTitle],
+    ['inv-purchase-current-usd', _invCurrentPurchaseCurrency === 'USD', rateTitle],
+    ['inv-purchase-current-hkd', _invCurrentPurchaseCurrency === 'HKD', rateTitle],
+    ['inv-sale-jpy', _invSaleCurrency === 'JPY', rateTitle],
+    ['inv-sale-usd', _invSaleCurrency === 'USD', rateTitle],
+    ['inv-sale-hkd', _invSaleCurrency === 'HKD', rateTitle],
+  ].forEach(([id, active, title]) => {
     const button = document.getElementById(id);
     if (!button) return;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', active ? 'true' : 'false');
-    button.title = rateTitle;
+    button.title = title;
   });
 
   const note = document.getElementById('inv-column-panel-note');
   if (note) note.textContent = `チェックを外した項目は非表示になります / ${rateTitle}`;
 }
 
-/** 仕入金額または売価の表示通貨を切り替える（保存値は変更しない） */
-function switchInventoryPriceCurrency(priceType, currency) {
-  if (currency !== 'JPY' && currency !== 'USD') return;
-  if (priceType === 'purchase') _invPurchaseCurrency = currency;
-  else if (priceType === 'sale') _invSaleCurrency = currency;
-  else return;
+/** 在庫一覧の仕入時原価・現在原価・売価を同じ通貨へ連動切り替えする */
+function switchInventoryLinkedCurrency(currency) {
+  if (!['JPY', 'USD', 'HKD'].includes(currency)) return;
+  _invPurchaseCurrency = currency;
+  _invPurchaseTimeCurrency = currency;
+  _invCurrentPurchaseCurrency = currency;
+  _invSaleCurrency = currency;
 
   _invSyncPriceCurrencyUI();
   if (_invSearched) renderInventoryTable();
+}
+
+/** 旧呼び出し互換。どの価格列から操作しても3項目を連動させる */
+function switchInventoryPriceCurrency(priceType, currency) {
+  if (!['purchase', 'sale'].includes(priceType)) return;
+  switchInventoryLinkedCurrency(currency);
 }
 
 /** 表示項目設定をテーブル・チェックボックスへ反映する */
@@ -1458,6 +2012,12 @@ function init_inventory() {
   }
   // サイドメニューから在庫一覧を開いた直後でも、Enterだけで現在条件を検索できるようにする。
   setTimeout(() => document.getElementById('inv-f-code')?.focus({ preventScroll: true }), 0);
+}
+
+/** 旧呼び出し互換。どちらの原価列から操作しても3項目を連動させる */
+function switchInventoryCostCurrency(rateType, currency) {
+  if (!['purchase-time', 'current'].includes(rateType)) return;
+  switchInventoryLinkedCurrency(currency);
 }
 
 /** 添付仕様どおりに検索欄を並べ、マスタ項目を名称プルダウンで表示する。 */
@@ -2027,6 +2587,11 @@ function renderInventoryTable() {
   } else {
     tbody.innerHTML = paged.map(item => {
       const skuVal = item.sku || '—';
+      const purchaseCurrencyMatch = isInventoryOriginalPurchaseCurrency(item);
+      const grossMargin = getInventoryGrossMarginPercent(item);
+      const grossMarginColor = !Number.isFinite(grossMargin)
+        ? 'var(--text-muted)'
+        : grossMargin < 0 ? 'var(--danger)' : 'var(--success)';
       // 付属品: 「・」区切り1行、maxwidth固定でCSS省略
       const accText = (item.accessories && item.accessories.length > 0)
         ? item.accessories.join('・')
@@ -2035,17 +2600,31 @@ function renderInventoryTable() {
         <tr style="cursor:pointer;" onclick="showItemDetail('${item.code}')">
           <td data-inv-col="sku" style="font-size:12px;">${skuVal}</td>
           <td data-inv-col="marking" style="text-align:center;font-size:18px;line-height:1;" title="${(() => { const x = APP_DATA.markingRecords?.find(v => v.code === item.marking); return x?.meaning || ''; })()}">${APP_DATA.markingRecords?.find(v => v.code === item.marking)?.name || '—'}</td>
-          <td data-inv-col="code"><code style="font-size:11px;color:var(--primary-light);">${item.code}</code></td>
+          <td data-inv-col="code">
+            <div class="inv-management-number-cell">
+              <code>${item.code}</code>
+              <button type="button" class="inv-management-number-copy"
+                data-copy-value="${item.code}" title="管理番号をコピー"
+                aria-label="管理番号 ${item.code} をコピー"
+                onclick="copyInventoryManagementNumber(event, this)">
+                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+              </button>
+            </div>
+          </td>
           <td data-inv-col="purchaseDate" style="font-size:12px;white-space:nowrap;">${item.purchaseDate || '—'}</td>
           <td data-inv-col="brand" style="font-weight:500;">${item.brand}</td>
           <td data-inv-col="ref" style="font-size:12px;">${item.ref    || '—'}</td>
           <td data-inv-col="model">${item.model}</td>
           <td data-inv-col="serial" style="font-size:12px;font-family:monospace;">${item.serial  || '—'}</td>
           <td data-inv-col="accessories" style="font-size:11px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${accText}">${accText}</td>
-          <td data-inv-col="purchasePrice" style="font-weight:bold;">${formatInventoryPurchasePrice(item)}</td>
-          <td data-inv-col="supplier" style="font-size:12px;">${getSupplierName(item.supplier)}</td>
+          <td data-inv-col="purchaseType" style="font-size:11px;white-space:nowrap;">${formatInventoryPurchaseType(item)}</td>
+          <td data-inv-col="purchaseRate" style="font-size:11px;white-space:nowrap;" title="${item.purchaseDate || '仕入日'}時点の${_invPurchaseTimeCurrency}レート">${formatInventoryPurchaseTimeRate(item)}</td>
+          <td data-inv-col="purchasePriceAtPurchaseRate" class="${purchaseCurrencyMatch ? 'inv-purchase-currency-match' : ''}" style="font-weight:bold;" title="${purchaseCurrencyMatch ? '実際の仕入通貨で表示中' : `${_invPurchaseTimeCurrency}へ仕入時レート換算`}">${formatInventoryPurchaseCostAtRegisteredRate(item)}</td>
+          <td data-inv-col="purchasePrice" style="font-weight:bold;color:var(--primary);">${formatInventoryPurchaseCostAtCurrentRate(item)}</td>
+          <td data-inv-col="supplier" style="font-size:12px;">${item.supplierName || getSupplierName(item.supplier) || '—'}</td>
           <td data-inv-col="staff" style="font-size:12px;">${item.staff  || '—'}</td>
           <td data-inv-col="salePrice" style="font-weight:bold;color:var(--success);">${item.salePrice ? formatInventorySalePrice(item.salePrice) : '—'}</td>
+          <td data-inv-col="grossMargin" style="font-weight:bold;color:${grossMarginColor};white-space:nowrap;">${formatInventoryGrossMargin(item)}</td>
           <td data-inv-col="status">${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</td>
           <td data-inv-col="box">${_buildBoxBadge(item.boxNo)}</td>
           <td data-inv-col="shape">${APP_DATA.shapeRecords?.find(x => x.code === item.shape)?.name || '—'}</td>
@@ -2067,16 +2646,70 @@ function renderInventoryTable() {
   });
 }
 
+/** 在庫一覧の管理番号を1タップでコピーし、行クリックによる詳細表示は発火させない。 */
+async function copyInventoryManagementNumber(event, button) {
+  event?.preventDefault();
+  event?.stopPropagation();
+  const value = String(button?.dataset?.copyValue || '').trim();
+  if (!value) return;
+
+  const fallbackCopy = () => {
+    const textarea = document.createElement('textarea');
+    textarea.value = value;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = typeof document.execCommand === 'function' && document.execCommand('copy');
+    textarea.remove();
+    if (!copied) throw new Error('clipboard unavailable');
+  };
+
+  try {
+    if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+    else fallbackCopy();
+  } catch (_) {
+    try {
+      fallbackCopy();
+    } catch (_) {
+      showToast('error', 'コピーできませんでした', 'ブラウザーのクリップボード権限を確認してください');
+      return;
+    }
+  }
+
+  if (button) {
+    clearTimeout(button._copyFeedbackTimer);
+    button.classList.add('copied');
+    button.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i>';
+    button.title = 'コピーしました';
+    button.setAttribute('aria-label', `管理番号 ${value} をコピーしました`);
+    button._copyFeedbackTimer = setTimeout(() => {
+      if (!button.isConnected) return;
+      button.classList.remove('copied');
+      button.innerHTML = '<i class="fa-regular fa-copy" aria-hidden="true"></i>';
+      button.title = '管理番号をコピー';
+      button.setAttribute('aria-label', `管理番号 ${value} をコピー`);
+    }, 1600);
+  }
+  showToast('success', 'コピーしました', `管理番号 ${value}`);
+}
+
 // 在庫一覧 CSV出力
 function exportInventoryCSV() {
   const f = _getInvFilters();
   const filtered = APP_DATA.inventory.filter(item => _matchesInventoryFilters(item, f));
   const rows = [
-    ['管理番号','ブランド','モデル','型番','シリアル','SKU','仕入先','バイヤー','原価','売価','仕入日','付属品','ステータス','BOX'],
+    ['管理番号','ブランド','モデル','型番','シリアル','SKU','仕入区分',`仕入レート（${_invPurchaseTimeCurrency}・仕入時）`,`原価（仕入時レート・${_invPurchaseTimeCurrency}）`,`原価（現在レート・${_invCurrentPurchaseCurrency}）`,'仕入先','バイヤー',`売価（${_invSaleCurrency}）`,'粗利率','仕入日','付属品','ステータス','BOX'],
     ...filtered.map(i => {
+      const grossMargin = getInventoryGrossMarginPercent(i);
       return [
         i.code, i.brand, i.model, i.ref||'', i.serial||'', i.sku||'',
-        getSupplierName(i.supplier), i.staff||'', i.purchasePrice, i.salePrice||'',
+        formatInventoryPurchaseType(i), formatInventoryPurchaseTimeRate(i, _invPurchaseTimeCurrency),
+        getInventoryPurchaseCostAtRegisteredRate(i, _invPurchaseTimeCurrency),
+        getInventoryPurchaseCostAtCurrentRate(i, _invCurrentPurchaseCurrency),
+        i.supplierName || getSupplierName(i.supplier), i.staff||'', getInventorySalePriceAmount(i.salePrice, _invSaleCurrency),
+        Number.isFinite(grossMargin) ? Math.round(grossMargin * 10) / 10 : '',
         i.purchaseDate||'',
         (i.accessories||[]).join('・'),
         i.status||'', i.boxNo||''
@@ -2113,6 +2746,7 @@ function showItemDetail(code) {
   if (!item) return;
 
   window._itemDetailCurrentCode = item.code;
+  _itemDetailCurrency = ['JPY', 'USD', 'HKD'].includes(_invSaleCurrency) ? _invSaleCurrency : 'JPY';
 
   document.getElementById('itemDetailTitle').textContent = `${item.code} — ${item.brand} ${item.model}`;
   const mat  = APP_DATA.materials.find(m => m.code === item.material);
@@ -2120,6 +2754,9 @@ function showItemDetail(code) {
   const cond = APP_DATA.conditions.find(c => c.code === item.condition);
   const belt = (APP_DATA.beltMaterialRecords || []).find(record => record.code === item.belt);
   const marking = (APP_DATA.markingRecords || []).find(record => record.code === item.marking);
+  const shape = (APP_DATA.shapeRecords || []).find(record =>
+    record.code === item.shape || record.name === item.shape
+  );
 
   // ── 画像ギャラリー ──
   const imgs = (item.images || []).filter(Boolean);
@@ -2171,7 +2808,7 @@ function showItemDetail(code) {
     <div class="item-detail-info-grid mb-20">
       <div class="detail-row"><div class="detail-label">管理番号</div><div class="detail-value"><code>${item.code}</code></div></div>
       <div class="detail-row"><div class="detail-label">仕入日</div><div class="detail-value">${item.purchaseDate || '—'}</div></div>
-      <div class="detail-row"><div class="detail-label">仕入先</div><div class="detail-value">${getSupplierName(item.supplier) || '—'}</div></div>
+      <div class="detail-row"><div class="detail-label">仕入先</div><div class="detail-value">${item.supplierName || getSupplierName(item.supplier) || '—'}</div></div>
       <div class="detail-row"><div class="detail-label">バイヤー</div><div class="detail-value">${item.staff || '—'}</div></div>
 
       <div class="detail-row"><div class="detail-label">ブランド</div><div class="detail-value">${item.brand}</div></div>
@@ -2189,14 +2826,18 @@ function showItemDetail(code) {
       <div class="detail-row"><div class="detail-label">SKU</div><div class="detail-value"><code>${item.sku || '—'}</code></div></div>
       <div class="detail-row item-detail-grid-spacer" aria-hidden="true"></div>
 
-      <div class="detail-row"><div class="detail-label">仕入金額（${_invPurchaseCurrency}）</div><div class="detail-value" style="font-weight:bold;color:var(--primary);">${formatInventoryPurchasePrice(item)}</div></div>
-      <div class="detail-row"><div class="detail-label">売価（${_invSaleCurrency}）</div><div class="detail-value" style="font-weight:bold;color:var(--success);">${item.salePrice ? formatInventorySalePrice(item.salePrice) : '—'}</div></div>
-      <div class="detail-row"><div class="detail-label">ステータス</div><div class="detail-value">${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</div></div>
-      <div class="detail-row item-detail-grid-spacer" aria-hidden="true"></div>
+      ${renderItemDetailPriceControl('purchase', item)}
+      ${renderItemDetailPriceControl('sale', item)}
+      <div class="detail-row item-detail-summary-field item-detail-gross-margin-row">
+        <div class="detail-label">粗利率</div>
+        <div class="detail-value"><strong class="item-detail-gross-margin-value" id="item-detail-gross-margin-value">${formatInventoryGrossMargin(item)}</strong></div>
+      </div>
+      <div class="detail-row item-detail-summary-field item-detail-status-row"><div class="detail-label">ステータス</div><div class="detail-value">${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</div></div>
 
-      <div class="detail-row"><div class="detail-label">マーキング</div><div class="detail-value item-detail-marking" title="${marking?.meaning || ''}">${marking?.name || '—'}</div></div>
-      <div class="detail-row"><div class="detail-label">BOX</div><div class="detail-value">${item.boxNo ? `BOX${item.boxNo}` : '—'}</div></div>
-    </div>
+          <div class="detail-row"><div class="detail-label">マーキング</div><div class="detail-value item-detail-marking" title="${marking?.meaning || ''}">${marking?.name || '—'}</div></div>
+          <div class="detail-row"><div class="detail-label">BOX</div><div class="detail-value">${item.boxNo ? `BOX${item.boxNo}` : '—'}</div></div>
+          <div class="detail-row"><div class="detail-label">形状</div><div class="detail-value">${shape?.name || '—'}</div></div>
+        </div>
     <div class="detail-row mb-20">
       <div class="detail-label">特徴・備考</div>
       <div class="detail-value" style="background:var(--bg);padding:10px;border-radius:6px;margin-top:4px;font-size:12px;">${item.note || '（記載なし）'}</div>
@@ -2662,6 +3303,13 @@ async function saveItemEdit() {
     return;
   }
 
+  // DB連動商品の変更はサーバーでも管理者限定。ローカルデータでは下の
+  // 既存承認申請フローを使う。
+  if (window.ZaikoAPI && item.apiManaged && isWorker()
+      && !requireAdminForSensitiveOperation('商品情報・原価・売価の変更')) {
+    return;
+  }
+
   if (window.ZaikoAPI && item.apiManaged) {
     try {
       const metadataChanged = changes.some(change => change.field !== '商品画像');
@@ -2738,24 +3386,24 @@ function onPurchaseDateChange(dateStr) {
 function puAssignCode() {
   const dateVal = document.getElementById('pu-date')?.value || '';
   const d = dateVal ? new Date(dateVal) : new Date();
-  const ymd = d.getFullYear().toString()
+  const datePrefix = String(d.getDate()).padStart(2, '0')
     + String(d.getMonth() + 1).padStart(2, '0')
-    + String(d.getDate()).padStart(2, '0');
+    + String(d.getFullYear()).slice(-2);
 
   // 既存在庫コードを収集
   if (!APP_DATA.itemNumberByDate) APP_DATA.itemNumberByDate = {};
   const usedCodes = new Set((APP_DATA.inventory || []).map(i => i.code));
 
   // カウンタから重複回避ループ
-  let seq = APP_DATA.itemNumberByDate[ymd] || 1;
+  let seq = APP_DATA.itemNumberByDate[datePrefix] || 1;
   let code;
   do {
-    code = `${ymd}${String(seq).padStart(3, '0')}`;
+    code = `${datePrefix}${String(seq).padStart(4, '0')}`;
     seq++;
   } while (usedCodes.has(code));
 
   // カウンタを進める（次回採番と重複しないよう）
-  APP_DATA.itemNumberByDate[ymd] = seq;
+  APP_DATA.itemNumberByDate[datePrefix] = seq;
 
   // 入力欄に反映（既存値は上書き）
   const codeEl = document.getElementById('pu-code');
@@ -2829,6 +3477,105 @@ let _puMatchedItem = null;
  * @type {Set<string>}
  */
 let _puLockedFields = new Set();
+
+const PU_PURCHASE_TYPE_DOMESTIC = 'domestic';
+const PU_PURCHASE_TYPE_PERSONAL = 'personal';
+const PU_PURCHASE_TYPE_OVERSEAS = 'overseas';
+const PU_TAX_CATEGORY_CONSUMPTION = 'consumption_tax';
+const PU_TAX_CATEGORY_EQUIVALENT = 'tax_equivalent';
+const PU_TAX_CATEGORY_OUT_OF_SCOPE = 'out_of_scope';
+let _puPurchaseCurrency = 'JPY';
+let _puPurchaseType = PU_PURCHASE_TYPE_DOMESTIC;
+let _puTaxCategory = PU_TAX_CATEGORY_CONSUMPTION;
+
+function puNormalizePurchaseCurrency(value) {
+  const currency = String(value || '').trim().toUpperCase();
+  return ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+}
+
+function puNormalizePurchaseType(value) {
+  return [PU_PURCHASE_TYPE_PERSONAL, PU_PURCHASE_TYPE_OVERSEAS].includes(value)
+    ? value : PU_PURCHASE_TYPE_DOMESTIC;
+}
+
+function puNormalizeTaxCategory(value) {
+  return [PU_TAX_CATEGORY_EQUIVALENT, PU_TAX_CATEGORY_OUT_OF_SCOPE].includes(value)
+    ? value : PU_TAX_CATEGORY_CONSUMPTION;
+}
+
+function puGetCurrentPurchaseRate(currency = _puPurchaseCurrency) {
+  const normalized = puNormalizePurchaseCurrency(currency);
+  if (normalized === 'JPY') return 1;
+  const master = (APP_DATA.fxRates || []).find(item => String(item?.code || '').toUpperCase() === normalized);
+  if (Number(master?.rate) > 0) return Number(master.rate);
+  if (typeof peGetCurrentPurchaseRate === 'function') return Number(peGetCurrentPurchaseRate(normalized)) || 0;
+  return normalized === 'HKD' ? 19.8 : 155;
+}
+
+function puPurchaseAmountToJPY(amount, currency = _puPurchaseCurrency) {
+  return Math.round((Number(amount) || 0) * puGetCurrentPurchaseRate(currency));
+}
+
+function _puUpdateProcurementUI() {
+  const currency = puNormalizePurchaseCurrency(_puPurchaseCurrency);
+  const purchaseType = puNormalizePurchaseType(_puPurchaseType);
+  const taxCategory = puNormalizeTaxCategory(_puTaxCategory);
+  const symbols = { JPY: '¥', USD: '$', HKD: 'HK$' };
+  const currencyLabels = { JPY: '円', USD: 'USD', HKD: 'HKD' };
+  ['JPY', 'USD', 'HKD'].forEach(code => {
+    const button = document.getElementById(`pu-currency-${code.toLowerCase()}`);
+    const selected = code === currency;
+    button?.classList.toggle('active', selected);
+    button?.setAttribute('aria-checked', selected ? 'true' : 'false');
+  });
+  ['domestic', 'personal', 'overseas'].forEach(type => {
+    const button = document.getElementById(`pu-purchase-type-${type}`);
+    const selected = type === purchaseType;
+    button?.classList.toggle('active', selected);
+    button?.setAttribute('aria-checked', selected ? 'true' : 'false');
+  });
+  const supplierRequired = purchaseType !== PU_PURCHASE_TYPE_PERSONAL;
+  const supplierSelect = document.getElementById('pu-supplier');
+  const supplierRequiredMark = document.getElementById('pu-supplier-required');
+  if (supplierSelect) {
+    supplierSelect.required = supplierRequired;
+    supplierSelect.setAttribute('aria-required', supplierRequired ? 'true' : 'false');
+  }
+  if (supplierRequiredMark) supplierRequiredMark.style.display = supplierRequired ? '' : 'none';
+  const rate = puGetCurrentPurchaseRate(currency);
+  const rateDisplay = document.getElementById('pu-purchase-rate');
+  if (rateDisplay) rateDisplay.textContent = `仕入レート：1 ${currency} = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+  const priceLabel = document.getElementById('pu-price-label');
+  if (priceLabel) priceLabel.innerHTML = `原価（${currencyLabels[currency]}・税抜） <span class="required">*</span>`;
+  const priceSymbol = document.getElementById('pu-price-symbol');
+  if (priceSymbol) priceSymbol.textContent = symbols[currency];
+  const priceInput = document.getElementById('pu-price');
+  if (priceInput) priceInput.placeholder = currency === 'JPY' ? '例: 850,000' : currency === 'USD' ? '例: 5,500' : '例: 42,000';
+  const taxSelect = document.getElementById('pu-tax-category');
+  if (taxSelect) taxSelect.value = taxCategory;
+  const descriptions = {
+    [PU_TAX_CATEGORY_CONSUMPTION]: '原価に対して消費税10%を計算し、仕入伝票の合計へ加算します。',
+    [PU_TAX_CATEGORY_EQUIVALENT]: '消費税相当額10%を社内参考値として計算し、支払合計には加算しません。',
+    [PU_TAX_CATEGORY_OUT_OF_SCOPE]: '消費税・消費税相当額を計算しない対象外として扱います。',
+  };
+  const taxDescription = document.getElementById('pu-tax-category-description');
+  if (taxDescription) taxDescription.textContent = descriptions[taxCategory];
+}
+
+function puSetPurchaseCurrency(currency) {
+  _puPurchaseCurrency = puNormalizePurchaseCurrency(currency);
+  _puUpdateProcurementUI();
+}
+
+function puSetPurchaseType(type) {
+  _puPurchaseType = puNormalizePurchaseType(type);
+  _puUpdateProcurementUI();
+}
+
+function puSetTaxCategory(category) {
+  _puTaxCategory = puNormalizeTaxCategory(category);
+  _puUpdateProcurementUI();
+}
 
 // =====================================================
 // 商品登録フォーム サブミット前後の状態管理
@@ -2961,6 +3708,11 @@ function _puFullResetForm() {
   uploadedImages = [];
   uploadedImageFiles = [];
   renderImageGrid();
+
+  _puPurchaseCurrency = 'JPY';
+  _puPurchaseType = PU_PURCHASE_TYPE_DOMESTIC;
+  _puTaxCategory = PU_TAX_CATEGORY_CONSUMPTION;
+  _puUpdateProcurementUI();
 }
 
 /**
@@ -3060,9 +3812,11 @@ function _puApplyInventoryData(item, applyCode = false, overwriteForm = false) {
 
   // ── 仕入金額（数値→カンマ整形） ─────────────────────
   const priceEl = document.getElementById('pu-price');
-  if (priceEl && (overwriteForm || priceEl.value === '' || priceEl.value === '0') && item.purchasePrice) {
-    priceEl.value = Number(item.purchasePrice).toLocaleString('ja-JP');
-    priceEl.dataset.rawValue = item.purchasePrice;
+  const originalPurchasePrice = Number(item.purchaseOriginalPrice) || Number(item.purchasePrice) || 0;
+  if (item.purchaseCurrency) puSetPurchaseCurrency(item.purchaseCurrency);
+  if (priceEl && (overwriteForm || priceEl.value === '' || priceEl.value === '0') && originalPurchasePrice) {
+    priceEl.value = originalPurchasePrice.toLocaleString('ja-JP');
+    priceEl.dataset.rawValue = String(originalPurchasePrice);
     _puLockField('pu-price');
   }
 
@@ -3481,6 +4235,11 @@ function initPurchaseForm() {
   // 画像グリッド
   renderImageGrid();
 
+  _puPurchaseCurrency = 'JPY';
+  _puPurchaseType = PU_PURCHASE_TYPE_DOMESTIC;
+  _puTaxCategory = PU_TAX_CATEGORY_CONSUMPTION;
+  _puUpdateProcurementUI();
+
   // ⑤ 仕入日・仕入先の引継ぎ復元（リセットなしの場合）
   restorePurchaseCarryover();
 
@@ -3721,6 +4480,14 @@ async function savePurchase() {
   const brand    = document.getElementById('pu-brand').value;
   const code     = document.getElementById('pu-code').value.trim();
 
+  // 単品登録は商品と仕入金額・売価を即時確定するため管理者限定。
+  // 作業者は「仕入登録」から下書き＋承認申請を行う。
+  if (isWorker()) {
+    showToast('warning', '管理者承認が必要です',
+      '商品登録画面での原価・売価確定は管理者のみ実行できます。作業者は「仕入登録」から承認申請してください。');
+    return;
+  }
+
   if (!code) {
     showToast('error', '入力エラー', '管理番号を入力または採番してください');
     _puCodeSetError('管理番号を入力または採番してください');
@@ -3740,9 +4507,17 @@ async function savePurchase() {
 
   // ── 必須バリデーション ──────────────────────────────────
   const purchasePrice = getPriceValue(document.getElementById('pu-price'));
+  const purchaseCurrency = puNormalizePurchaseCurrency(_puPurchaseCurrency);
+  const purchaseRate = puGetCurrentPurchaseRate(purchaseCurrency);
+  const purchasePriceJPY = puPurchaseAmountToJPY(purchasePrice, purchaseCurrency);
+  const purchaseType = puNormalizePurchaseType(_puPurchaseType);
+  const taxCategory = puNormalizeTaxCategory(_puTaxCategory);
   const requiresMasterBrand = Boolean(window.ZaikoAPI);
-  if (!dateVal || !supplier || (requiresMasterBrand && !brand) || purchasePrice === 0) {
-    showToast('error', '入力エラー', '仕入日・仕入先・ブランド・仕入金額は必須です');
+  const supplierRequired = purchaseType !== PU_PURCHASE_TYPE_PERSONAL;
+  if (!dateVal || (supplierRequired && !supplier) || (requiresMasterBrand && !brand) || purchasePrice === 0) {
+    showToast('error', '入力エラー', supplierRequired
+      ? '仕入日・仕入先・ブランド・原価は必須です'
+      : '仕入日・ブランド・原価は必須です');
     return;
   }
 
@@ -3763,7 +4538,9 @@ async function savePurchase() {
   _puCodeSetError('');
 
   // フォームは在庫登録処理の中でリセットされるため、先に伝票用の値を退避する。
-  const singlePurchaseSlip = _puBuildSinglePurchaseSlip(code, dateVal, supplier, purchasePrice);
+  const singlePurchaseSlip = _puBuildSinglePurchaseSlip(code, dateVal, supplier, purchasePrice, {
+    purchaseCurrency, purchaseRate, purchaseType, taxCategory,
+  });
 
   if (window.ZaikoAPI) {
     const brandCode = APP_DATA.brandRecords?.find(item => item.name === brand)?.code || brand;
@@ -3786,7 +4563,8 @@ async function savePurchase() {
         beltText: document.getElementById('pu-belt')?.value || '',
         dialText: document.getElementById('pu-dial')?.value || '',
         braceletQuantity: Number(document.getElementById('pu-bracelet-qty')?.value) || null,
-        costAmountMinor: purchasePrice, costCurrency: 'JPY',
+        purchaseTaxMode: purchaseType, taxCategory,
+        costAmountMinor: purchasePrice, costCurrency: purchaseCurrency,
         baseSalePriceMinor: getPriceValue(document.getElementById('pu-sale-price')), baseSaleCurrency: 'USD',
         notes: [document.getElementById('pu-note')?.value, document.getElementById('pu-comment')?.value].filter(Boolean).join('\n'),
       }, uploadedImageFiles);
@@ -3809,27 +4587,49 @@ async function savePurchase() {
     // ════════════════════════════════════════════════════════
     // 【新規商品】在庫に新規追加
     // ════════════════════════════════════════════════════════
-    _puRegisterNewInventory(code, brand, dateVal, supplier, purchasePrice);
+    _puRegisterNewInventory(code, brand, dateVal, supplier, purchasePriceJPY, {
+      purchaseOriginalPrice: purchasePrice,
+      purchaseCurrency,
+      purchaseRate,
+      purchaseType,
+      taxCategory,
+    });
   }
 
   _puIssueSinglePurchaseSlip(singlePurchaseSlip);
 }
 
 /** 単品の商品登録フォームから、仕入伝票1明細分のスナップショットを作る */
-function _puBuildSinglePurchaseSlip(code, dateVal, supplier, purchasePrice) {
+function _puBuildSinglePurchaseSlip(code, dateVal, supplier, purchasePrice, options = {}) {
   const accessories = [...document.querySelectorAll('#pu-accessories input:checked')].map(c => c.value);
   const braceletQtyRaw = document.getElementById('pu-bracelet-qty')?.value;
   const boxRaw = document.getElementById('pu-box')?.value;
+  const purchaseCurrency = puNormalizePurchaseCurrency(options.purchaseCurrency || _puPurchaseCurrency);
+  const purchaseRate = Number(options.purchaseRate) > 0 ? Number(options.purchaseRate) : puGetCurrentPurchaseRate(purchaseCurrency);
+  const purchaseType = puNormalizePurchaseType(options.purchaseType || _puPurchaseType);
+  const taxCategory = puNormalizeTaxCategory(options.taxCategory || _puTaxCategory);
+  const scale = 100000000;
   return {
     date: dateVal,
     supplier,
     staff: document.getElementById('pu-staff')?.value || '',
     note: document.getElementById('pu-comment')?.value || '',
+    purchaseTaxMode: purchaseType,
+    taxCategory,
+    taxRateBasisPoints: taxCategory === PU_TAX_CATEGORY_CONSUMPTION ? 1000 : 0,
+    purchaseCurrency,
+    registrationPurchaseCurrency: purchaseCurrency,
+    registrationPurchaseJpyRate: purchaseRate,
     line: {
       lineNo: 1,
       code,
       sku: document.getElementById('pu-sku')?.value || '',
       purchasePrice,
+      purchaseCurrency,
+      convertedPurchasePriceJpy: Math.round((Number(purchasePrice) || 0) * purchaseRate),
+      purchaseFxRateScaled: purchaseCurrency === 'JPY' ? 0 : Math.round(purchaseRate * scale),
+      purchaseFxScale: purchaseCurrency === 'JPY' ? 0 : scale,
+      purchaseFxRateObservedAt: new Date().toISOString(),
       salePrice: getPriceValue(document.getElementById('pu-sale-price')),
       productDetail: {
         brand: document.getElementById('pu-brand')?.value || '',
@@ -3864,6 +4664,12 @@ function _puIssueSinglePurchaseSlip(snapshot) {
     supplier: snapshot.supplier,
     staff: snapshot.staff,
     note: snapshot.note,
+    purchaseTaxMode: snapshot.purchaseTaxMode,
+    taxCategory: snapshot.taxCategory,
+    taxRateBasisPoints: snapshot.taxRateBasisPoints,
+    purchaseCurrency: snapshot.purchaseCurrency,
+    registrationPurchaseCurrency: snapshot.registrationPurchaseCurrency,
+    registrationPurchaseJpyRate: snapshot.registrationPurchaseJpyRate,
     status: '処理済',
     source: 'single-product',
     registeredAt: new Date().toISOString().slice(0, 16).replace('T', ' '),
@@ -3934,8 +4740,14 @@ function _puPartialUpdateInventory(existingItem) {
   _applyIfEmpty('boxNo', newBox, 'BOX');
 
   // ── 仕入金額 ─────────────────────────────────────────────
-  const newPurchasePrice = getPriceValue(document.getElementById('pu-price'));
+  const newPurchaseOriginalPrice = getPriceValue(document.getElementById('pu-price'));
+  const newPurchasePrice = puPurchaseAmountToJPY(newPurchaseOriginalPrice, _puPurchaseCurrency);
   _applyIfEmpty('purchasePrice', newPurchasePrice, '仕入金額');
+  _applyIfEmpty('purchaseOriginalPrice', newPurchaseOriginalPrice, '仕入原額');
+  _applyIfEmpty('purchaseCurrency', puNormalizePurchaseCurrency(_puPurchaseCurrency), '仕入通貨');
+  _applyIfEmpty('purchaseRate', puGetCurrentPurchaseRate(_puPurchaseCurrency), '仕入レート');
+  _applyIfEmpty('purchaseType', puNormalizePurchaseType(_puPurchaseType), '仕入区分');
+  _applyIfEmpty('taxCategory', puNormalizeTaxCategory(_puTaxCategory), '税区分');
 
   // ── 売価 ─────────────────────────────────────────────────
   const newSalePrice = getPriceValue(document.getElementById('pu-sale-price'));
@@ -4014,7 +4826,7 @@ function _puPartialUpdateInventory(existingItem) {
  * @param {string} supplier
  * @param {number} purchasePrice
  */
-function _puRegisterNewInventory(code, brand, dateVal, supplier, purchasePrice) {
+function _puRegisterNewInventory(code, brand, dateVal, supplier, purchasePrice, purchaseContext = {}) {
   const accs  = [...document.querySelectorAll('#pu-accessories input:checked')].map(c => c.value);
   const boxEl = document.getElementById('pu-box');
   const boxNo = boxEl?.value ? parseInt(boxEl.value, 10) : null;
@@ -4037,6 +4849,11 @@ function _puRegisterNewInventory(code, brand, dateVal, supplier, purchasePrice) 
     supplier,
     staff:         document.getElementById('pu-staff')?.value      || '',
     purchasePrice,
+    purchaseOriginalPrice: Number(purchaseContext.purchaseOriginalPrice) || purchasePrice,
+    purchaseCurrency: puNormalizePurchaseCurrency(purchaseContext.purchaseCurrency || 'JPY'),
+    purchaseRate: Number(purchaseContext.purchaseRate) || 1,
+    purchaseType: puNormalizePurchaseType(purchaseContext.purchaseType || PU_PURCHASE_TYPE_DOMESTIC),
+    taxCategory: puNormalizeTaxCategory(purchaseContext.taxCategory || PU_TAX_CATEGORY_CONSUMPTION),
     purchaseDate:  dateVal,
     status:        '在庫中',
     material:      document.getElementById('pu-material')?.value   || '',
@@ -6235,42 +7052,53 @@ function prBulkPrint() {
 
 /** 仕入伝票の税区分と明細単位の端数処理を、一覧・詳細・帳票で共有する。 */
 function getPurchaseSlipTaxSummary(slip) {
-  const mode = slip?.purchaseTaxMode === 'overseas' ? 'overseas' : 'domestic';
-  const rateBasisPoints = mode === 'domestic' ? 1000 : 0;
+  const mode = ['personal', 'overseas'].includes(slip?.purchaseTaxMode) ? slip.purchaseTaxMode : 'domestic';
+  const legacyCategory = mode === 'domestic' ? PU_TAX_CATEGORY_CONSUMPTION : PU_TAX_CATEGORY_OUT_OF_SCOPE;
+  const taxCategory = puNormalizeTaxCategory(slip?.taxCategory || legacyCategory);
+  const rateBasisPoints = taxCategory === PU_TAX_CATEGORY_CONSUMPTION ? 1000 : 0;
   let subtotal = 0;
   let taxAmount = 0;
+  let referenceTaxAmount = 0;
   let saleTotal = 0;
   (slip?.lines || []).forEach(line => {
     const amount = Number(line.purchasePrice) || 0;
     subtotal += amount;
     saleTotal += Number(line.salePrice) || 0;
-    if (mode === 'domestic') taxAmount += Math.floor(amount * rateBasisPoints / 10000);
+    if (taxCategory === PU_TAX_CATEGORY_CONSUMPTION) taxAmount += Math.floor(amount * 1000 / 10000);
+    if (taxCategory === PU_TAX_CATEGORY_EQUIVALENT) referenceTaxAmount += Math.floor(amount * 1000 / 10000);
   });
   return {
     mode,
+    taxCategory,
     rateBasisPoints,
-    modeLabel: mode === 'domestic' ? '国内仕入' : '海外仕入',
-    taxLabel: mode === 'domestic' ? '消費税（10%）' : '対象外',
+    modeLabel: mode === 'domestic' ? '国内業者仕入／オークション' : mode === 'personal' ? '個人買取仕入' : '海外仕入',
+    taxLabel: taxCategory === PU_TAX_CATEGORY_CONSUMPTION ? '消費税（10%）'
+      : taxCategory === PU_TAX_CATEGORY_EQUIVALENT ? '消費税相当額（参考）' : '対象外',
     subtotal,
     taxAmount,
+    referenceTaxAmount,
     grandTotal: subtotal + taxAmount,
     saleTotal,
   };
 }
 
-/** 仕入区分に応じた通貨表記。国内は円、海外は米ドルで固定する。 */
+/** 仕入区分とは独立して、起票時に選んだ仕入通貨を返す。 */
+function getPurchaseSlipCurrency(slip) {
+  const legacyDefault = slip?.purchaseTaxMode === 'overseas' ? 'USD' : 'JPY';
+  const currency = String(slip?.purchaseCurrency || slip?.lines?.[0]?.purchaseCurrency || legacyDefault).toUpperCase();
+  return ['JPY', 'USD', 'HKD'].includes(currency) ? currency : 'JPY';
+}
+
 function formatPurchaseSlipAmount(amount, slip) {
   const value = Number(amount) || 0;
-  const currency = slip?.purchaseTaxMode === 'overseas'
-    ? (String(slip?.purchaseCurrency || slip?.lines?.[0]?.purchaseCurrency || 'USD').toUpperCase() === 'HKD' ? 'HKD' : 'USD') : 'JPY';
+  const currency = getPurchaseSlipCurrency(slip);
   const symbol = currency === 'JPY' ? '¥' : currency === 'HKD' ? 'HK$' : '$';
   return `${symbol}${value.toLocaleString(currency === 'JPY' ? 'ja-JP' : 'en-US')}`;
 }
 
 function getPurchaseSlipCurrencyLabel(slip) {
-  if (slip?.purchaseTaxMode !== 'overseas') return 'JPY（円）';
-  return String(slip?.purchaseCurrency || slip?.lines?.[0]?.purchaseCurrency || 'USD').toUpperCase() === 'HKD'
-    ? 'HKD（香港ドル）' : 'USD（米ドル）';
+  const currency = getPurchaseSlipCurrency(slip);
+  return currency === 'HKD' ? 'HKD（香港ドル）' : currency === 'USD' ? 'USD（米ドル）' : 'JPY（円）';
 }
 
 /** 仕入登録時に明細へ固定保存されたUSD/JPYレートを返す。 */
@@ -6313,13 +7141,15 @@ function getPurchaseLineRegistrationTotalJPY(line, slip) {
 
 /** 国内・海外の仕入伝票を、仕入登録時レート基準の円合計へ統一する。 */
 function getPurchaseSlipGrandTotalJPY(slip) {
-  if (slip?.purchaseTaxMode !== 'overseas') {
-    return Math.round(getPurchaseSlipTaxSummary(slip).grandTotal);
-  }
-  return (slip?.lines || []).reduce(
-    (total, line) => total + getPurchaseLineRegistrationTotalJPY(line, slip),
-    0,
-  );
+  const purchaseTax = getPurchaseSlipTaxSummary(slip);
+  const currency = getPurchaseSlipCurrency(slip);
+  if (currency === 'JPY') return Math.round(purchaseTax.grandTotal);
+  return (slip?.lines || []).reduce((total, line) => {
+    const converted = getPurchaseLineRegistrationTotalJPY(line, slip);
+    const tax = purchaseTax.taxCategory === PU_TAX_CATEGORY_CONSUMPTION
+      ? Math.floor(converted * purchaseTax.rateBasisPoints / 10000) : 0;
+    return total + converted + tax;
+  }, 0);
 }
 
 /** DBにはISO形式で保存し、画面と帳票では日本時間の年月日時分秒を表示する。 */
@@ -6376,8 +7206,7 @@ function getPurchaseSlipRate(slip, currency) {
 }
 
 function getPurchaseSlipFixedRate(slip) {
-  const currency = slip?.purchaseTaxMode === 'overseas'
-    ? (String(slip?.purchaseCurrency || slip?.lines?.[0]?.purchaseCurrency || 'USD').toUpperCase() === 'HKD' ? 'HKD' : 'USD') : 'JPY';
+  const currency = getPurchaseSlipCurrency(slip);
   if (currency === 'JPY') return { currency, rate: 1, observedAt: slip?.registeredAt || slip?.date };
   const line = (slip?.lines || []).find(item => Number(item.purchaseFxRateScaled) > 0 && Number(item.purchaseFxScale) > 0);
   const rate = line ? Number(line.purchaseFxRateScaled) / Number(line.purchaseFxScale)
@@ -6447,9 +7276,9 @@ function getPurchaseListAmounts(slip) {
   const totals = getPurchaseSlipTaxSummary(slip);
   const costCurrency = _purchaseListCurrency.cost || 'JPY';
   const saleCurrency = _purchaseListCurrency.sale || 'USD';
-  const subtotalJPY = slip?.purchaseTaxMode === 'overseas'
-    ? (slip.lines || []).reduce((sum, line) => sum + getPurchaseLineRegistrationTotalJPY(line, slip), 0)
-    : totals.subtotal;
+  const subtotalJPY = getPurchaseSlipCurrency(slip) === 'JPY'
+    ? totals.subtotal
+    : (slip.lines || []).reduce((sum, line) => sum + getPurchaseLineRegistrationTotalJPY(line, slip), 0);
   const grandJPY = getPurchaseSlipGrandTotalJPY(slip);
   return {
     totals, costCurrency, saleCurrency,
@@ -6607,6 +7436,13 @@ async function issueSaleSlipDocument(slipId, event) {
 }
 
 /** 保存済み仕入伝票を雛形準拠の帳票HTMLへ変換する。 */
+function getPurchasePaymentMethodLabel(value) {
+  const method = String(value || '').trim().toLowerCase();
+  if (method === 'cash') return '現金';
+  if (method === 'card') return 'カード';
+  return '銀行振込';
+}
+
 function buildPurchaseRecordTemplateHTML(slip) {
   const supplier = (APP_DATA.suppliers || []).find(record => record.code === slip.supplier)
     || { name: getSupplierName(slip.supplier) || '（仕入先未設定）' };
@@ -6621,12 +7457,16 @@ function buildPurchaseRecordTemplateHTML(slip) {
     ].filter(Boolean).join('\n') || line.code || '—';
     return { no: index + 1, detail, amount: Number(line.purchasePrice) || 0, code: line.code || '' };
   });
+  const purchaseTax = getPurchaseSlipTaxSummary(slip);
   const note = [
     slip.staff ? `仕入担当者：${slip.staff}` : '',
+    `支払い方法：${getPurchasePaymentMethodLabel(slip.paymentMethod)}`,
+    purchaseTax.taxCategory === PU_TAX_CATEGORY_EQUIVALENT
+      ? `消費税相当額（社内参考・合計外）：${formatPurchaseSlipAmount(purchaseTax.referenceTaxAmount, slip)}` : '',
     formatPurchaseSlipFixedRateNote(slip),
     slip.note || '',
   ].filter(Boolean).join('\n');
-  const purchaseTaxMode = slip.purchaseTaxMode === 'overseas' ? 'out_of_scope' : 'standard';
+  const purchaseTaxMode = purchaseTax.taxCategory === PU_TAX_CATEGORY_CONSUMPTION ? 'standard' : 'out_of_scope';
   return buildTemplateStyleSlipDocument({
     title: '仕入伝票',
     slipId: slip.id,
@@ -7276,7 +8116,7 @@ function exportSlipCSV() {
   if (currentSlipTab === 'purchase') {
     rows = [['管理番号','仕入日','ブランド','モデル','仕入先','バイヤー','原価','ステータス','修正回数']];
     data.forEach(item => rows.push([item.code, item.purchaseDate, item.brand, item.model,
-      getSupplierName(item.supplier), item.staff||'', item.purchasePrice, normalizeInventoryStatusLabel(item.status), (item.revisions||[]).length]));
+      item.supplierName || getSupplierName(item.supplier), item.staff||'', item.purchasePrice, normalizeInventoryStatusLabel(item.status), (item.revisions||[]).length]));
   } else if (currentSlipTab === 'shipping') {
     // 選択中の伝票があればその伝票のみ、なければ全件
     const exportData = _shSelectedIds.size > 0
@@ -7444,6 +8284,9 @@ function buildSlipDetailBody(type, rec) {
 
   if (type === 'purchase') {
     const purchaseTax = getPurchaseSlipTaxSummary(rec);
+    const purchaseTaxDisplayAmount = purchaseTax.taxCategory === PU_TAX_CATEGORY_EQUIVALENT
+      ? purchaseTax.referenceTaxAmount : purchaseTax.taxAmount;
+    const purchaseHasTaxDisplay = purchaseTax.taxCategory !== PU_TAX_CATEGORY_OUT_OF_SCOPE;
     const fixedRate = getPurchaseSlipFixedRate(rec);
     const saleTotal = purchaseTax.saleTotal;
     metaHtml = `
@@ -7454,9 +8297,10 @@ function buildSlipDetailBody(type, rec) {
         ${metaRow('<i class="fa-solid fa-industry"></i> 仕入先',         getSupplierName(rec.supplier))}
         ${metaRow('<i class="fa-solid fa-user"></i> 仕入担当者',          rec.staff||'—')}
         ${metaRow('<i class="fa-solid fa-receipt"></i> 仕入区分・税区分', `${purchaseTax.modeLabel}（${purchaseTax.taxLabel}）`)}
+        ${metaRow('<i class="fa-solid fa-wallet"></i> 支払い方法', getPurchasePaymentMethodLabel(rec.paymentMethod))}
         ${metaRow('<i class="fa-solid fa-arrow-right-arrow-left"></i> 仕入レート', fixedRate.currency === 'JPY' ? '1 JPY = ¥1.00' : `1 ${fixedRate.currency} = ¥${fixedRate.rate.toFixed(2)}（登録時固定）`)}
         ${metaRow(`<i class="fa-solid ${purchaseTax.mode === 'overseas' ? 'fa-dollar-sign' : 'fa-yen-sign'}"></i> 仕入小計`, `<span class="slip-detail-price">${formatPurchaseSlipAmount(purchaseTax.subtotal, rec)}</span>`)}
-        ${metaRow(`<i class="fa-solid fa-percent"></i> ${purchaseTax.taxLabel}`, purchaseTax.mode === 'domestic' ? `<span class="slip-detail-price">${formatPurchaseSlipAmount(purchaseTax.taxAmount, rec)}</span>` : '対象外')}
+        ${metaRow(`<i class="fa-solid fa-percent"></i> ${purchaseTax.taxLabel}`, purchaseHasTaxDisplay ? `<span class="slip-detail-price">${formatPurchaseSlipAmount(purchaseTaxDisplayAmount, rec)}</span>` : '対象外')}
         ${metaRow(`<i class="fa-solid ${purchaseTax.mode === 'overseas' ? 'fa-dollar-sign' : 'fa-yen-sign'}"></i> 合計仕入金額`, `<span class="slip-detail-price">${formatPurchaseSlipAmount(purchaseTax.grandTotal, rec)}</span>`)}
         ${metaRow('<i class="fa-solid fa-tag"></i> 合計売価（USD）',       `<span class="slip-detail-price" style="color:var(--success);">${formatSalePrice(saleTotal)}</span>`)}
         ${rec.registeredAt ? metaRow('<i class="fa-solid fa-clock"></i> 登録日時', rec.registeredAt) : ''}
@@ -7499,7 +8343,7 @@ function buildSlipDetailBody(type, rec) {
                 <td>${d.brand  || '—'}</td>
                 <td class="purchase-slip-model-cell">${d.model || '—'}</td>
                 <td class="purchase-slip-money-cell purchase-slip-purchase-amount">${formatPurchaseSlipAmount(l.purchasePrice||0, rec)}</td>
-                <td class="purchase-slip-tax-cell">${purchaseTax.mode === 'domestic'
+                <td class="purchase-slip-tax-cell">${purchaseHasTaxDisplay
                   ? `<span class="purchase-slip-tax-type">${purchaseTax.taxLabel}</span><strong class="purchase-slip-tax-amount">${formatPurchaseSlipAmount(Math.floor((Number(l.purchasePrice) || 0) * 0.1), rec)}</strong>`
                   : '<span class="purchase-slip-tax-type">対象外</span>'}</td>
                 <td class="purchase-slip-money-cell purchase-slip-sale-amount">${formatSalePrice(l.salePrice||0)}</td>
@@ -7510,8 +8354,8 @@ function buildSlipDetailBody(type, rec) {
             <tr class="purchase-slip-summary-row">
               <td colspan="5" class="purchase-slip-summary-label">仕入小計</td>
               <td class="purchase-slip-money-cell purchase-slip-purchase-amount">${formatPurchaseSlipAmount(purchaseTax.subtotal, rec)}</td>
-              <td class="purchase-slip-tax-cell">${purchaseTax.mode === 'domestic'
-                ? `<span class="purchase-slip-tax-type">${purchaseTax.taxLabel}</span><strong class="purchase-slip-tax-amount">${formatPurchaseSlipAmount(purchaseTax.taxAmount, rec)}</strong>`
+              <td class="purchase-slip-tax-cell">${purchaseHasTaxDisplay
+                ? `<span class="purchase-slip-tax-type">${purchaseTax.taxLabel}</span><strong class="purchase-slip-tax-amount">${formatPurchaseSlipAmount(purchaseTaxDisplayAmount, rec)}</strong>`
                 : '<span class="purchase-slip-tax-type">対象外</span>'}</td>
               <td class="purchase-slip-money-cell purchase-slip-sale-amount"><span class="purchase-slip-footer-caption">合計売価</span>${formatSalePrice(saleTotal)}</td>
             </tr>
@@ -9691,6 +10535,13 @@ function submitSlipRevise() {
   else if (type === 'shipping') record = APP_DATA.shipments.find(s => s.id === id);
   else                          record = APP_DATA.sales.find(s => s.id === id);
   if (!record) { showToast('error', 'エラー', '対象伝票が見つかりません'); return; }
+
+  // API管理伝票は作業者が直接書き換えず、管理者が修正する。
+  // ローカル伝票は下の既存承認申請フローを利用する。
+  if (record.apiManaged && isWorker()
+      && !requireAdminForSensitiveOperation('登録済み伝票の内容変更')) {
+    return;
+  }
   const recordBefore = _approvalClone(record);
 
   // ── フィールドごとに差分を収集 & 値を更新 ──────────
@@ -10153,6 +11004,7 @@ function openShipmentReturnScanner(shipmentID) {
 }
 
 async function _handleShipmentReturnScan(code, elements) {
+  if (!requireAdminForSensitiveOperation('出荷伝票の商品返却')) return;
   const { status, lastEl, codeEl, countEl } = elements;
   if (_shipmentReturnScanPending) return;
   const shipment = (APP_DATA.shipments || []).find(record => record._id === _shipmentReturnSlipId || record.id === _shipmentReturnSlipId);
@@ -10206,6 +11058,7 @@ function openConsignmentReturnScanner(consignmentID) {
 }
 
 async function _handleConsignmentReturnScan(code, elements) {
+  if (!requireAdminForSensitiveOperation('委託伝票の商品返却')) return;
   const { status, lastEl, codeEl, countEl } = elements;
   if (_consignmentReturnScanPending) return;
   const consignment = (APP_DATA.consignments || []).find(record => record._id === _consignmentReturnSlipId || record.id === _consignmentReturnSlipId);
@@ -10260,6 +11113,7 @@ function formatPaidAtStacked(value) {
 
 async function markPurchasePaidFromList(slipId, event) {
   event?.stopPropagation?.();
+  if (!requireAdminForSensitiveOperation('仕入伝票の入金確認')) return;
   const slip = (APP_DATA.purchaseSlips || []).find(record => record.id === slipId);
   if (!slip || slip.paidAt) return;
   const button = event?.currentTarget;
@@ -10329,6 +11183,7 @@ function formatArchiveDate(value) {
 
 async function markSalePaidFromList(slipId, event) {
   event?.stopPropagation?.();
+  if (!requireAdminForSensitiveOperation('売上伝票の入金確認')) return;
   const slip = (APP_DATA.sales || []).find(record => record.id === slipId);
   if (!slip || slip.paidAt) return;
   const button = event?.currentTarget;
@@ -11684,7 +12539,7 @@ function addShippingLine() {
   div.dataset.lineId = shippingLineCount;
   div.innerHTML = `
     <div>
-      <input class="form-control" style="font-size:12px;" placeholder="例：20260412001"
+      <input class="form-control" style="font-size:12px;" placeholder="例：1204260001"
         aria-label="商品管理番号" autocomplete="off" id="sh-code-${shippingLineCount}"
         oninput="onShippingManagementNumberInput(this, ${shippingLineCount})"
         onkeydown="if(event.key==='Enter'){event.preventDefault();onShippingManagementNumberInput(this, ${shippingLineCount}, true);}">
@@ -11949,7 +12804,9 @@ async function saveShipping() {
     return;
   }
 
-  // 作業者・管理者ともに認証不要で即時登録
+  // API未接続のプレビューでも作業者による直接確定は許可しない。
+  if (!requireAdminForSensitiveOperation('出荷伝票の確定')) return;
+
   APP_DATA.shipments.push(newShip);
   const shippedProductCodes = [];
   items.forEach(shippedItem => {
@@ -12533,18 +13390,28 @@ function buildCustomsDocsHTML() {
   return `<div class="cd-doc-wrap">${page1HTML}<div class="cd-page-divider">── ページ区切り（2 / 2） ──</div>${page2HTML}</div>`;
 }
 
+function _customsShippingDate(shipment = null) {
+  const raw = String(
+    shipment?.date || shipment?.shipmentDate || document.getElementById('sh-date')?.value || ''
+  ).trim();
+  if (!raw) return '—';
+  const match = raw.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  return match
+    ? `${match[1]}-${String(match[2]).padStart(2, '0')}-${String(match[3]).padStart(2, '0')}`
+    : raw;
+}
+
 function buildCustomsDocumentPagesHTML(previewKind = 'document', savedSlip = null) {
   const slipId = savedSlip?.id || document.getElementById('sh-id')?.value || '—';
-  const slipDate = savedSlip?.date || document.getElementById('sh-date')?.value || '—';
+  const slipDate = _customsShippingDate(savedSlip);
   const destCode = savedSlip?.destination || document.getElementById('sh-dest')?.value || '';
-  const issueDate = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' });
   const buyer = APP_DATA.buyers.find(item => item.code === destCode);
   const destination = buyer ? buyer.name : (destCode || '—');
   const items = _buildCustomsItems(savedSlip);
   const chunk = (values, size) => values.length
     ? Array.from({ length: Math.ceil(values.length / size) }, (_, index) => values.slice(index * size, (index + 1) * size))
     : [[]];
-  const header = (title, page, total) => `<div class="cd-page-header"><div class="cd-title">${title}</div><div class="cd-slip-no">Slip No.：<strong>${_escHtml(slipId)}</strong><br>Issued：${issueDate}<br>Page：${page} / ${total}</div></div>`;
+  const header = (title, page, total) => `<div class="cd-page-header"><div class="cd-title">${title}</div><div class="cd-slip-no" style="max-width:48%;overflow-wrap:anywhere">Slip No.：<strong>${_escHtml(slipId)}</strong><br>Shipping Date：${_escHtml(slipDate)}<br>Page：${page} / ${total}</div></div>`;
   const meta = `<div class="cd-meta"><div class="cd-meta-item"><span class="cd-meta-label">Destination</span><span class="cd-meta-value">${_escHtml(destination)}</span></div><div class="cd-meta-item"><span class="cd-meta-label">Shipping Date</span><span class="cd-meta-value">${_escHtml(slipDate)}</span></div><div class="cd-meta-item"><span class="cd-meta-label">Items</span><span class="cd-meta-value">${items.length}</span></div><div class="cd-meta-item"><span class="cd-meta-label">Total (USD)</span><span class="cd-meta-value">${formatSalePrice(items.reduce((sum, item) => sum + item.price, 0))}</span></div></div>`;
 
   const documentChunks = chunk(items, 20);
@@ -12709,7 +13576,7 @@ async function _buildCustomsPDF(previewKind, shipment = null) {
   const kind = previewKind === 'images' ? 'images' : 'document';
   const items = _buildCustomsItems(shipment);
   const slipId = shipment?.id || document.getElementById('sh-id')?.value || '—';
-  const slipDate = shipment?.date || document.getElementById('sh-date')?.value || '—';
+  const slipDate = _customsShippingDate(shipment);
   const destinationCode = shipment?.destination || document.getElementById('sh-dest')?.value || '';
   const destination = APP_DATA.buyers.find(item => item.code === destinationCode)?.name || destinationCode || '—';
   const pageItems = (size) => items.length ? Array.from({ length: Math.ceil(items.length / size) }, (_, index) => items.slice(index * size, (index + 1) * size)) : [[]];
@@ -12723,8 +13590,9 @@ async function _buildCustomsPDF(previewKind, shipment = null) {
     return _makeCustomsPDF(pageItems(20).map((rows, pageIndex, pages) => {
       const total = formatSalePrice(items.reduce((sum, item) => sum + item.price, 0));
       let content = _pdfText('CUSTOMS DOCUMENT', tableX, 560, 16);
-      content += _pdfText(_pdfFit(`Slip No.: ${slipId}`, 26), 590, 564, 7.5);
-      content += _pdfText(`Page: ${pageIndex + 1} / ${pages.length}`, 748, 550, 7.5);
+      content += _pdfText(_pdfFit(`Slip No.: ${slipId}`, 34), 570, 568, 7.2);
+      content += _pdfText(`Shipping Date: ${slipDate}`, 570, 555, 7.2);
+      content += _pdfText(`Page: ${pageIndex + 1} / ${pages.length}`, 748, 555, 7.2);
       content += _pdfLine(tableX, 540, tableX + tableWidth, 540, 1.4);
 
       const meta = [
@@ -12795,7 +13663,11 @@ async function _buildCustomsPDF(previewKind, shipment = null) {
     return _customsImageAsJPEG(imageURL);
   }));
   return _makeCustomsPDF(pageItems(10).map((rows, pageIndex, pages) => {
-    let content = _pdfText('CUSTOMS IMAGES', 28, 558, 18) + _pdfText(`Slip No.: ${slipId}`, 650, 559, 9) + _pdfText(`Page: ${pageIndex + 1} / ${pages.length}`, 730, 544, 8);
+      let content = _pdfText('CUSTOMS IMAGES', 28, 558, 18)
+        + _pdfText(_pdfFit(`Slip No.: ${slipId}`, 34), 570, 563, 7.2)
+        + _pdfText(`Shipping Date: ${slipDate}`, 570, 549, 7.2)
+        + _pdfText(`Page: ${pageIndex + 1} / ${pages.length}`, 748, 549, 7.2)
+        + _pdfLine(28, 538, 818, 538, 1.2);
     const images = [];
     rows.forEach((item, index) => {
       const source = loadedImages[item.seq - 1];
@@ -15718,6 +16590,7 @@ function previewFxRate(code) {
 
 // レートを保存して画面を更新
 async function saveFxRate(code) {
+  if (!requireAdminForSensitiveOperation('外貨レートの変更')) return;
   const input = document.getElementById(`fx-input-${code}`);
   if (!input) return;
 
@@ -15985,7 +16858,7 @@ function renderSupplierPerf() {
   APP_DATA.inventory.forEach(item => {
     if (from && item.purchaseDate < from) return;
     if (to   && item.purchaseDate > to)   return;
-    const name = getSupplierName(item.supplier);
+    const name = item.supplierName || getSupplierName(item.supplier) || '未設定';
     if (!supplierMap[name]) supplierMap[name] = { count: 0, total: 0 };
     supplierMap[name].count++;
     supplierMap[name].total += item.purchasePrice;
@@ -16821,6 +17694,31 @@ async function submitAdminAuth() {
 // =====================================================
 // navigateTo: purchase-list 対応（data.jsを上書き）
 // =====================================================
+function setMarketNavGroupExpanded(expanded) {
+  const group = document.getElementById('marketNavGroup');
+  const toggle = document.getElementById('marketNavToggle');
+  const submenu = document.getElementById('marketNavSubmenu');
+  if (!group || !toggle || !submenu) return false;
+
+  const shouldExpand = Boolean(expanded);
+  group.classList.toggle('expanded', shouldExpand);
+  toggle.setAttribute('aria-expanded', String(shouldExpand));
+  submenu.hidden = !shouldExpand;
+  return shouldExpand;
+}
+
+function toggleMarketNavGroup() {
+  const toggle = document.getElementById('marketNavToggle');
+  return setMarketNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
+}
+
+function syncMarketNavGroup(page) {
+  const group = document.getElementById('marketNavGroup');
+  const isMarketPage = page === 'market' || page === 'market-entry';
+  group?.classList.toggle('has-active', isMarketPage);
+  setMarketNavGroupExpanded(isMarketPage);
+}
+
 const _navOrig = navigateTo;
 window.navigateTo = function(page) {
   // ── 権限ガード ──
@@ -16855,6 +17753,7 @@ window.navigateTo = function(page) {
     const activeKey = MASTER_SUB_PAGES.includes(page) ? 'master' : page;
     el.classList.toggle('active', el.dataset.page === activeKey);
   });
+  syncMarketNavGroup(page);
   document.querySelectorAll('.page-panel').forEach(el => {
     el.classList.add('hidden');
   });
@@ -16868,6 +17767,9 @@ window.navigateTo = function(page) {
     const initFn = {
       'dashboard': init_dashboard,
       'market': () => {
+        if (typeof init_market === 'function') init_market();
+      },
+      'market-entry': () => {
         if (typeof init_market === 'function') init_market();
       },
       'inventory': init_inventory,
@@ -16928,6 +17830,7 @@ window.navigateTo = function(page) {
   const pageNames = {
     'dashboard': 'ダッシュボード',
     'market': '相場表',
+    'market-entry': '相場登録',
     'purchase': '商品登録',
     'purchase-entry': '仕入登録',
     'sales': '売上登録',
@@ -19078,6 +19981,52 @@ function closeReturnDetail() { closeReturnSlipModal(); }
 // =====================================================
 // ドロワー開閉（スマホ用）
 // =====================================================
+const ADMIN_SIDEBAR_VISIBILITY_STORAGE_KEY = 'inv_admin_sidebar_hidden_v1';
+
+function setDesktopSidebarHidden(hidden, { persist = true } = {}) {
+  const sidebar = document.getElementById('appSidebar') || document.querySelector('.sidebar');
+  const button = document.getElementById('sidebarVisibilityToggle');
+  const icon = document.getElementById('sidebarVisibilityToggleIcon');
+  const label = document.getElementById('sidebarVisibilityToggleLabel');
+  if (!sidebar) return false;
+
+  const shouldHide = Boolean(hidden);
+  sidebar.classList.toggle('sidebar-hidden', shouldHide);
+  if (button) {
+    button.setAttribute('aria-expanded', String(!shouldHide));
+    button.setAttribute('aria-label', shouldHide ? '左メニューを表示' : '左メニューを非表示');
+    button.title = shouldHide ? '左メニューを表示' : '左メニューを非表示';
+  }
+  if (icon) icon.className = shouldHide ? 'fa-solid fa-angles-right' : 'fa-solid fa-angles-left';
+  if (label) label.textContent = shouldHide ? 'メニューを表示' : 'メニューを隠す';
+
+  if (persist) {
+    try {
+      window.localStorage.setItem(ADMIN_SIDEBAR_VISIBILITY_STORAGE_KEY, shouldHide ? '1' : '0');
+    } catch (_error) {
+      // ストレージが利用できない環境でも画面上の切替は継続する。
+    }
+  }
+  window.requestAnimationFrame?.(() => window.dispatchEvent(new Event('resize')));
+  return shouldHide;
+}
+
+function toggleDesktopSidebar() {
+  const sidebar = document.getElementById('appSidebar') || document.querySelector('.sidebar');
+  if (!sidebar) return false;
+  return setDesktopSidebarHidden(!sidebar.classList.contains('sidebar-hidden'));
+}
+
+function initDesktopSidebarVisibility() {
+  let hidden = false;
+  try {
+    hidden = window.localStorage.getItem(ADMIN_SIDEBAR_VISIBILITY_STORAGE_KEY) === '1';
+  } catch (_error) {
+    hidden = false;
+  }
+  return setDesktopSidebarHidden(hidden, { persist: false });
+}
+
 function toggleAppDrawer() {
   const sidebar = document.querySelector('.sidebar');
   const overlay = document.getElementById('drawerOverlay');

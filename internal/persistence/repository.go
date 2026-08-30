@@ -62,6 +62,7 @@ func (Product) TableName() string { return "products" }
 
 type productRow struct {
 	Product
+	PurchaseTaxMode           string     `gorm:"column:purchase_tax_mode" json:"purchaseTaxMode"`
 	SupplierName              string     `gorm:"column:supplier_name" json:"supplierName"`
 	ImageCount                int        `gorm:"column:image_count" json:"imageCount"`
 	FixedPurchaseCostJPYMinor int64      `gorm:"column:fixed_purchase_cost_jpy_minor" json:"fixedPurchaseCostJpyMinor"`
@@ -341,15 +342,15 @@ func (r *Repository) dashboardPostgres(ctx context.Context, organizationID strin
 	}
 	var supplierRows []supplierMonthRow
 	if err := db.Table("purchase_slips AS p").Select(`TO_CHAR(p.purchase_date,'YYYY-MM') AS month,
-		pr.role_code AS supplier_code,bp.legal_name AS supplier_name,
+		COALESCE(pr.role_code,'') AS supplier_code,COALESCE(NULLIF(p.supplier_name_text,''),bp.legal_name,'未設定') AS supplier_name,
 		COALESCE(SUM(CASE WHEN l.cost_currency='JPY' THEN l.unit_cost_minor*l.quantity ELSE 0 END),0) AS jpy,
 		COALESCE(SUM(CASE WHEN l.cost_currency='USD' THEN l.unit_cost_minor*l.quantity ELSE 0 END),0) AS usd,
 		COALESCE(SUM(l.quantity),0) AS units`).
 		Joins("JOIN purchase_slip_lines l ON l.purchase_slip_id=p.id").
-		Joins("JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
-		Joins("JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
+		Joins("LEFT JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
+		Joins("LEFT JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Where("p.organization_id=? AND p.status='confirmed' AND p.purchase_date>=? AND p.purchase_date<?", organizationID, seriesStart, nextMonth).
-		Group("TO_CHAR(p.purchase_date,'YYYY-MM'),pr.role_code,bp.legal_name").
+		Group("TO_CHAR(p.purchase_date,'YYYY-MM'),pr.role_code,p.supplier_name_text,bp.legal_name").
 		Order("month,supplier_code").Scan(&supplierRows).Error; err != nil {
 		return result, err
 	}
@@ -428,7 +429,8 @@ func (r *Repository) Products(ctx context.Context, organizationID string, filter
 	var items []productRow
 	if r.driver == "postgres" {
 		query = query.
-			Select(`p.*, bp.legal_name AS supplier_name,
+			Select(`p.*, COALESCE(NULLIF(ps.supplier_name_text,''),bp.legal_name,'') AS supplier_name,
+				COALESCE(ps.purchase_tax_mode,'domestic') AS purchase_tax_mode,
 				COALESCE(psl.converted_total_jpy,
 					CASE WHEN p.cost_currency='JPY' THEN p.cost_amount_minor ELSE 0 END) AS fixed_purchase_cost_jpy_minor,
 				COALESCE(psl.unit_cost_minor,p.cost_amount_minor) AS purchase_source_amount_minor,
@@ -441,6 +443,7 @@ func (r *Repository) Products(ctx context.Context, organizationID string, filter
 			Joins("LEFT JOIN partner_roles pr ON pr.id = p.supplier_role_id AND pr.organization_id = p.organization_id").
 			Joins("LEFT JOIN business_partners bp ON bp.id = pr.partner_id AND bp.organization_id = p.organization_id").
 			Joins("LEFT JOIN purchase_slip_lines psl ON psl.id = p.purchase_slip_line_id").
+			Joins("LEFT JOIN purchase_slips ps ON ps.id = psl.purchase_slip_id AND ps.organization_id = p.organization_id").
 			Joins("LEFT JOIN exchange_rate_snapshots fx ON fx.id = psl.fx_rate_snapshot_id")
 	} else {
 		query = query.

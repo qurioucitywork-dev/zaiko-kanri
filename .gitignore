@@ -9,6 +9,9 @@
 /output/
 /.gocache/
 /.logs/
+/.runtime/
+/.cloudflared-logs/
+/.codex/
 /.tmp-gocache/
 /.tmp-go-cache/
 /.tmp-customs-csv/

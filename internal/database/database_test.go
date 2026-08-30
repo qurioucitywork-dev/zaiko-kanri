@@ -42,6 +42,11 @@ func TestAuthenticateAndPermissions(t *testing.T) {
 	if store.HasPermission(ctx, worker, "settings.manage") {
 		t.Fatal("worker must not manage settings")
 	}
+	for _, permission := range []string{"purchase.confirm", "sales.confirm", "shipment.confirm", "market.write"} {
+		if store.HasPermission(ctx, worker, permission) {
+			t.Fatalf("worker must not have sensitive direct-mutation permission %q", permission)
+		}
+	}
 	if _, err := store.Authenticate(ctx, "PREVIEW", "admin", "wrong-password"); err == nil {
 		t.Fatal("invalid password must be rejected")
 	}

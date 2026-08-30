@@ -26,11 +26,17 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "商品登録APIはPostgreSQLモードで利用してください。")
 		return
 	}
+	user, ok := requireAPIAdmin(w, r, "原価・売価を含む商品登録")
+	if !ok {
+		return
+	}
 	var input struct {
 		ProductCode           string   `json:"productCode"`
 		SupplierCode          string   `json:"supplierCode"`
 		StaffCode             string   `json:"staffCode"`
 		PurchaseDate          string   `json:"purchaseDate"`
+		PurchaseTaxMode       string   `json:"purchaseTaxMode"`
+		TaxCategory           string   `json:"taxCategory"`
 		SKU                   string   `json:"sku"`
 		BrandCode             string   `json:"brandCode"`
 		ModelNumber           string   `json:"modelNumber"`
@@ -64,19 +70,20 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 	input.BrandCode = strings.ToUpper(strings.TrimSpace(input.BrandCode))
 	input.CostCurrency = strings.ToUpper(strings.TrimSpace(input.CostCurrency))
 	input.BaseSaleCurrency = strings.ToUpper(strings.TrimSpace(input.BaseSaleCurrency))
-	if input.SupplierCode == "" || input.BrandCode == "" || input.CostAmountMinor < 0 || input.BaseSalePriceMinor < 0 ||
+	supplierRequired := persistence.PurchaseSupplierRequired(input.PurchaseTaxMode)
+	if (supplierRequired && input.SupplierCode == "") || input.BrandCode == "" || input.CostAmountMinor < 0 || input.BaseSalePriceMinor < 0 ||
 		!validCurrency(input.CostCurrency) || !validCurrency(input.BaseSaleCurrency) {
-		writeAPIError(w, http.StatusBadRequest, "invalid_product", "仕入先・ブランド・金額・通貨を確認してください。")
+		writeAPIError(w, http.StatusBadRequest, "invalid_product", "仕入区分・仕入先・ブランド・金額・通貨を確認してください。")
 		return
 	}
 	if _, err := time.Parse("2006-01-02", input.PurchaseDate); err != nil {
 		writeAPIError(w, http.StatusBadRequest, "invalid_purchase_date", "仕入日はYYYY-MM-DDで指定してください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
 	result, err := s.repository.CreateSingleProduct(r.Context(), persistence.SingleProductInput{
 		OrganizationID: user.OrganizationID, ActorUserID: user.ID, ProductCode: input.ProductCode, SupplierCode: input.SupplierCode,
-		StaffCode: input.StaffCode, PurchaseDate: input.PurchaseDate, SKU: input.SKU, BrandCode: input.BrandCode,
+		StaffCode: input.StaffCode, PurchaseDate: input.PurchaseDate, PurchaseTaxMode: input.PurchaseTaxMode, TaxCategory: input.TaxCategory,
+		SKU: input.SKU, BrandCode: input.BrandCode,
 		ModelNumber: input.ModelNumber, ReferenceNumber: input.ReferenceNumber, SerialNumber: input.SerialNumber,
 		ProductType: input.ProductType, ShapeCode: input.ShapeCode, MarkingCode: input.MarkingCode, MaterialCode: input.MaterialCode, MovementCode: input.MovementCode,
 		ConditionCode: input.ConditionCode, AccessoryCodes: input.AccessoryCodes, CostAmountMinor: input.CostAmountMinor,
@@ -97,6 +104,14 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 			status, code, message = http.StatusConflict, "duplicate_serial_reason_required", "同じシリアル番号が存在します。登録理由を入力してください。"
 		case errors.Is(err, persistence.ErrDuplicateProductCode):
 			status, code, message = http.StatusConflict, "duplicate_product_code", "この管理番号は既に使用されています。別の管理番号を入力してください。"
+		case errors.Is(err, persistence.ErrInvalidProductCode):
+			status, code, message = http.StatusBadRequest, "invalid_product_code", "管理番号は日・月・西暦下2桁と4桁連番（例：2908260001）で入力してください。"
+		case errors.Is(err, persistence.ErrDailyProductLimit):
+			status, code, message = http.StatusConflict, "daily_product_limit", "この仕入日の管理番号が上限（9999件）に達しています。"
+		case errors.Is(err, persistence.ErrPurchaseTaxMode):
+			status, code, message = http.StatusBadRequest, "invalid_purchase_tax_mode", "仕入区分を確認してください。"
+		case errors.Is(err, persistence.ErrPurchaseTaxCategory):
+			status, code, message = http.StatusBadRequest, "invalid_purchase_tax_category", "税区分を確認してください。"
 		}
 		s.log.Error("create REST product", "error", err, "request_id", requestID(r.Context()))
 		writeAPIError(w, status, code, message)
@@ -116,6 +131,10 @@ func (s *Server) apiProductUpdate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "商品編集APIはPostgreSQLモードで利用してください。")
 		return
 	}
+	user, ok := requireAPIAdmin(w, r, "商品情報・原価・売価の変更")
+	if !ok {
+		return
+	}
 	var input persistence.ProductUpdateInput
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10))
 	decoder.DisallowUnknownFields()
@@ -123,7 +142,6 @@ func (s *Server) apiProductUpdate(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_json", "入力内容を確認してください。")
 		return
 	}
-	user, _ := currentUser(r.Context())
 	before, err := s.repository.ProductByID(r.Context(), user.OrganizationID, r.PathValue("id"))
 	if err != nil {
 		writeAPIError(w, http.StatusNotFound, "product_not_found", "商品が見つかりません。")
@@ -141,6 +159,8 @@ func (s *Server) apiProductUpdate(w http.ResponseWriter, r *http.Request) {
 			status, code, message = http.StatusConflict, "duplicate_serial_reason_required", "同じシリアル番号が存在します。編集理由を入力してください。"
 		case errors.Is(err, persistence.ErrDuplicateProductCode):
 			status, code, message = http.StatusConflict, "duplicate_product_code", "この管理番号は既に使用されています。別の管理番号を入力してください。"
+		case errors.Is(err, persistence.ErrInvalidProductCode):
+			status, code, message = http.StatusBadRequest, "invalid_product_code", "管理番号は日・月・西暦下2桁と4桁連番（例：2908260001）で入力してください。"
 		case errors.Is(err, persistence.ErrPurchaseDateMismatch):
 			status, code, message = http.StatusConflict, "purchase_date_mismatch", "仕入伝票から登録された商品の仕入日は、元の仕入伝票と同じ日付で固定されています。"
 		case errors.Is(err, persistence.ErrSupplierNotFound), errors.Is(err, persistence.ErrStaffNotFound), errors.Is(err, persistence.ErrMasterCodeNotFound):

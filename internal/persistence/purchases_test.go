@@ -16,6 +16,7 @@ func TestNormalizePurchaseTaxMode(t *testing.T) {
 	}{
 		{"", PurchaseTaxModeDomestic, 1000},
 		{"domestic", PurchaseTaxModeDomestic, 1000},
+		{"PERSONAL", PurchaseTaxModePersonal, 0},
 		{"OVERSEAS", PurchaseTaxModeOverseas, 0},
 	}
 	for _, test := range tests {
@@ -26,6 +27,67 @@ func TestNormalizePurchaseTaxMode(t *testing.T) {
 	}
 	if _, _, err := normalizePurchaseTaxMode("unknown"); err != ErrPurchaseTaxMode {
 		t.Fatalf("unexpected invalid mode error: %v", err)
+	}
+}
+
+func TestPurchaseSupplierRequired(t *testing.T) {
+	for _, test := range []struct {
+		mode string
+		want bool
+	}{
+		{mode: PurchaseTaxModeDomestic, want: true},
+		{mode: PurchaseTaxModeOverseas, want: true},
+		{mode: PurchaseTaxModePersonal, want: false},
+		{mode: " PERSONAL ", want: false},
+		{mode: "", want: true},
+		{mode: "unknown", want: true},
+	} {
+		if got := PurchaseSupplierRequired(test.mode); got != test.want {
+			t.Errorf("PurchaseSupplierRequired(%q) = %v, want %v", test.mode, got, test.want)
+		}
+	}
+}
+
+func TestNormalizePurchaseTaxCategory(t *testing.T) {
+	tests := []struct {
+		input, mode, wantCategory string
+		wantRate                  int
+	}{
+		{"", PurchaseTaxModeDomestic, PurchaseTaxCategoryConsumptionTax, 1000},
+		{"", PurchaseTaxModeOverseas, PurchaseTaxCategoryOutOfScope, 0},
+		{"consumption_tax", PurchaseTaxModePersonal, PurchaseTaxCategoryConsumptionTax, 1000},
+		{" TAX_EQUIVALENT ", PurchaseTaxModeDomestic, PurchaseTaxCategoryEquivalent, 0},
+		{"out_of_scope", PurchaseTaxModeDomestic, PurchaseTaxCategoryOutOfScope, 0},
+	}
+	for _, test := range tests {
+		category, rate, err := normalizePurchaseTaxCategory(test.input, test.mode)
+		if err != nil || category != test.wantCategory || rate != test.wantRate {
+			t.Fatalf("normalizePurchaseTaxCategory(%q, %q) = %q, %d, %v", test.input, test.mode, category, rate, err)
+		}
+	}
+	if _, _, err := normalizePurchaseTaxCategory("reduced", PurchaseTaxModeDomestic); err != ErrPurchaseTaxCategory {
+		t.Fatalf("invalid tax category error = %v, want %v", err, ErrPurchaseTaxCategory)
+	}
+}
+
+func TestNormalizePurchasePaymentMethod(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"", PurchasePaymentMethodBankTransfer},
+		{"CASH", PurchasePaymentMethodCash},
+		{" bank_transfer ", PurchasePaymentMethodBankTransfer},
+		{"card", PurchasePaymentMethodCard},
+	}
+	for _, test := range tests {
+		got, err := normalizePurchasePaymentMethod(test.input)
+		if err != nil || got != test.want {
+			t.Fatalf("normalizePurchasePaymentMethod(%q) = %q, %v", test.input, got, err)
+		}
+	}
+	if _, err := normalizePurchasePaymentMethod("crypto"); err != ErrPurchasePaymentMethod {
+		t.Fatalf("unexpected invalid payment method error: %v", err)
 	}
 }
 
