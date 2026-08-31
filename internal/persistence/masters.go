@@ -40,6 +40,7 @@ func masterTable(kind string) (string, bool) {
 		"dial": "dials", "dials": "dials",
 		"shape": "product_shapes", "shapes": "product_shapes", "product-shapes": "product_shapes",
 		"marking": "markings", "markings": "markings",
+		"part-name": "part_names", "part-names": "part_names", "partname": "part_names", "partnames": "part_names",
 	}[strings.ToLower(strings.TrimSpace(kind))]
 	return table, ok
 }

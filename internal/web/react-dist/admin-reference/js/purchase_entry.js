@@ -949,9 +949,9 @@ function peRenderList() {
     const staffName = peGetStaffDisplayName(slip.staff);
     const canIssue = typeof canIssuePurchaseSlip === 'function' ? canIssuePurchaseSlip() : true;
     const issueLabel = slip.issuedAt ? '再発行' : '発行';
-    const paymentStatus = slip.paidAt
-      ? '<span class="badge badge-approved">処理済</span>'
-      : '<span class="badge badge-pending">処理中</span>';
+    const paymentStatus = typeof renderPurchaseSlipStatusBadges === 'function'
+      ? renderPurchaseSlipStatusBadges(slip, { showPendingCount: true })
+      : (slip.paidAt ? '<span class="badge badge-approved">処理済</span>' : '<span class="badge badge-pending">未払い</span>');
     return `<tr class="slip-list-row" onclick="peViewSlip('${_escHtml(slip.id)}')">
       <td><strong>${_escHtml(slip.id)}</strong></td>
       <td>${_escHtml(slip.date)}</td>
@@ -974,10 +974,10 @@ function peRenderList() {
       <td style="text-align:center;" onclick="event.stopPropagation()">
         <button type="button" class="btn btn-sm ${slip.paidAt ? 'btn-outline' : 'btn-success'} purchase-paid-button"
           onclick="markPurchasePaidFromList('${_escHtml(slip.id)}',event)" ${slip.paidAt ? 'disabled' : ''}>
-          <i class="fa-solid fa-${slip.paidAt ? 'circle-check' : 'money-check-dollar'}"></i> 入金済
+          <i class="fa-solid fa-${slip.paidAt ? 'circle-check' : 'money-check-dollar'}"></i> 支払済
         </button>
       </td>
-      <td class="issued-at-cell" style="text-align:center;">${formatPaidAtStacked(slip.paidAt)}</td>
+      <td class="issued-at-cell" style="text-align:center;">${formatPurchasePaidAtStacked(slip.paidAt)}</td>
       <td style="text-align:center;" onclick="event.stopPropagation()">
         <button class="btn btn-danger btn-sm" onclick="deletePurchaseSlipFromList('${_escHtml(slip.id)}',event)" title="削除">
           <i class="fa-solid fa-trash-can"></i> 削除

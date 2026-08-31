@@ -113,7 +113,82 @@ func (r *Repository) SeedPreviewInventory(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return r.seedPreviewInventoryByMonth(ctx)
+	if err := r.seedPreviewInventoryByMonth(ctx); err != nil {
+		return err
+	}
+	return r.seedPreviewPendingArrivals(ctx)
+}
+
+// seedPreviewPendingArrivals creates one idempotent ten-item purchase that is
+// intentionally left in the physical-arrival queue. It makes the scan flow
+// visible without changing any of the inventory that existed before the flow
+// was introduced.
+func (r *Repository) seedPreviewPendingArrivals(ctx context.Context) error {
+	var identity struct {
+		OrganizationID string
+		AdminID        string
+	}
+	if err := r.db.WithContext(ctx).Raw(`
+		SELECT o.id AS organization_id,u.id AS admin_id
+		FROM organizations o
+		JOIN users u ON u.organization_id=o.id AND u.username='admin'
+		WHERE o.code='PREVIEW'`).Scan(&identity).Error; err != nil {
+		return err
+	}
+	if identity.OrganizationID == "" || identity.AdminID == "" {
+		return fmt.Errorf("preview arrival identity is missing")
+	}
+	const marker = "入荷スキャン確認用（10点）"
+	var existing int64
+	if err := r.db.WithContext(ctx).Table("purchase_slips").Where(
+		"organization_id=? AND notes=? AND status<>'cancelled'", identity.OrganizationID, marker,
+	).Count(&existing).Error; err != nil {
+		return err
+	}
+	if existing > 0 {
+		return nil
+	}
+
+	type sample struct {
+		brand, model, reference string
+		cost                    int64
+	}
+	samples := []sample{
+		{"BRD-001", "Submariner", "126610LN", 1120000},
+		{"BRD-002", "Speedmaster", "310.30.42.50.01.002", 860000},
+		{"BRD-003", "Aquanaut", "5167A-001", 6200000},
+		{"BRD-004", "Santos", "WSSA0030", 780000},
+		{"BRD-005", "Portugieser", "IW500705", 980000},
+		{"BRD-006", "Navitimer", "AB0138241G1P1", 920000},
+		{"BRD-007", "Carrera", "CBS2210.FC6534", 720000},
+		{"BRD-008", "Prospex", "SBEJ009", 180000},
+		{"BRD-009", "Heritage Collection", "SBGA211", 640000},
+		{"BRD-010", "Classic Watch", "ARRIVAL-DEMO", 350000},
+	}
+	lines := make([]PurchaseLineInput, 0, len(samples))
+	for index, item := range samples {
+		lines = append(lines, PurchaseLineInput{
+			Quantity: 1, SKU: fmt.Sprintf("ARRIVAL-DEMO-%02d", index+1),
+			BrandCode: item.brand, ModelNumber: item.model, ReferenceNumber: item.reference,
+			SerialNumber: fmt.Sprintf("ARRIVAL26%02d", index+1), ProductType: "watch",
+			ConditionCode: "CON-003", UnitCostMinor: item.cost, CostCurrency: "JPY",
+			BaseSalePriceMinor: int64(2500 + index*650), BaseSaleCurrency: "USD",
+			Notes: "入荷スキャン確認用",
+		})
+	}
+	purchase, err := r.CreatePurchase(ctx, PurchaseCreateInput{
+		OrganizationID: identity.OrganizationID, ActorUserID: identity.AdminID,
+		SupplierCode: "S001", StaffCode: "BUY-000", PurchaseDate: "2026-08-31",
+		PurchaseTaxMode: PurchaseTaxModeDomestic, TaxCategory: PurchaseTaxCategoryConsumptionTax,
+		PaymentMethod: PurchasePaymentMethodBankTransfer, Notes: marker, Lines: lines,
+	})
+	if err != nil {
+		return fmt.Errorf("create preview pending-arrival purchase: %w", err)
+	}
+	if _, err := r.ConfirmPurchase(ctx, identity.OrganizationID, purchase.ID, identity.AdminID); err != nil {
+		return fmt.Errorf("confirm preview pending-arrival purchase: %w", err)
+	}
+	return nil
 }
 
 // seedPreviewInventoryByMonth keeps the PREVIEW environment useful for

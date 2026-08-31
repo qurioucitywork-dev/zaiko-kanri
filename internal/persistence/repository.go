@@ -53,6 +53,8 @@ type Product struct {
 	DialText           string     `gorm:"column:dial_text" json:"dialText"`
 	BraceletQuantity   *int       `gorm:"column:bracelet_quantity" json:"braceletQuantity,omitempty"`
 	Notes              string     `gorm:"column:notes" json:"notes"`
+	InternalComment    string     `gorm:"column:internal_comment" json:"internalComment"`
+	CostAdjustmentID   string     `gorm:"column:cost_adjustment_id" json:"costAdjustmentId,omitempty"`
 	DeletedAt          *time.Time `gorm:"column:deleted_at" json:"-"`
 	CreatedAt          time.Time  `gorm:"column:created_at" json:"createdAt"`
 	UpdatedAt          time.Time  `gorm:"column:updated_at" json:"updatedAt"`
@@ -431,8 +433,8 @@ func (r *Repository) Products(ctx context.Context, organizationID string, filter
 		query = query.
 			Select(`p.*, COALESCE(NULLIF(ps.supplier_name_text,''),bp.legal_name,'') AS supplier_name,
 				COALESCE(ps.purchase_tax_mode,'domestic') AS purchase_tax_mode,
-				COALESCE(psl.converted_total_jpy,
-					CASE WHEN p.cost_currency='JPY' THEN p.cost_amount_minor ELSE 0 END) AS fixed_purchase_cost_jpy_minor,
+				CASE WHEN ca.adjustment_type='combine' THEN p.cost_amount_minor ELSE COALESCE(psl.converted_total_jpy,
+					CASE WHEN p.cost_currency='JPY' THEN p.cost_amount_minor ELSE 0 END) END AS fixed_purchase_cost_jpy_minor,
 				COALESCE(psl.unit_cost_minor,p.cost_amount_minor) AS purchase_source_amount_minor,
 				COALESCE(psl.cost_currency,p.cost_currency) AS purchase_source_currency,
 				COALESCE(psl.fx_rate_snapshot_id,'') AS purchase_fx_rate_snapshot_id,
@@ -444,6 +446,7 @@ func (r *Repository) Products(ctx context.Context, organizationID string, filter
 			Joins("LEFT JOIN business_partners bp ON bp.id = pr.partner_id AND bp.organization_id = p.organization_id").
 			Joins("LEFT JOIN purchase_slip_lines psl ON psl.id = p.purchase_slip_line_id").
 			Joins("LEFT JOIN purchase_slips ps ON ps.id = psl.purchase_slip_id AND ps.organization_id = p.organization_id").
+			Joins("LEFT JOIN cost_adjustments ca ON ca.id = p.cost_adjustment_id AND ca.organization_id = p.organization_id").
 			Joins("LEFT JOIN exchange_rate_snapshots fx ON fx.id = psl.fx_rate_snapshot_id")
 	} else {
 		query = query.

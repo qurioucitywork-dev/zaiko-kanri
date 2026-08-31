@@ -34,6 +34,7 @@ type ProductUpdateInput struct {
 	DialText              *string   `json:"dialText"`
 	BraceletQuantity      *int      `json:"braceletQuantity"`
 	Notes                 *string   `json:"notes"`
+	InternalComment       *string   `json:"internalComment"`
 	InventoryStatus       *string   `json:"inventoryStatus"`
 	DuplicateSerialReason string    `json:"duplicateSerialReason"`
 	Reason                string    `json:"reason"`
@@ -47,8 +48,8 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 		if result.Error != nil {
 			return ErrProductUnavailable
 		}
-		var effectivePurchaseDate time.Time
-		if input.ProductCode != nil {
+		var effectiveProductCodeDate time.Time
+		if input.ProductCode != nil && strings.TrimSpace(*input.ProductCode) != current.ProductCode {
 			purchaseDate := string(current.PurchaseDate)
 			if input.PurchaseDate != nil {
 				purchaseDate = strings.TrimSpace(*input.PurchaseDate)
@@ -57,7 +58,22 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 			if parseErr != nil {
 				return ErrPurchaseDateMismatch
 			}
-			effectivePurchaseDate = parsedDate
+			effectiveProductCodeDate = parsedDate
+			if current.CostAdjustmentID != "" {
+				var adjustment struct {
+					AdjustmentType string
+					AdjustmentDate time.Time
+				}
+				if err := tx.Table("cost_adjustments").
+					Select("adjustment_type, adjustment_date").
+					Where("organization_id=? AND id=?", organizationID, current.CostAdjustmentID).
+					Take(&adjustment).Error; err != nil && err != gorm.ErrRecordNotFound {
+					return err
+				}
+				if adjustment.AdjustmentType == "combine" && !adjustment.AdjustmentDate.IsZero() {
+					effectiveProductCodeDate = adjustment.AdjustmentDate
+				}
+			}
 		}
 		updates := map[string]any{"updated_at": time.Now().UTC()}
 		setText := func(value *string, column string) {
@@ -71,24 +87,32 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 		setText(input.BeltText, "belt_text")
 		setText(input.DialText, "dial_text")
 		setText(input.Notes, "notes")
+		setText(input.InternalComment, "internal_comment")
 		if input.ProductCode != nil {
 			productCode := strings.TrimSpace(*input.ProductCode)
-			if productCode == "" || !isProductCodeForDate(productCode, effectivePurchaseDate) {
+			if productCode == "" {
 				return ErrInvalidProductCode
 			}
-			var duplicateCount int64
-			if err := tx.Table("products").Where(
-				"organization_id=? AND id<>? AND UPPER(BTRIM(product_code))=?",
-				organizationID, productID, strings.ToUpper(productCode)).Count(&duplicateCount).Error; err != nil {
-				return err
+			if productCode == current.ProductCode {
+				updates["product_code"] = productCode
+			} else {
+				if !isProductCodeForDate(productCode, effectiveProductCodeDate) {
+					return ErrInvalidProductCode
+				}
+				var duplicateCount int64
+				if err := tx.Table("products").Where(
+					"organization_id=? AND id<>? AND UPPER(BTRIM(product_code))=?",
+					organizationID, productID, strings.ToUpper(productCode)).Count(&duplicateCount).Error; err != nil {
+					return err
+				}
+				if duplicateCount > 0 {
+					return ErrDuplicateProductCode
+				}
+				if err := reserveProductSequence(tx, organizationID, effectiveProductCodeDate, productCode, time.Now().UTC()); err != nil {
+					return err
+				}
+				updates["product_code"] = productCode
 			}
-			if duplicateCount > 0 {
-				return ErrDuplicateProductCode
-			}
-			if err := reserveProductSequence(tx, organizationID, effectivePurchaseDate, productCode, time.Now().UTC()); err != nil {
-				return err
-			}
-			updates["product_code"] = productCode
 		}
 
 		if input.BrandCode != nil {
@@ -232,6 +256,103 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 			id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
 		) VALUES(?,?,?,'product_updated',?,?,?,?,?)`, eventID, organizationID, productID,
 			current.InventoryStatus, current.InventoryStatus, strings.TrimSpace(input.Reason), actorUserID, time.Now().UTC()).Error
+	})
+	if err != nil {
+		return Product{}, err
+	}
+	return r.ProductByID(ctx, organizationID, productID)
+}
+
+// StartProductCostAdjustment moves an available product into the dedicated
+// cost-adjustment workflow while recording an immutable inventory event.
+func (r *Repository) StartProductCostAdjustment(ctx context.Context, organizationID, productID, actorUserID string) (Product, error) {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current Product
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"organization_id=? AND id=? AND deleted_at IS NULL", organizationID, productID).Take(&current)
+		if result.Error != nil {
+			return ErrProductUnavailable
+		}
+		if current.InventoryStatus == "cost_adjustment" {
+			return nil
+		}
+		if current.InventoryStatus != "in_stock" {
+			return ErrProductConflict
+		}
+		now := time.Now().UTC()
+		if err := tx.Model(&Product{}).Where("organization_id=? AND id=?", organizationID, productID).
+			Updates(map[string]any{"inventory_status": "cost_adjustment", "updated_at": now}).Error; err != nil {
+			return err
+		}
+		eventID, _ := database.NewID("ive")
+		return tx.Exec(`INSERT INTO inventory_events(
+			id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
+		) VALUES(?,?,?,'cost_adjustment_started',?,'cost_adjustment','崩し作業を開始',?,?)`,
+			eventID, organizationID, productID, current.InventoryStatus, actorUserID, now).Error
+	})
+	if err != nil {
+		return Product{}, err
+	}
+	return r.ProductByID(ctx, organizationID, productID)
+}
+
+// StartCombineCostAdjustment locks the selected product and every input part
+// into the same cost-adjustment workflow before the operator starts dragging
+// parts onto the product. The operation is idempotent for an already-started
+// selection, but rejects products or parts in any other business workflow.
+func (r *Repository) StartCombineCostAdjustment(ctx context.Context, organizationID, productID string, partIDs []string, actorUserID string) (Product, error) {
+	uniquePartIDs := make([]string, 0, len(partIDs))
+	seen := map[string]bool{}
+	for _, raw := range partIDs {
+		id := strings.TrimSpace(raw)
+		if id != "" && !seen[id] {
+			seen[id] = true
+			uniquePartIDs = append(uniquePartIDs, id)
+		}
+	}
+	if len(uniquePartIDs) == 0 || len(uniquePartIDs) > 20 {
+		return Product{}, ErrCostAdjustmentState
+	}
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var current Product
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
+			"organization_id=? AND id=? AND deleted_at IS NULL", organizationID, productID).Take(&current)
+		if result.Error != nil {
+			return ErrProductUnavailable
+		}
+		if current.InventoryStatus != "in_stock" && current.InventoryStatus != "cost_adjustment" {
+			return ErrProductConflict
+		}
+		var parts []struct {
+			ID     string
+			Status string
+		}
+		query := tx.Raw(`SELECT id,status FROM parts WHERE organization_id=? AND id IN ? FOR UPDATE`, organizationID, uniquePartIDs).Scan(&parts)
+		if query.Error != nil {
+			return query.Error
+		}
+		if len(parts) != len(uniquePartIDs) {
+			return ErrCostAdjustmentState
+		}
+		for _, part := range parts {
+			if part.Status != "in_stock" && part.Status != "cost_adjustment" {
+				return ErrCostAdjustmentState
+			}
+		}
+		now := time.Now().UTC()
+		if err := tx.Model(&Product{}).Where("organization_id=? AND id=?", organizationID, productID).
+			Updates(map[string]any{"inventory_status": "cost_adjustment", "updated_at": now}).Error; err != nil {
+			return err
+		}
+		if err := tx.Table("parts").Where("organization_id=? AND id IN ?", organizationID, uniquePartIDs).
+			Updates(map[string]any{"status": "cost_adjustment", "updated_by": actorUserID, "updated_at": now}).Error; err != nil {
+			return err
+		}
+		eventID, _ := database.NewID("ive")
+		return tx.Exec(`INSERT INTO inventory_events(
+			id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
+		) VALUES(?,?,?,'cost_adjustment_started',?,'cost_adjustment','結合作業を開始',?,?)`,
+			eventID, organizationID, productID, current.InventoryStatus, actorUserID, now).Error
 	})
 	if err != nil {
 		return Product{}, err

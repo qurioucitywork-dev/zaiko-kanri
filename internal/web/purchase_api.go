@@ -166,6 +166,37 @@ func (s *Server) apiPurchaseConfirm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, record)
 }
 
+func (s *Server) apiPurchaseArrivalScan(w http.ResponseWriter, r *http.Request) {
+	if s.repository.Driver() != "postgres" {
+		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "入荷スキャンはPostgreSQLモードで利用してください。")
+		return
+	}
+	var input struct {
+		ProductCode string `json:"productCode"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.ProductCode) == "" {
+		writeAPIError(w, http.StatusBadRequest, "invalid_product_code", "商品管理番号を指定してください。")
+		return
+	}
+	user, _ := currentUser(r.Context())
+	result, err := s.repository.ReceivePurchaseProduct(
+		r.Context(), user.OrganizationID, r.PathValue("id"), strings.TrimSpace(input.ProductCode), user.ID,
+	)
+	if err != nil {
+		writePurchaseError(w, err)
+		return
+	}
+	after, _ := json.Marshal(result)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
+		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "product", TargetID: result.ProductCode,
+		Action: "purchase.arrival_scanned", AfterJSON: string(after), Result: "success", RequestID: requestID(r.Context()),
+		IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (s *Server) apiPurchaseIssue(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
 	if user.Role != database.RoleAdmin {
@@ -260,6 +291,10 @@ func writePurchaseError(w http.ResponseWriter, err error) {
 		status, code, message = http.StatusConflict, "invalid_purchase_state", "現在の状態では仕入伝票を確定できません。"
 	case errors.Is(err, persistence.ErrPurchaseInUse):
 		status, code, message = http.StatusConflict, "purchase_in_use", "出荷・委託・売上などで使用済みの商品を含むため、この仕入伝票は削除できません。"
+	case errors.Is(err, persistence.ErrPurchaseProductNotFound):
+		status, code, message = http.StatusNotFound, "purchase_product_not_found", "この仕入伝票に商品管理番号が見つかりません。"
+	case errors.Is(err, persistence.ErrPurchaseArrivalState):
+		status, code, message = http.StatusConflict, "invalid_purchase_arrival_state", "この商品は現在のステータスでは入荷処理できません。"
 	}
 	writeAPIError(w, status, code, message)
 }

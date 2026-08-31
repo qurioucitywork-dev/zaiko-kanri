@@ -66,6 +66,11 @@ func (r *Repository) SeedPreviewMasters(ctx context.Context) error {
 				{"DIA-004", "ブルー"}, {"DIA-005", "グリーン"},
 			},
 			"product_shapes": {{"TYP-001", "腕時計"}, {"TYP-002", "懐中時計"}, {"TYP-003", "置時計"}},
+			"part_names": {
+				{"PRT-001", "素材"}, {"PRT-002", "ベルト素材"}, {"PRT-003", "文字盤"},
+				{"PRT-004", "BOX"}, {"PRT-005", "CASE"}, {"PRT-006", "BRACELET PARTS"},
+				{"PRT-007", "竜頭"}, {"PRT-008", "バックル"}, {"PRT-009", "風防"},
+			},
 		}
 		for table, items := range catalogs {
 			for index, item := range items {
@@ -206,6 +211,7 @@ func seedCatalogItem(tx *gorm.DB, table, organizationID, actorID string, item ca
 	allowed := map[string]bool{
 		"brands": true, "materials": true, "movements": true, "product_conditions": true, "accessories": true,
 		"auction_houses": true, "belt_materials": true, "dials": true, "product_shapes": true,
+		"part_names": true,
 	}
 	if !allowed[table] {
 		return fmt.Errorf("unsupported catalog table %q", table)

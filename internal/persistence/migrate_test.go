@@ -612,3 +612,99 @@ func TestPersonalPurchaseTemporarySupplierMigrationAddsSlipOnlyName(t *testing.T
 		}
 	}
 }
+
+func TestPartRegistrationMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000061_part_registration" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("part registration migration 000061 is missing")
+	}
+	for _, fragment := range []string{"CREATE TABLE IF NOT EXISTS part_names", "CREATE TABLE IF NOT EXISTS part_code_sequences", "CREATE TABLE IF NOT EXISTS parts", "ux_parts_organization_part_code_normalized", "bracelet_quantity"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("part registration migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPartDetailMasterSalePriceMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000062_part_detail_master_sale_price" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("part detail master / sale price migration 000062 is missing")
+	}
+	for _, fragment := range []string{"detail_master_type", "detail_master_code", "sale_price_usd_minor", "material", "belt", "dial"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("part detail master / sale price migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestCostAdjustmentBreakdownOutputsMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000063_cost_adjustment_breakdown_outputs" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("cost adjustment breakdown migration 000063 is missing")
+	}
+	for _, fragment := range []string{
+		"CREATE TABLE IF NOT EXISTS cost_adjustments",
+		"CREATE TABLE IF NOT EXISTS cost_adjustment_items",
+		"ADD COLUMN IF NOT EXISTS internal_comment",
+		"ADD COLUMN IF NOT EXISTS purchase_slip_line_id",
+		"broken_down",
+		"generated_part_count",
+		"assert_purchase_inventory_consistency",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("cost adjustment breakdown migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestCostAdjustmentCombineInputsMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000064_cost_adjustment_combine" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("cost adjustment combine migration 000064 is missing")
+	}
+	for _, fragment := range []string{"CREATE TABLE IF NOT EXISTS cost_adjustment_input_parts", "source_part_code", "source_cost_jpy_minor", "UNIQUE (part_id)"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("cost adjustment combine migration is missing %q", fragment)
+		}
+	}
+}

@@ -33,6 +33,10 @@ const authSource = await readFile(path.join(referenceRoot, "js", "auth.js"), "ut
 const staticAppSource = await readFile(path.join(referenceRoot, "js", "app.js"), "utf8");
 const consignmentSource = await readFile(path.join(referenceRoot, "js", "consignment.js"), "utf8");
 const purchaseEntrySource = await readFile(path.join(referenceRoot, "js", "purchase_entry.js"), "utf8");
+assert.match(marketCssSource, /\.market-currency-prefix\s*\{[\s\S]*?width:\s*54px/u,
+  "market edit currency prefixes must reserve enough width for HK$");
+assert.match(marketCssSource, /\.market-currency-field input\s*\{\s*padding-left:\s*62px;\s*\}/u,
+  "market edit values must start after the reserved currency-prefix area");
 assert.match(authSource, /function requireAdminForSensitiveOperation\(operationLabel\)/u,
   "money, price, and document mutations must share the administrator guard");
 for (const operationLabel of ["商品情報・原価・売価の変更", "登録済み伝票の内容変更", "外貨レートの変更"]) {
@@ -64,15 +68,19 @@ for (const slipType of ["purchase", "shipping", "consignment", "sales", "salesre
   assert.match(staticAppSource, new RegExp(`${slipType}: new Set\\(\\)`),
     `${slipType} slips must support independent multi-selection`);
 }
-for (const label of ["明細書発行", "請求書発行", "仕入返品伝票発行", "売上返品伝票発行"]) {
+for (const label of ["請求書発行", "仕入返品伝票発行"]) {
   assert.ok(staticAppSource.includes(label), `${label} must be available only through the matching tab operation`);
 }
+assert.equal(staticAppSource.includes("slipBulkPreviewBtn"), false,
+  "the slip list must not restore the removed statement-issue button");
 assert.match(staticAppSource, /対象の伝票を1件以上選択してください/u,
   "bulk slip operations must reject an empty selection");
 assert.match(staticAppSource, /originalCode:\s*String\(item\.code/u,
   "product editing must retain the original code for self-excluding duplicate validation");
 assert.match(apiBridgeSource, /productCode: values\.code \|\| item\.code/u,
   "product code changes must be sent to the API");
+assert.match(apiBridgeSource, /braceletQuantity: \(values\.accessories \|\| \[\]\)\.includes\('BRACELET PARTS'\) \? values\.braceletQty : 0/u,
+  "product edits must persist the bracelet quantity and clear it when BRACELET PARTS is removed");
 assert.match(apiBridgeSource, /async function fetchAllPages\(path, pageSize = 100\)/u,
   "inventory API hydration must support fetching every product page");
 assert.match(apiBridgeSource, /for \(let page = 2; page <= totalPages; page \+= 1\)/u,
@@ -83,6 +91,64 @@ assert.match(apiBridgeSource, /fetchAllPages\('\/purchases'\)/u,
   "admin hydration must merge every purchase page instead of stopping at 500 slips");
 assert.match(apiBridgeSource, /reflectedPurchaseProducts !== APP_DATA\.inventory\.length/u,
   "admin hydration must reject purchase and inventory datasets whose reflected counts diverge");
+assert.match(apiBridgeSource, /const maxAttempts = retry && \['GET', 'HEAD'\]\.includes\(method\) \? 4 : 1/u,
+  "safe DB reads must retry temporary network and server failures");
+assert.match(apiBridgeSource, /cache: method === 'GET' \|\| method === 'HEAD' \? 'no-store' : 'default'/u,
+  "DB reads must bypass browser and intermediary caches");
+assert.match(apiBridgeSource, /error\.status === 503 && error\.code === 'postgres_required'/u,
+  "PostgreSQL-only optional catalogs must not abort inventory hydration in the SQLite fallback");
+assert.match(apiBridgeSource, /if \(hydrateAdminPromise\) return hydrateAdminPromise/u,
+  "concurrent hydration requests must share one in-flight read");
+assert.match(apiBridgeSource, /restoreAppData\(previousSnapshot\)/u,
+  "a failed refresh must preserve the last complete DB snapshot");
+assert.match(apiBridgeSource, /scheduleHydrationRetry\(error\)/u,
+  "a failed DB hydration must automatically retry in the background");
+assert.match(staticAppSource, /document\.addEventListener\('zaiko:data-hydrated'/u,
+  "the active page must listen for DB recovery and rerender without a manual refresh");
+
+// Exercise the transport independently from the large UI hydration graph.
+// Two temporary network failures must recover without involving a page reload,
+// while a mutation must never be submitted twice automatically.
+const bridgeDOM = new JSDOM("<!doctype html><html><body></body></html>", {
+  runScripts: "outside-only",
+  url: "http://localhost/app/admin-reference/app.html",
+});
+const bridgeWindow = bridgeDOM.window;
+const bridgeNativeTimeout = bridgeWindow.setTimeout.bind(bridgeWindow);
+bridgeWindow.setTimeout = (callback, milliseconds) => milliseconds >= 10000
+  ? 1
+  : bridgeNativeTimeout(callback, 0);
+bridgeWindow.clearTimeout = () => {};
+let bridgeFetchCalls = 0;
+const bridgeFetchOptions = [];
+bridgeWindow.fetch = async (_url, options) => {
+  bridgeFetchCalls += 1;
+  bridgeFetchOptions.push(options);
+  if (bridgeFetchCalls < 3) throw new bridgeWindow.TypeError("temporary network failure");
+  return {
+    status: 200,
+    ok: true,
+    headers: { get: () => null },
+    text: async () => JSON.stringify({ status: "ok" }),
+  };
+};
+bridgeWindow.eval(apiBridgeSource);
+const recoveredBridgePayload = await bridgeWindow.ZaikoAPI.request("/retry-probe");
+assert.equal(recoveredBridgePayload.status, "ok");
+assert.equal(bridgeFetchCalls, 3, "temporary GET failures must be retried until they recover");
+assert.equal(bridgeFetchOptions.at(-1).cache, "no-store", "retried GETs must bypass HTTP caches");
+
+bridgeFetchCalls = 0;
+bridgeWindow.fetch = async () => {
+  bridgeFetchCalls += 1;
+  throw new bridgeWindow.TypeError("write connection failed");
+};
+await assert.rejects(
+  bridgeWindow.ZaikoAPI.request("/retry-probe", { method: "POST", body: "{}" }),
+  /write connection failed/u,
+);
+assert.equal(bridgeFetchCalls, 1, "unsafe writes must not be retried automatically");
+bridgeDOM.window.close();
 assert.match(apiBridgeSource, /const currentProduct = productByLine\.get\(line\.id\)/u,
   "API purchase slips must resolve current product details through the stable purchase-line link");
 assert.match(apiBridgeSource, /brandCode: resolvedBrandCode/u,
@@ -178,6 +244,8 @@ assert.match(staticAppSource, /button\.textContent = record\.label/u,
   "partner candidates must display the business name without exposing the internal code");
 
 let html = await readFile(path.join(referenceRoot, "app.html"), "utf8");
+assert.doesNotMatch(html, /id="slipBulkPreviewBtn"/u,
+  "the slip list must omit the statement-issue button from its toolbar");
 assert.match(html, /\.cd-items-table tbody td\s*\{[\s\S]*?border: 1px solid #9eabb8;[\s\S]*?overflow-wrap: anywhere;/u,
   "customs preview rows must visibly separate and wrap every field");
 html = html.replace(/<link\b[^>]*>/gi, "");
@@ -355,9 +423,60 @@ for (const page of pages) {
   if (nav) assert.equal(nav.classList.contains("active"), true, `${activeNavPage} navigation must be active`);
 }
 
+window.navigateTo("purchase");
+assert.equal(document.getElementById("registration-mode-product").getAttribute("aria-checked"), "true");
+window.switchRegistrationMode("part");
+assert.equal(document.getElementById("product-registration-form").classList.contains("hidden"), true,
+  "part registration mode must hide the product form");
+assert.equal(document.getElementById("part-registration-form").classList.contains("hidden"), false,
+  "part registration mode must show the dedicated part form");
+document.getElementById("part-date").value = "2026-08-29";
+assert.equal(window.partAssignCode(), "P2908260001", "part codes must use P + DDMMYY + four digits");
+document.getElementById("part-name").value = "PRT-001";
+window.partNameChanged();
+assert.equal(document.getElementById("part-detail-master-group").classList.contains("hidden"), false,
+  "material parts must replace free text with the material master selector");
+assert.equal(document.getElementById("part-detail-text-group").classList.contains("hidden"), true);
+assert.match(document.getElementById("part-detail-master-label").textContent, /素材/u);
+assert.equal(document.querySelectorAll("#part-detail-master option").length,
+  window.eval("APP_DATA.materials.filter(record => record?.isActive !== false).length") + 1,
+  "the detail selector must be populated from the selected part's own master");
+document.getElementById("part-detail-master").value = "MAT-001";
+document.getElementById("part-name").value = "PRT-006";
+window.partNameChanged();
+assert.equal(document.getElementById("part-bracelet-quantity-group").classList.contains("hidden"), false,
+  "BRACELET PARTS must expose the bracelet quantity field");
+assert.equal(document.getElementById("part-detail-text-group").classList.contains("hidden"), true,
+  "BRACELET PARTS must replace free text details with bracelet quantity");
+assert.equal(document.getElementById("part-detail-master-group").classList.contains("hidden"), true,
+  "BRACELET PARTS must not leave a stale detail master selector visible");
+window.partSetPurchaseType("personal");
+assert.equal(document.getElementById("part-supplier").required, false,
+  "personal part purchases may use an empty supplier");
+window.partSetCurrency("USD");
+assert.match(document.getElementById("part-rate-text").textContent, /1 USD/u);
+document.getElementById("part-cost").value = "12,500";
+document.getElementById("part-sale-price-usd").value = "4,100";
+document.getElementById("part-bracelet-quantity").value = "8";
+const partCountBefore = window.eval("APP_DATA.parts.length");
+await window.savePartRegistration();
+assert.equal(window.eval("APP_DATA.parts.length"), partCountBefore + 1,
+  "part registration must persist a part in the reference runtime");
+assert.equal(window.eval("APP_DATA.parts.at(-1).partCode"), "P2908260001");
+assert.equal(window.eval("APP_DATA.parts.at(-1).braceletQuantity"), 8);
+assert.equal(window.eval("APP_DATA.parts.at(-1).salePriceUsdMinor"), 4100,
+  "part sale prices must be stored with USD as the fixed base currency");
+window.switchRegistrationMode("product");
+assert.equal(document.getElementById("product-registration-form").classList.contains("hidden"), false,
+  "switching back must restore the product form");
+
 assert.equal(document.querySelector('.nav-item[data-page="login-info"]'), null, "the duplicate login information navigation must be removed");
 assert.equal(document.getElementById("page-login-info"), null, "the duplicate login information page must be removed");
 window.navigateTo("master");
+window.switchMasterTab("partName");
+assert.equal(document.querySelectorAll("#masterContentArea tbody tr").length, 9,
+  "the part-name master must start with the nine requested part categories");
+assert.match(document.getElementById("masterContentArea").textContent, /BRACELET PARTS/u);
 assert.equal(window.eval("APP_DATA.clientCompanies.length"), 9, "all four buyers and five suppliers must be represented in the shared client-company directory");
 assert.equal(window.eval("APP_DATA.buyers.every(buyer => APP_DATA.clientCompanies.some(company => company.buyerCode === buyer.code))"), true, "every buyer must link to a client company");
 assert.equal(window.eval("APP_DATA.suppliers.every(supplier => APP_DATA.clientCompanies.some(company => company.supplierCode === supplier.code))"), true, "every supplier must link to a client company");
@@ -1217,7 +1336,56 @@ assert.match(appSource, /clientCompanyCode,/u, "shipping slips must retain the c
 
 window.navigateTo("inventory");
 window.execInventorySearch();
-assert.match(document.querySelector('a[data-page="inventory"]').textContent, /在庫管理/u, "the inventory sidebar label must use 在庫管理");
+assert.match(document.getElementById("inventoryNavToggle").textContent, /在庫管理/u,
+  "inventory management must remain the parent sidebar label");
+assert.deepEqual(
+  [...document.querySelectorAll("#inventoryNavSubmenu .nav-subitem")].map(item => item.textContent.trim()),
+  ["商品管理", "パーツ管理"],
+  "inventory management must expose product and part management children",
+);
+assert.equal(document.getElementById("pageTitle").textContent, "商品管理",
+  "the existing inventory page must be presented as product management");
+assert.equal(document.querySelector("#page-inventory #partInventoryTable"), null,
+  "the product management page must not contain the parts list");
+window.navigateTo("parts-management");
+assert.equal(document.getElementById("pageTitle").textContent, "パーツ管理");
+assert.equal(document.getElementById("page-parts-management").classList.contains("hidden"), false);
+document.getElementById("part-f-code").value = "P2908260001";
+window.execPartInventorySearch();
+assert.equal(document.querySelectorAll("#partInventoryTableBody .part-inventory-row").length, 1,
+  "part management search must filter by part management number");
+window.resetPartInventorySearch();
+assert.deepEqual(
+  [...document.querySelectorAll("#partInventoryTable thead th")].map(cell => cell.textContent.trim()),
+  ["パーツ管理番号", "仕入日", "パーツ名", "詳細", "ブランド", "型番／モデル", "SKU", "仕入先", "バイヤー", "原価（JPY）", "売価", "ステータス"],
+  "the parts list must expose the selected management fields in a stable order",
+);
+assert.equal(document.querySelectorAll("#partInventoryTableBody tr").length,
+  Math.max(1, Math.min(10, window.eval("APP_DATA.parts.length"))),
+  "the inventory page must render the registered parts below the product inventory list");
+assert.match(document.getElementById("partInventoryTableBody").textContent, /P2908260001/u,
+  "the part management number must be visible in the parts list");
+assert.match(document.getElementById("partInventoryTableBody").textContent, /\$4,100/u,
+  "the parts list must show sale price with USD as its base currency");
+const editablePartRow = document.querySelector("#partInventoryTableBody .part-inventory-row");
+editablePartRow.click();
+assert.equal(document.getElementById("partDetailEditModal").classList.contains("hidden"), false,
+  "clicking a parts-list row must open the part detail editor");
+assert.equal(document.getElementById("part-edit-code").value, "P2908260001");
+assert.equal(document.getElementById("part-edit-code").readOnly, true,
+  "the management number must remain immutable in the part editor");
+assert.equal(document.getElementById("part-edit-date").readOnly, true,
+  "the numbered purchase date must remain immutable in the part editor");
+assert.equal(document.getElementById("part-edit-quantity-group").classList.contains("hidden"), false,
+  "BRACELET PARTS editing must retain its bracelet quantity field");
+document.getElementById("part-edit-model").value = "編集モデル";
+document.getElementById("part-edit-sale").value = "4,200";
+assert.equal(await window.savePartDetailEditor(), true);
+assert.equal(document.getElementById("partDetailEditModal").classList.contains("hidden"), true);
+assert.equal(window.eval("APP_DATA.parts.find(part => part.partCode === 'P2908260001').modelName"), "編集モデル",
+  "saving the modal must update the part record");
+assert.match(document.getElementById("partInventoryTableBody").textContent, /\$4,200/u,
+  "the parts list must redraw the saved USD sale price");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseType"]').textContent.trim(), "国内業者仕入／オークション", "legacy inventory must be assigned the domestic purchase category");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), "1 JPY = ¥1.00", "inventory must show the registered purchase rate");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').textContent.trim(), "¥850,000", "inventory must show cost converted at the registered rate");
@@ -1517,6 +1685,8 @@ assert.equal(document.getElementById("inv-status-sort-th").getAttribute("aria-so
 
 const originalEditImages = [...(inventory[0].images || [])];
 const originalEditImageFiles = inventory[0].imageFiles;
+const originalEditAccessories = [...(inventory[0].accessories || [])];
+const originalEditBraceletQty = inventory[0].braceletQty;
 inventory[0].images = ["/api/v1/product-files/fil_edit_1", "/api/v1/product-files/fil_edit_2"];
 inventory[0].imageFiles = [
   { id: "fil_edit_1", url: inventory[0].images[0], originalName: "front.jpg", sortOrder: 0 },
@@ -1534,6 +1704,25 @@ assert.equal(document.getElementById("ie-image-count").textContent, "1 / 10枚",
 window.handleItemEditImageFiles([new window.File(["image"], "replacement.webp", { type: "image/webp" })]);
 assert.equal(document.getElementById("ie-image-count").textContent, "2 / 10枚", "valid images must be addable from inventory edit");
 assert.match(document.getElementById("ie-image-grid").textContent, /replacement\.webp/u);
+const braceletPartsCheckbox = document.querySelector('#ie-accessories input[value="BRACELET PARTS"]');
+braceletPartsCheckbox.checked = false;
+window.itemEditAccessoryChanged(braceletPartsCheckbox);
+assert.equal(document.getElementById("ie-bracelet-qty-row").hidden, true,
+  "inventory edit must hide the bracelet quantity when BRACELET PARTS is not selected");
+braceletPartsCheckbox.checked = true;
+window.itemEditAccessoryChanged(braceletPartsCheckbox);
+assert.equal(document.getElementById("ie-bracelet-qty-row").hidden, false,
+  "selecting BRACELET PARTS in inventory edit must reveal the quantity input");
+assert.equal(document.getElementById("ie-bracelet-qty").required, true,
+  "a selected BRACELET PARTS accessory must require a link count");
+window.closeItemEdit();
+inventory[0].accessories = [...new Set([...originalEditAccessories, "BRACELET PARTS"])];
+inventory[0].braceletQty = 8;
+window.openItemEdit(inventory[0].code);
+assert.equal(document.getElementById("ie-bracelet-qty-row").hidden, false,
+  "inventory edit must show the bracelet quantity for an already-selected BRACELET PARTS accessory");
+assert.equal(document.getElementById("ie-bracelet-qty").value, "8",
+  "inventory edit must restore the persisted bracelet link count");
 const inventoryPurchasePriceInput = document.getElementById("ie-purchasePrice");
 inventoryPurchasePriceInput.value = "１２３４５６７";
 window.priceFormatHandler(inventoryPurchasePriceInput);
@@ -1542,6 +1731,8 @@ assert.equal(window.getPriceValue(inventoryPurchasePriceInput), 1234567, "format
 window.closeItemEdit();
 inventory[0].images = originalEditImages;
 inventory[0].imageFiles = originalEditImageFiles;
+inventory[0].accessories = originalEditAccessories;
+inventory[0].braceletQty = originalEditBraceletQty;
 const marketWinningBidInput = document.getElementById("me-marketPriceJpy");
 marketWinningBidInput.value = "１２３４５６７";
 window.priceFormatHandler(marketWinningBidInput);
@@ -1639,7 +1830,7 @@ assert.equal(savedSinglePurchaseSlip.purchaseCurrency, "JPY");
 assert.equal(savedSinglePurchaseSlip.purchaseTaxMode, "personal");
 assert.equal(savedSinglePurchaseSlip.taxCategory, "out_of_scope");
 assert.equal(savedSinglePurchaseSlip.supplier, "");
-assert.equal(savedSingleInventory.status, "在庫中");
+assert.equal(savedSingleInventory.status, "仕入中");
 assert.equal(savedSingleInventory.purchaseSlipId, savedSinglePurchaseSlip.id, "inventory must link back to its auto-issued purchase slip");
 const purchaseApprovalDetailHtml = window.buildReadableApprovalDetail({
   targetType: "purchase_slip",
@@ -1666,6 +1857,7 @@ assert.notEqual(document.getElementById("inv-result-area").style.display, "none"
   "pressing Enter immediately after opening inventory must execute the current search filters");
 window.resetInventorySearch();
 document.getElementById("inv-f-code").value = singlePurchaseCode;
+document.getElementById("inv-f-status").value = "仕入中";
 document.getElementById("inv-f-code").dispatchEvent(new window.KeyboardEvent("keydown", {
   key: "Enter", bubbles: true, cancelable: true,
 }));
@@ -1676,16 +1868,64 @@ assert.match(document.getElementById("inventoryTableBody").textContent, new RegE
 window.navigateTo("sales-list");
 window.switchSlipTab("purchase");
 assert.equal(document.getElementById("slip-filter-status").value, "processing", "document status search must default to processing");
-savedSinglePurchaseSlip.status = "処理済";
+assert.deepEqual([...document.querySelectorAll("#slip-filter-status option")].map(option => option.textContent),
+  ["処理中", "未払い", "処理済", "すべて"],
+  "purchase slips must expose processing, unpaid and completed status filters");
+savedSinglePurchaseSlip.rawStatus = "confirmed";
+savedSinglePurchaseSlip.arrivalStatus = "processing";
+savedSinglePurchaseSlip.pendingArrivalCount = 1;
 savedSinglePurchaseSlip.paidAt = null;
+savedSinglePurchaseSlip.lines[0].currentStatus = "仕入中";
+savedSingleInventory.status = "仕入中";
 window.execSlipFilter();
 assert.match(document.getElementById("slipListBody").textContent, new RegExp(savedSinglePurchaseSlip.id),
-  "purchase-slip processing search must use unpaid document status instead of the internal confirmed status");
-savedSinglePurchaseSlip.paidAt = "2099-12-30T12:00:00+09:00";
+  "purchase-slip processing search must include a slip that still contains a purchasing product");
+assert.deepEqual(Array.from(window.getPurchaseSlipStatusKeys(savedSinglePurchaseSlip)), ["processing", "unpaid"],
+  "a purchasing unpaid slip must expose both statuses");
+assert.match(document.getElementById("slipListBody").textContent, /処理中/u);
+assert.match(document.getElementById("slipListBody").textContent, /未払い/u);
+document.getElementById("slip-filter-status").value = "unpaid";
+window.execSlipFilter();
+assert.match(document.getElementById("slipListBody").textContent, new RegExp(savedSinglePurchaseSlip.id),
+  "unpaid search must include a slip without a payment date even while it is processing");
+window.openSlipDetail("purchase", savedSinglePurchaseSlip.id);
+assert.match(document.getElementById("slipDetailFooter").textContent, /入荷スキャン/u,
+  "purchase-slip detail must expose the physical-arrival scanner in its footer");
+assert.match(document.getElementById("slipDetailBody").textContent, /仕入中/u,
+  "purchase-slip detail must show the pending product status");
+const purchaseDetailHeaders = [...document.querySelectorAll("#slipDetailBody .purchase-slip-detail-table thead th")]
+  .map((header) => header.textContent.trim());
+assert.equal(purchaseDetailHeaders.indexOf("ステータス"), purchaseDetailHeaders.indexOf("モデル") + 1,
+  "the product status column must appear immediately after the model column");
+assert.match(purchaseDetailHeaders[purchaseDetailHeaders.indexOf("ステータス") + 1], /^仕入金額/u,
+  "the product status column must appear immediately before purchase cost");
+const purchaseProductRow = document.querySelector("#slipDetailBody .purchase-slip-product-row");
+assert.equal(purchaseProductRow?.getAttribute("tabindex"), "0",
+  "purchase product rows must be keyboard focusable");
+purchaseProductRow.click();
+assert.equal(document.getElementById("itemDetailModal").classList.contains("hidden"), false,
+  "clicking a purchase product row must open its product detail modal");
+assert.match(document.getElementById("itemDetailTitle").textContent, new RegExp(singlePurchaseCode),
+  "the product detail modal must open the clicked purchase product");
+assert.equal(document.getElementById("slipDetailOverlay").classList.contains("hidden"), false,
+  "the purchase slip must remain behind product detail so closing returns to the slip");
+document.getElementById("itemDetailModal").classList.add("hidden");
+window.closeSlipDetail();
+savedSinglePurchaseSlip.arrivalStatus = "completed";
+savedSinglePurchaseSlip.pendingArrivalCount = 0;
+savedSinglePurchaseSlip.lines[0].currentStatus = "在庫中";
+savedSingleInventory.status = "在庫中";
+assert.deepEqual(Array.from(window.getPurchaseSlipStatusKeys(savedSinglePurchaseSlip)), ["unpaid"],
+  "an arrived slip without a payment date must remain unpaid rather than completed");
+document.getElementById("slip-filter-status").value = "unpaid";
+window.execSlipFilter();
+assert.match(document.getElementById("slipListBody").textContent, new RegExp(savedSinglePurchaseSlip.id));
+savedSinglePurchaseSlip.paidAt = "2099-12-31T00:00:00+09:00";
 document.getElementById("slip-filter-status").value = "completed";
 window.execSlipFilter();
 assert.match(document.getElementById("slipListBody").textContent, new RegExp(savedSinglePurchaseSlip.id),
-  "purchase-slip completed search must include paid documents");
+  "purchase-slip completed search must include a fully arrived and paid slip");
+assert.deepEqual(Array.from(window.getPurchaseSlipStatusKeys(savedSinglePurchaseSlip)), ["completed"]);
 document.getElementById("slip-filter-status").value = "";
 window.execSlipFilter();
 assert.match(document.getElementById("slipListBody").textContent, new RegExp(savedSinglePurchaseSlip.id),
@@ -2545,7 +2785,8 @@ const purchaseListHeaders = [...document.querySelectorAll("#slipTableHead th")].
 assert.equal(purchaseListHeaders.includes("発行日時"), false, "document lists must label the issuance column as 発行日");
 assert.equal(purchaseListHeaders[purchaseListHeaders.indexOf("発行") + 1], "発行日",
   "発行日 must be immediately to the right of 発行");
-assert.equal(purchaseListHeaders[purchaseListHeaders.indexOf("入金確認") + 1], "入金日付");
+assert.equal(purchaseListHeaders[purchaseListHeaders.indexOf("支払確認") + 1], "支払日付");
+assert.match(window.formatPurchasePaidAtStacked(null), /未払い/u);
 assert.equal(window.formatIssuedAtStacked("2026-08-15T12:34:56+09:00").includes(":"), false,
   "issuance and payment timestamps must display the date only in document lists");
 assert.match(window.formatIssuedAtStacked("2026-08-15T12:34:56+09:00"), /2026-08-15/u);
@@ -3177,6 +3418,8 @@ assert.equal(document.getElementById("marketDraftRegisterButton").disabled, true
 const marketCountBeforeManualEntry = marketRows.length;
 document.getElementById("marketDraftAddCount").value = "3";
 assert.equal(window.marketAddDraftRows(), 3);
+assert.match(window.eval("_marketPendingImport.fileName"), /\.csv$/iu,
+  "handwritten market rows must use a CSV upload filename accepted by the API");
 assert.equal(document.querySelectorAll("#marketDraftTableBody tr").length, 3, "manual entry must add the requested number of editable rows");
 window.marketRemoveDraftRow(2);
 window.marketRemoveDraftRow(1);
@@ -3348,9 +3591,9 @@ assert.deepEqual(
   `inline handlers reference missing functions: ${[...missingHandlerFunctions].sort().join(", ")}`,
 );
 
-assert.equal(document.querySelectorAll(".page-panel").length, 20);
-assert.equal(document.querySelectorAll(".nav-item").length, 18);
-assert.equal(document.querySelectorAll(".modal-overlay").length, 47);
+assert.equal(document.querySelectorAll(".page-panel").length, 22);
+assert.equal(document.querySelectorAll(".nav-item").length, 21);
+assert.equal(document.querySelectorAll(".modal-overlay").length, 50);
 const desktopSidebar = document.getElementById("appSidebar");
 const desktopSidebarToggle = document.getElementById("sidebarVisibilityToggle");
 assert.ok(desktopSidebar, "desktop sidebar must have a stable controlled element");
@@ -3383,11 +3626,173 @@ window.syncMarketNavGroup("market-entry");
 assert.equal(marketNavToggle.getAttribute("aria-expanded"), "true");
 assert.equal(marketNavGroup.classList.contains("has-active"), true,
   "the market parent must stay highlighted while a market child page is active");
+const costAdjustmentNavButton = document.getElementById("costAdjustmentNavButton");
+assert.ok(costAdjustmentNavButton, "cost adjustment must remain directly below product registration");
+assert.match(costAdjustmentNavButton.textContent, /原価調整/u);
+assert.equal(document.getElementById("costAdjustmentNavSubmenu"), null,
+  "removed cost adjustment child actions must not remain in the DOM");
+assert.doesNotMatch(sidebarGroups[0].textContent, /分解|結合|入れ替え/u,
+  "the three removed cost adjustment actions must not remain in the sidebar");
 assert.deepEqual(
   [...sidebarGroups[0].querySelectorAll(".nav-item[data-page]")].map((item) => item.dataset.page),
-  ["dashboard", "market-entry", "market", "inventory", "purchase-entry", "purchase"],
+  ["dashboard", "market-entry", "market", "inventory", "parts-management", "purchase-entry", "purchase", "cost-adjustment"],
   "main navigation order must follow the inventory workflow",
 );
+assert.ok(document.getElementById("page-cost-adjustment"), "cost adjustment must have its own page");
+assert.deepEqual(
+  [...document.querySelectorAll("[data-ca-mode]")].map((button) => button.textContent.trim()),
+  ["崩し", "結合", "入替"],
+  "the cost adjustment toolbar must expose the three available modes",
+);
+assert.equal(typeof window.init_cost_adjustment, "function");
+assert.equal(typeof window.costAdjustmentLoadProduct, "function");
+assert.equal(typeof window.costAdjustmentAddPart, "function");
+assert.equal(typeof window.costAdjustmentDrop, "function");
+window.navigateTo("cost-adjustment");
+assert.equal(document.getElementById("page-cost-adjustment").classList.contains("hidden"), false);
+assert.equal(document.querySelectorAll("#page-cost-adjustment .ca-workbench > .ca-panel").length, 2,
+  "cost adjustment must use only the left product and right parts panels");
+assert.equal(document.getElementById("ca-stage"), null,
+  "the removed dress-up work area must not remain in the page");
+assert.equal(document.querySelector("#page-cost-adjustment .ca-attribute-panel"), null,
+  "the removed product attributes area must not remain in the page");
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-part-slot").length, 20,
+  "the parts box must render as twenty positions (4 by 5)");
+assert.equal(document.getElementById("ca-start-button").disabled, true,
+  "cost adjustment must not start before a product is loaded");
+const costAdjustmentProductCode = window.eval("APP_DATA.inventory[0].code");
+document.getElementById("ca-product-code").value = costAdjustmentProductCode;
+assert.equal(window.costAdjustmentLoadProduct(), true);
+assert.notEqual(document.getElementById("ca-product-brand").textContent, "—",
+  "loading a management code must populate the product summary");
+assert.deepEqual(
+  [...document.querySelectorAll("#ca-product-details .ca-product-detail-secondary dt")].map((label) => label.textContent.trim()),
+  ["素材", "ベルト素材", "文字盤", "付属品", "特徴・備考"],
+  "the product summary right column must show the requested attribute labels in order",
+);
+assert.notEqual(document.getElementById("ca-attribute-material").textContent, "—",
+  "the product material must be resolved into the loaded product summary");
+assert.notEqual(document.getElementById("ca-attribute-accessories").textContent, "—",
+  "the loaded product accessories must be shown in the product summary");
+assert.equal(document.getElementById("ca-attribute-note").textContent,
+  window.eval("String(_costAdjustmentState.product.note || '').trim() || '—'"),
+  "the loaded product note must be shown without inventing content");
+assert.equal(document.getElementById("ca-start-button").disabled, false,
+  "loading a product must enable the cost adjustment start action");
+const combineSource = window.eval("_costAdjustmentState.product");
+const combineOriginal = {
+  status: combineSource.status,
+  purchasePrice: combineSource.purchasePrice,
+  accessories: [...(combineSource.accessories || [])],
+  braceletQty: combineSource.braceletQty,
+  note: combineSource.note,
+  comment: combineSource.comment,
+};
+const originalCostAdjustmentParts = window.eval("APP_DATA.parts");
+const combinePartCode = "P3108269999";
+window.eval(`APP_DATA.parts = [{
+  id: 'part_combine_test', partCode: '${combinePartCode}', status: 'in_stock', partName: 'BRACELET PARTS',
+  braceletQuantity: 3, fixedCostJpyMinor: 10000, detailText: '', notes: ''
+}];`);
+window.costAdjustmentSetMode("combine");
+assert.equal(document.getElementById("ca-start-button").disabled, true,
+  "combine must wait for at least one registered part in the parts box");
+assert.equal(window.costAdjustmentAddPart(combinePartCode), true);
+assert.equal(document.getElementById("ca-start-button").disabled, false,
+  "combine must become startable after both product and part have loaded");
+assert.equal(await window.costAdjustmentStart(), true);
+assert.equal(window.eval("_costAdjustmentState.combineActive"), true);
+assert.equal(window.eval("_costAdjustmentState.product.status"), "原価調整中");
+assert.equal(window.eval("_costAdjustmentState.combineDraft.inputParts[0].status"), "cost_adjustment");
+const combineDropEvent = {
+  dataTransfer: { getData: () => JSON.stringify({ source: "slot", index: 0 }) },
+  preventDefault() {},
+  currentTarget: document.getElementById("ca-product-summary"),
+};
+assert.equal(window.costAdjustmentDropPartOnProduct(combineDropEvent), true,
+  "dragging a part from the parts box must apply it to the target product");
+assert.equal(
+  window.eval("_costAdjustmentState.combineDraft.preview.braceletQty"),
+  Number(combineOriginal.braceletQty || 0) + 3,
+  "BRACELET PARTS must add its link count to the product's existing count",
+);
+assert.equal(
+  window.eval("_costAdjustmentState.combineDraft.preview.purchasePrice"),
+  Number(combineOriginal.purchasePrice || 0) + 10000,
+  "the combined inventory cost must add the part's fixed JPY cost",
+);
+assert.match(window.eval("_costAdjustmentState.combineDraft.preview.comment"), new RegExp(combinePartCode));
+assert.match(document.getElementById("ca-combine-diff").textContent, /以前の対象商品情報\s*→\s*変更後/u);
+assert.equal(document.getElementById("ca-finalize-button").disabled, false,
+  "combine confirmation must unlock after every loaded part is applied");
+Object.assign(combineSource, combineOriginal);
+window.eval("_costAdjustmentState.product = APP_DATA.inventory.find(item => item.code === " + JSON.stringify(costAdjustmentProductCode) + ");");
+window.eval("_costAdjustmentState.partSlots = Array(20).fill(null); _costAdjustmentState.stageItems = [];");
+window.costAdjustmentResetBreakdownWorkspace();
+window.__originalCostAdjustmentParts = originalCostAdjustmentParts;
+window.eval("APP_DATA.parts = window.__originalCostAdjustmentParts");
+delete window.__originalCostAdjustmentParts;
+window.costAdjustmentSetMode("breakdown");
+window.costAdjustmentRenderProduct(window.eval("_costAdjustmentState.product"));
+window.costAdjustmentSetMode("swap");
+assert.equal(document.querySelector('[data-ca-mode="swap"]').getAttribute("aria-checked"), "true");
+window.costAdjustmentSetMode("breakdown");
+assert.equal(await window.costAdjustmentStart(), true,
+  "breakdown must start once the management number resolves to a product");
+assert.equal(document.getElementById("ca-parts-title").textContent, "崩し作業スペース");
+assert.equal(document.getElementById("ca-product-summary").draggable, true,
+  "the full product summary must become draggable after breakdown starts");
+assert.equal(document.getElementById("ca-breakdown-drop-guide").getAttribute("role"), "button",
+  "the drag target must also provide an accessible activation fallback");
+assert.equal(document.getElementById("ca-product-status").textContent, "原価調整中");
+assert.equal(window.eval("_costAdjustmentState.product.status"), "原価調整中",
+  "starting breakdown must change the loaded product status");
+document.getElementById("ca-part-code").value = "PART-TEST-001";
+assert.equal(window.costAdjustmentAddPart(), true);
+assert.equal(window.eval("_costAdjustmentMove({ source: 'slot', index: 0 }, 'slot', 5)"), true);
+assert.match(document.querySelectorAll("#ca-part-grid .ca-part-slot")[5].textContent, /PART-TEST-001/u,
+  "parts must remain draggable before the breakdown quantities are confirmed");
+const costAdjustmentTransferValues = new Map();
+const costAdjustmentDataTransfer = {
+  effectAllowed: "",
+  dropEffect: "",
+  setData: (type, value) => costAdjustmentTransferValues.set(type, value),
+  getData: (type) => costAdjustmentTransferValues.get(type) || "",
+};
+assert.equal(window.costAdjustmentDragProduct({ dataTransfer: costAdjustmentDataTransfer, preventDefault() {} }), true);
+assert.equal(window.costAdjustmentDropProduct({
+  dataTransfer: costAdjustmentDataTransfer,
+  preventDefault() {},
+  stopPropagation() {},
+}), true, "dropping the full product summary into the breakdown workspace must open its modal");
+assert.equal(document.getElementById("costAdjustmentBreakdownModal").classList.contains("hidden"), false,
+  "dropping the product must be able to open the quantity modal");
+document.getElementById("ca-breakdown-product-count").value = "13";
+document.getElementById("ca-breakdown-part-count").value = "8";
+assert.equal(window.costAdjustmentConfirmBreakdown(), false,
+  "breakdown quantities must not exceed the twenty available slots");
+assert.match(document.getElementById("ca-breakdown-modal-error").textContent, /20点以内/u);
+document.getElementById("ca-breakdown-product-count").value = "2";
+document.getElementById("ca-breakdown-part-count").value = "8";
+assert.equal(window.costAdjustmentConfirmBreakdown(), true);
+assert.match(document.getElementById("ca-breakdown-result").textContent, /商品\s*2\s*点/u);
+assert.match(document.getElementById("ca-breakdown-result").textContent, /パーツ\s*8\s*点/u);
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-breakdown-product-slot").length, 2,
+  "confirmed product quantities must occupy red breakdown slots");
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-breakdown-part-slot").length, 8,
+  "confirmed part quantities must occupy blue breakdown slots");
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-part-slot-disabled").length, 10,
+  "all remaining breakdown slots must be greyed out");
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-part-slot-disabled[aria-disabled='true']").length, 10,
+  "greyed out slots must be exposed as disabled to assistive technology");
+assert.equal(document.getElementById("ca-part-code").disabled, true,
+  "part management number input must be disabled after breakdown confirmation");
+assert.equal(document.querySelector("#ca-parts-panel .ca-add-part-button").disabled, true,
+  "the part add action must be disabled after breakdown confirmation");
+assert.equal(window.costAdjustmentAddPart("PART-LOCKED-001"), false,
+  "confirmed breakdown boxes must reject further part entry");
+assert.equal(window.eval("_costAdjustmentMove({ source: 'slot', index: 0 }, 'slot', 5)"), false,
+  "confirmed breakdown boxes must reject drag movement");
 assert.equal(sidebarGroups[1].querySelector(".nav-group-label").textContent.trim(), "経理・会計");
 assert.deepEqual(
   [...sidebarGroups[1].querySelectorAll(".nav-item")].map((item) => item.dataset.page),

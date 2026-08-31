@@ -778,7 +778,12 @@ function syncPurchaseSlipToInventory(slip) {
     const detail = line.productDetail || {};
     let item = (APP_DATA.inventory || []).find(record => record.code === line.code);
     if (!item) {
-      item = { code: line.code, status: '在庫中', revisions: [], images: [] };
+      item = {
+        code: line.code,
+        status: normalizeInventoryStatusLabel(line.currentStatus) || '仕入中',
+        revisions: [],
+        images: [],
+      };
       APP_DATA.inventory.push(item);
     }
     Object.assign(item, {
@@ -804,6 +809,8 @@ function syncPurchaseSlipToInventory(slip) {
 /** 商品在庫ステータスの旧名称を現行名称へ統一する。DBの英語値にも対応する。 */
 function normalizeInventoryStatusLabel(status) {
   const value = String(status || '').trim();
+  if (['cost_adjustment', '原価調整中'].includes(value)) return '原価調整中';
+  if (['broken_down', '崩し済み'].includes(value)) return '崩し済み';
   if (['return_pending', '仕入返品', '仕入返品中', '仕入返品処理中'].includes(value)) return '仕入返品処理中';
   if (['cancelled', '取消', '取消済', '取り消し', '仕入返品済', '仕入返品処理済'].includes(value)) return '仕入返品処理済';
   if (['sales_return_pending', '売上返品中', '売上返品処理中'].includes(value)) return '売上返品処理中';
@@ -926,6 +933,15 @@ window.addEventListener('storage', event => {
   if (event.key !== BUSINESS_WORKFLOW_STORAGE_KEY) return;
   hydrateBusinessWorkflowState();
   refreshLinkedBusinessViews({ persist: false, source: 'storage' });
+});
+
+// 初回DB読込が一時的に失敗しても api_bridge.js がバックグラウンドで
+// 再取得する。復旧時は現在のページだけを初期化し直し、0件表示を残さない。
+document.addEventListener('zaiko:data-hydrated', event => {
+  if (!event.detail?.recovered) return;
+  const page = window.__zaikoCurrentPage;
+  if (!page || typeof window.navigateTo !== 'function') return;
+  window.setTimeout(() => window.navigateTo(page), 0);
 });
 
 // =====================================================
@@ -1547,9 +1563,11 @@ function renderDashCharts(summary = getDashboardSummary()) {
 let inventoryPage = 1;
 const ITEMS_PER_PAGE = 10;
 let _invStatusSort = 'none';
+let partInventoryPage = 1;
+const PART_ITEMS_PER_PAGE = 10;
 
 // 在庫の業務進行順。未定義のステータスは末尾にまとめる。
-const INV_STATUS_SORT_ORDER = ['在庫中', '取置中', '委託中', '仕入返品処理中', '出荷済', '売上済', '売上返品処理中', '売上返品済', '仕入返品処理済', '保留'];
+const INV_STATUS_SORT_ORDER = ['仕入中', '在庫中', '原価調整中', '崩し済み', '取置中', '委託中', '仕入返品処理中', '出荷済', '売上済', '売上返品処理中', '売上返品済', '仕入返品処理済', '保留'];
 
 // =====================================================
 // 在庫一覧 — 検索・フィルター
@@ -2646,6 +2664,448 @@ function renderInventoryTable() {
   });
 }
 
+function _partInventoryStatusLabel(status) {
+  const value = String(status || '').trim();
+  if (['in_stock', '在庫中'].includes(value)) return '在庫中';
+  if (['cost_adjustment', '原価調整中'].includes(value)) return '原価調整中';
+  if (['invalid', '無効'].includes(value)) return '無効';
+  return normalizeInventoryStatusLabel(value) || '—';
+}
+
+function _partInventoryBrandName(part) {
+  if (String(part?.brandName || '').trim()) return String(part.brandName).trim();
+  const code = String(part?.brandCode || '').trim();
+  return (APP_DATA.brandRecords || []).find(record => record.code === code)?.name || code || '—';
+}
+
+function _partInventoryStaffName(part) {
+  const code = String(part?.staffCode || '').trim();
+  return (APP_DATA.staffRecords || []).find(record => record.code === code)?.name
+    || getBuyerName(code)
+    || code
+    || '—';
+}
+
+function _partInventoryDetail(part) {
+  const values = [];
+  const detail = String(part?.detailText || '').trim();
+  if (detail) values.push(detail);
+  if (part?.braceletQuantity !== null && part?.braceletQuantity !== undefined && part?.braceletQuantity !== '') {
+    values.push(`${Number(part.braceletQuantity).toLocaleString('ja-JP')}コマ`);
+  }
+  return values.join(' / ') || '—';
+}
+
+function _partInventorySupplierName(part) {
+  const code = String(part?.supplierCode || '').trim();
+  return code ? (getSupplierName(code) || code) : '—';
+}
+
+function _partInventoryFilterValues() {
+  return {
+    code: String(document.getElementById('part-f-code')?.value || '').trim().toLowerCase(),
+    name: String(document.getElementById('part-f-name')?.value || '').trim(),
+    brand: String(document.getElementById('part-f-brand')?.value || '').trim(),
+    referenceModel: String(document.getElementById('part-f-reference-model')?.value || '').trim().toLowerCase(),
+    sku: String(document.getElementById('part-f-sku')?.value || '').trim().toLowerCase(),
+    detail: String(document.getElementById('part-f-detail')?.value || '').trim().toLowerCase(),
+    supplier: String(document.getElementById('part-f-supplier')?.value || '').trim(),
+    staff: String(document.getElementById('part-f-staff')?.value || '').trim(),
+    status: String(document.getElementById('part-f-status')?.value || '').trim(),
+    dateFrom: String(document.getElementById('part-f-date-from')?.value || ''),
+    dateTo: String(document.getElementById('part-f-date-to')?.value || ''),
+  };
+}
+
+function _partInventoryFilteredRecords() {
+  const filters = _partInventoryFilterValues();
+  return [...(APP_DATA.parts || [])].filter(part => {
+    const code = String(part?.partCode || part?.code || '').toLowerCase();
+    const name = String(part?.partName || part?.partNameCode || '');
+    const brand = _partInventoryBrandName(part);
+    const referenceModel = `${part?.referenceNumber || ''} ${part?.modelName || ''}`.toLowerCase();
+    const sku = String(part?.sku || '').toLowerCase();
+    const detail = _partInventoryDetail(part).toLowerCase();
+    const purchaseDate = String(part?.purchaseDate || '');
+    return (!filters.code || code.includes(filters.code))
+      && (!filters.name || name === filters.name)
+      && (!filters.brand || brand === filters.brand)
+      && (!filters.referenceModel || referenceModel.includes(filters.referenceModel))
+      && (!filters.sku || sku.includes(filters.sku))
+      && (!filters.detail || detail.includes(filters.detail))
+      && (!filters.supplier || String(part?.supplierCode || '') === filters.supplier)
+      && (!filters.staff || String(part?.staffCode || '') === filters.staff)
+      && (!filters.status || _partInventoryStatusLabel(part?.status) === filters.status)
+      && (!filters.dateFrom || purchaseDate >= filters.dateFrom)
+      && (!filters.dateTo || purchaseDate <= filters.dateTo);
+  }).sort((a, b) =>
+    String(b.purchaseDate || '').localeCompare(String(a.purchaseDate || ''))
+      || String(b.partCode || b.code || '').localeCompare(String(a.partCode || a.code || '')));
+}
+
+function _partInventorySetFilterOptions(id, options) {
+  const select = document.getElementById(id);
+  if (!select) return;
+  const current = select.value;
+  const unique = [...new Map((options || []).filter(option => option?.value).map(option => [String(option.value), option])).values()]
+    .sort((a, b) => String(a.label || '').localeCompare(String(b.label || ''), 'ja'));
+  select.innerHTML = '<option value="">すべて</option>' + unique.map(option =>
+    `<option value="${_mEsc(option.value)}">${_mEsc(option.label || option.value)}</option>`).join('');
+  select.value = unique.some(option => String(option.value) === current) ? current : '';
+}
+
+function _buildPartInventoryFilterOptions() {
+  const parts = APP_DATA.parts || [];
+  _partInventorySetFilterOptions('part-f-name', parts.map(part => {
+    const value = String(part?.partName || part?.partNameCode || '').trim();
+    return { value, label: value };
+  }));
+  _partInventorySetFilterOptions('part-f-brand', parts.map(part => {
+    const value = _partInventoryBrandName(part);
+    return { value: value === '—' ? '' : value, label: value };
+  }));
+  _partInventorySetFilterOptions('part-f-supplier', parts.map(part => ({
+    value: String(part?.supplierCode || '').trim(),
+    label: _partInventorySupplierName(part),
+  })));
+  _partInventorySetFilterOptions('part-f-staff', parts.map(part => ({
+    value: String(part?.staffCode || '').trim(),
+    label: _partInventoryStaffName(part),
+  })));
+}
+
+function _renderPartInventoryActiveFilters() {
+  const container = document.getElementById('part-active-filters');
+  if (!container) return;
+  const filters = _partInventoryFilterValues();
+  const labels = {
+    code: '管理番号', name: 'パーツ名', brand: 'ブランド', referenceModel: '型番・モデル', sku: 'SKU',
+    detail: '詳細', supplier: '仕入先', staff: 'バイヤー', status: 'ステータス', dateFrom: '仕入日（から）', dateTo: '仕入日（まで）',
+  };
+  const selectLabels = {
+    name: 'part-f-name', brand: 'part-f-brand', supplier: 'part-f-supplier', staff: 'part-f-staff', status: 'part-f-status',
+  };
+  const tags = Object.entries(filters).filter(([, value]) => value).map(([key, value]) => {
+    const select = document.getElementById(selectLabels[key]);
+    const display = select?.selectedOptions?.[0]?.textContent || value;
+    return `<span>${_escHtml(labels[key] || key)}: ${_escHtml(display)}</span>`;
+  });
+  container.innerHTML = tags.join('');
+  container.style.display = tags.length ? 'flex' : 'none';
+}
+
+function execPartInventorySearch() {
+  partInventoryPage = 1;
+  renderPartInventoryTable();
+  _renderPartInventoryActiveFilters();
+  const reset = document.getElementById('part-reset-btn');
+  if (reset) reset.style.display = Object.values(_partInventoryFilterValues()).some(Boolean) ? '' : 'none';
+}
+
+function resetPartInventorySearch() {
+  document.querySelectorAll('#part-search-panel input, #part-search-panel select').forEach(field => {
+    field.value = '';
+  });
+  execPartInventorySearch();
+  setTimeout(() => document.getElementById('part-f-code')?.focus({ preventScroll: true }), 0);
+}
+
+function init_parts_management() {
+  document.querySelectorAll('#part-search-panel input, #part-search-panel select').forEach(field => {
+    field.value = '';
+  });
+  const reset = document.getElementById('part-reset-btn');
+  if (reset) reset.style.display = 'none';
+  _buildPartInventoryFilterOptions();
+  partInventoryPage = 1;
+  renderPartInventoryTable();
+  _renderPartInventoryActiveFilters();
+  const panel = document.getElementById('part-search-panel');
+  if (panel && panel.dataset.enterSearchBound !== 'true') {
+    panel.addEventListener('keydown', event => searchPanelEnter(event, 'execPartInventorySearch'));
+    panel.dataset.enterSearchBound = 'true';
+  }
+  setTimeout(() => document.getElementById('part-f-code')?.focus({ preventScroll: true }), 0);
+}
+
+function navigateToPartRegistration() {
+  navigateTo('purchase');
+  setTimeout(() => switchRegistrationMode('part'), 0);
+}
+
+/** パーツ管理ページに、登録済みパーツを主要項目で表示する。 */
+function renderPartInventoryTable() {
+  const tbody = document.getElementById('partInventoryTableBody');
+  if (!tbody) return;
+
+  const allParts = APP_DATA.parts || [];
+  const parts = _partInventoryFilteredRecords();
+  const count = document.getElementById('partInventoryCount');
+  if (count) count.textContent = parts.length === allParts.length
+    ? `${parts.length} 件`
+    : `${parts.length} 件 / 全${allParts.length}件`;
+
+  const totalPages = Math.ceil(parts.length / PART_ITEMS_PER_PAGE);
+  if (totalPages > 0 && partInventoryPage > totalPages) partInventoryPage = totalPages;
+  const start = (partInventoryPage - 1) * PART_ITEMS_PER_PAGE;
+  const paged = parts.slice(start, start + PART_ITEMS_PER_PAGE);
+
+  if (paged.length === 0) {
+    tbody.innerHTML = `
+      <tr><td colspan="12" class="part-inventory-empty">
+        <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i>
+        登録済みのパーツはありません
+      </td></tr>`;
+  } else {
+    tbody.innerHTML = paged.map(part => {
+      const partCode = String(part.partCode || part.code || '—');
+      const detail = _partInventoryDetail(part);
+      const reference = String(part.referenceNumber || '').trim();
+      const model = String(part.modelName || '').trim();
+      const referenceModel = [reference, model].filter(Boolean).join(' / ') || '—';
+      const supplier = _partInventorySupplierName(part);
+      const fixedCost = Number(part.fixedCostJpyMinor);
+      const cost = Number.isFinite(fixedCost) ? formatPrice(fixedCost) : '—';
+      const salePrice = Number(part.salePriceUsdMinor);
+      const sale = Number.isFinite(salePrice) && salePrice > 0 ? formatSalePrice(salePrice) : '—';
+      return `
+        <tr class="part-inventory-row" tabindex="0" aria-label="${_escHtml(partCode)} のパーツ詳細を開く"
+          onclick="openPartDetailEditor('${_escHtml(partCode)}')"
+          onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPartDetailEditor('${_escHtml(partCode)}');}">
+          <td>
+            <div class="inv-management-number-cell">
+              <code>${_escHtml(partCode)}</code>
+              <button type="button" class="inv-management-number-copy"
+                data-copy-value="${_escHtml(partCode)}" title="パーツ管理番号をコピー"
+                aria-label="パーツ管理番号 ${_escHtml(partCode)} をコピー"
+                onclick="copyInventoryManagementNumber(event, this)">
+                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+              </button>
+            </div>
+          </td>
+          <td>${_escHtml(part.purchaseDate || '—')}</td>
+          <td class="part-inventory-name">${_escHtml(part.partName || part.partNameCode || '—')}</td>
+          <td title="${_escHtml(detail)}">${_escHtml(detail)}</td>
+          <td>${_escHtml(_partInventoryBrandName(part))}</td>
+          <td>${_escHtml(referenceModel)}</td>
+          <td>${_escHtml(part.sku || '—')}</td>
+          <td>${_escHtml(supplier)}</td>
+          <td>${_escHtml(_partInventoryStaffName(part))}</td>
+          <td class="part-inventory-cost">${cost}</td>
+          <td class="part-inventory-sale">${sale}</td>
+          <td>${getStatusBadge(_partInventoryStatusLabel(part.status))}</td>
+        </tr>`;
+    }).join('');
+  }
+
+  renderPagination('partInventoryPagination', partInventoryPage, totalPages, page => {
+    partInventoryPage = page;
+    renderPartInventoryTable();
+  });
+}
+
+let _partDetailEditing = null;
+
+function _partEditSetSelect(id, records, selected = '', emptyLabel = '-- 選択 --', valueKey = 'code', labelKey = 'name') {
+  const select = document.getElementById(id);
+  if (!select) return;
+  const values = (records || []).filter(record => record?.isActive !== false);
+  select.innerHTML = `<option value="">${_escHtml(emptyLabel)}</option>` + values.map(record =>
+    `<option value="${_escHtml(record?.[valueKey] || '')}">${_escHtml(record?.[labelKey] || record?.[valueKey] || '')}</option>`).join('');
+  select.value = values.some(record => String(record?.[valueKey] || '') === String(selected || '')) ? String(selected || '') : '';
+}
+
+function _partEditSelectedName(id, records) {
+  const value = document.getElementById(id)?.value || '';
+  return (records || []).find(record => record.code === value)?.name || '';
+}
+
+function partEditCostCurrencyChanged() {
+  const currency = document.getElementById('part-edit-cost-currency')?.value || 'JPY';
+  const symbol = document.getElementById('part-edit-cost-symbol');
+  if (symbol) symbol.textContent = { JPY: '¥', USD: '$', HKD: 'HK$' }[currency] || currency;
+}
+
+function partEditPurchaseTypeChanged() {
+  const purchaseType = document.getElementById('part-edit-purchase-type')?.value || 'domestic';
+  const required = purchaseType !== 'personal';
+  const supplier = document.getElementById('part-edit-supplier');
+  if (supplier) supplier.required = required;
+  document.getElementById('part-edit-supplier-required')?.classList.toggle('hidden', !required);
+}
+
+function _partEditPopulateDetailMaster(config, selected = '') {
+  const select = document.getElementById('part-edit-detail-master');
+  if (!select) return;
+  const records = config ? (APP_DATA[config.recordsKey] || []) : [];
+  select.innerHTML = `<option value="">${_escHtml(config?.emptyLabel || '-- 選択 --')}</option>` + records
+    .filter(record => record?.isActive !== false)
+    .map(record => `<option value="${_escHtml(record.code)}">${_escHtml(record.name)}</option>`).join('');
+  select.dataset.masterType = config?.type || '';
+  select.value = records.some(record => record.code === selected) ? selected : '';
+}
+
+function partEditNameChanged(preserveValues = false) {
+  const partNameCode = document.getElementById('part-edit-name')?.value || '';
+  const partName = (APP_DATA.partNameRecords || []).find(record => record.code === partNameCode)?.name || '';
+  const bracelet = String(partName).trim().toUpperCase() === 'BRACELET PARTS';
+  const config = _partDetailMasterConfig(partName);
+  const detailGroup = document.getElementById('part-edit-detail-text-group');
+  const masterGroup = document.getElementById('part-edit-detail-master-group');
+  const quantityGroup = document.getElementById('part-edit-quantity-group');
+  detailGroup?.classList.toggle('hidden', bracelet || Boolean(config));
+  masterGroup?.classList.toggle('hidden', !config);
+  quantityGroup?.classList.toggle('hidden', !bracelet);
+  const label = document.getElementById('part-edit-detail-master-label');
+  if (label) label.textContent = config?.label || '詳細';
+
+  const currentMasterCode = preserveValues ? String(_partDetailEditing?.detailMasterCode || '') : '';
+  _partEditPopulateDetailMaster(config, currentMasterCode);
+  if (!preserveValues) {
+    const detail = document.getElementById('part-edit-detail');
+    const quantity = document.getElementById('part-edit-quantity');
+    if (detail) detail.value = '';
+    if (quantity) quantity.value = '';
+  }
+}
+
+function openPartDetailEditor(partCode) {
+  const part = (APP_DATA.parts || []).find(record => String(record.partCode || record.code || '') === String(partCode || ''));
+  if (!part) {
+    showToast('error', 'パーツが見つかりません', '一覧を再読み込みしてからもう一度お試しください');
+    return false;
+  }
+  _partDetailEditing = part;
+  const setValue = (id, value) => {
+    const element = document.getElementById(id);
+    if (element) element.value = value ?? '';
+  };
+  _partEditSetSelect('part-edit-staff', APP_DATA.staffRecords || [], part.staffCode, '-- バイヤーを選択 --');
+  _partEditSetSelect('part-edit-supplier', APP_DATA.suppliers || [], part.supplierCode, '-- 仕入先を選択 --');
+  _partEditSetSelect('part-edit-brand', APP_DATA.brandRecords || [], part.brandCode, '-- ブランドを選択 --');
+  _partEditSetSelect('part-edit-name', APP_DATA.partNameRecords || [], part.partNameCode, '-- パーツ名を選択 --');
+
+  setValue('part-edit-id', part.id || part._id || '');
+  setValue('part-edit-code', part.partCode || part.code || '');
+  setValue('part-edit-date', part.purchaseDate || '');
+  setValue('part-edit-status', ['in_stock', 'cost_adjustment', 'invalid'].includes(part.status) ? part.status
+    : ({ '在庫中': 'in_stock', '原価調整中': 'cost_adjustment', '無効': 'invalid' }[part.status] || 'in_stock'));
+  setValue('part-edit-sku', part.sku || '');
+  setValue('part-edit-purchase-type', part.purchaseTaxMode || 'domestic');
+  setValue('part-edit-tax', part.taxCategory || 'consumption_tax');
+  setValue('part-edit-cost-currency', part.costCurrency || 'JPY');
+  setValue('part-edit-cost', Number(part.costAmountMinor || 0).toLocaleString('ja-JP'));
+  setValue('part-edit-sale', Number(part.salePriceUsdMinor || 0) > 0 ? Number(part.salePriceUsdMinor).toLocaleString('en-US') : '');
+  setValue('part-edit-ref', part.referenceNumber || '');
+  setValue('part-edit-model', part.modelName || '');
+  setValue('part-edit-detail', part.detailText || '');
+  setValue('part-edit-quantity', part.braceletQuantity ?? '');
+  setValue('part-edit-notes', part.notes || '');
+  setValue('part-edit-comment', part.internalComment || '');
+  const caption = document.getElementById('part-edit-caption');
+  if (caption) caption.textContent = `${part.partCode || part.code || '—'} / ${part.partName || 'パーツ'}`;
+  const locked = Boolean(part.costAdjustmentId);
+  const cost = document.getElementById('part-edit-cost');
+  const currency = document.getElementById('part-edit-cost-currency');
+  if (cost) cost.disabled = locked;
+  if (currency) currency.disabled = locked;
+  document.getElementById('part-edit-cost-lock-note')?.classList.toggle('hidden', !locked);
+  const error = document.getElementById('part-edit-error');
+  if (error) error.textContent = '';
+  partEditCostCurrencyChanged();
+  partEditPurchaseTypeChanged();
+  partEditNameChanged(true);
+  const modal = document.getElementById('partDetailEditModal');
+  modal?.classList.remove('hidden');
+  setTimeout(() => document.getElementById('part-edit-status')?.focus(), 0);
+  return true;
+}
+
+function closePartDetailEditor() {
+  document.getElementById('partDetailEditModal')?.classList.add('hidden');
+  _partDetailEditing = null;
+}
+
+async function savePartDetailEditor() {
+  const part = _partDetailEditing;
+  if (!part) return false;
+  const purchaseType = document.getElementById('part-edit-purchase-type')?.value || 'domestic';
+  const supplierCode = document.getElementById('part-edit-supplier')?.value || '';
+  const partNameCode = document.getElementById('part-edit-name')?.value || '';
+  const partName = (APP_DATA.partNameRecords || []).find(record => record.code === partNameCode)?.name || '';
+  const config = _partDetailMasterConfig(partName);
+  const bracelet = String(partName).trim().toUpperCase() === 'BRACELET PARTS';
+  const quantityValue = document.getElementById('part-edit-quantity')?.value || '';
+  const braceletQuantity = bracelet && quantityValue !== '' ? Number(quantityValue) : null;
+  const costAmountMinor = getPriceValue(document.getElementById('part-edit-cost'));
+  const salePriceUsdMinor = getPriceValue(document.getElementById('part-edit-sale'));
+  const error = document.getElementById('part-edit-error');
+  const fail = message => {
+    if (error) error.textContent = message;
+    return false;
+  };
+  if (!partNameCode) return fail('パーツ名を選択してください。');
+  if (purchaseType !== 'personal' && !supplierCode) return fail('仕入先を選択してください。');
+  if (!Number.isFinite(costAmountMinor) || costAmountMinor < 0) return fail('原価を0以上で入力してください。');
+  if (bracelet && (!Number.isInteger(braceletQuantity) || braceletQuantity < 0)) return fail('コマ数を0以上の整数で入力してください。');
+  if (error) error.textContent = '';
+
+  const detailMasterCode = config ? (document.getElementById('part-edit-detail-master')?.value || '') : '';
+  const detailMasterName = config
+    ? ((APP_DATA[config.recordsKey] || []).find(record => record.code === detailMasterCode)?.name || '')
+    : '';
+  const payload = {
+    staffCode: document.getElementById('part-edit-staff')?.value || '',
+    supplierCode,
+    purchaseTaxMode: purchaseType,
+    taxCategory: document.getElementById('part-edit-tax')?.value || 'consumption_tax',
+    costAmountMinor,
+    costCurrency: document.getElementById('part-edit-cost-currency')?.value || 'JPY',
+    sku: String(document.getElementById('part-edit-sku')?.value || '').trim(),
+    brandCode: document.getElementById('part-edit-brand')?.value || '',
+    modelName: String(document.getElementById('part-edit-model')?.value || '').trim(),
+    referenceNumber: String(document.getElementById('part-edit-ref')?.value || '').trim(),
+    partNameCode,
+    detailText: bracelet || config ? '' : String(document.getElementById('part-edit-detail')?.value || '').trim(),
+    detailMasterType: config?.type || '',
+    detailMasterCode,
+    braceletQuantity,
+    salePriceUsdMinor: Math.max(0, salePriceUsdMinor),
+    notes: String(document.getElementById('part-edit-notes')?.value || '').trim(),
+    internalComment: String(document.getElementById('part-edit-comment')?.value || '').trim(),
+    status: document.getElementById('part-edit-status')?.value || 'in_stock',
+  };
+  const button = document.getElementById('part-edit-save');
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 保存中...';
+  }
+  try {
+    if (window.ZaikoAPI?.updatePart) {
+      await window.ZaikoAPI.updatePart(part, payload);
+    } else {
+      Object.assign(part, payload, {
+        partName,
+        brandName: _partEditSelectedName('part-edit-brand', APP_DATA.brandRecords || []),
+        detailText: bracelet ? '' : (config ? detailMasterName : payload.detailText),
+        fixedCostJpyMinor: puPurchaseAmountToJPY(payload.costAmountMinor, payload.costCurrency),
+      });
+    }
+    const code = part.partCode || part.code || '';
+    closePartDetailEditor();
+    renderPartInventoryTable();
+    showToast('success', 'パーツを更新しました', `${code} の変更を保存しました`);
+    return true;
+  } catch (saveError) {
+    return fail(saveError?.message || 'パーツを更新できませんでした。');
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> 変更を保存';
+    }
+  }
+}
+
 /** 在庫一覧の管理番号を1タップでコピーし、行クリックによる詳細表示は発火させない。 */
 async function copyInventoryManagementNumber(event, button) {
   event?.preventDefault();
@@ -3221,16 +3681,40 @@ function openItemEdit(code) {
   accDiv.innerHTML = getAccessoryMasterNames(item.accessories || []).map(a => {
     const checked = (item.accessories||[]).includes(a);
     return `<label class="checkbox-label${checked?' checked':''}">
-      <input type="checkbox" value="${_mEsc(a)}" ${checked?'checked':''} onchange="this.parentElement.classList.toggle('checked',this.checked)">
+      <input type="checkbox" value="${_mEsc(a)}" ${checked?'checked':''} onchange="itemEditAccessoryChanged(this)">
       ${_mEsc(a)}
     </label>`;
   }).join('');
+  _itemEditToggleBraceletQuantity((item.accessories || []).includes('BRACELET PARTS'), item.braceletQty, false);
 
   // 作業者向けバナー表示
   const banner = document.getElementById('itemEditBuyerBanner');
   if (banner) banner.classList.toggle('hidden', !isBuyer());
 
   document.getElementById('itemEditModal').classList.remove('hidden');
+}
+
+function _itemEditToggleBraceletQuantity(show, quantity, focus = false) {
+  const row = document.getElementById('ie-bracelet-qty-row');
+  const input = document.getElementById('ie-bracelet-qty');
+  if (!row || !input) return;
+  row.hidden = !show;
+  row.style.display = show ? 'flex' : 'none';
+  input.required = show;
+  input.disabled = !show;
+  if (!show) {
+    input.value = '';
+    input.setCustomValidity('');
+    return;
+  }
+  if (quantity !== undefined) input.value = quantity ?? '';
+  if (focus) input.focus();
+}
+
+function itemEditAccessoryChanged(checkbox) {
+  checkbox?.parentElement?.classList.toggle('checked', Boolean(checkbox.checked));
+  const selected = [...document.querySelectorAll('#ie-accessories input:checked')].map(input => input.value);
+  _itemEditToggleBraceletQuantity(selected.includes('BRACELET PARTS'), undefined, checkbox?.value === 'BRACELET PARTS' && checkbox.checked);
 }
 
 function closeItemEdit(options = {}) {
@@ -3249,6 +3733,19 @@ async function saveItemEdit() {
   }
 
   // フォームから新値を収集
+  const accessories = [...document.querySelectorAll('#ie-accessories input:checked')].map(input => input.value);
+  const hasBraceletParts = accessories.includes('BRACELET PARTS');
+  const braceletQuantityInput = document.getElementById('ie-bracelet-qty');
+  const braceletQuantityRaw = braceletQuantityInput?.value?.trim() || '';
+  const braceletQty = hasBraceletParts ? Number(braceletQuantityRaw) : null;
+  if (hasBraceletParts && (braceletQuantityRaw === '' || !Number.isInteger(braceletQty) || braceletQty < 1)) {
+    braceletQuantityInput?.setCustomValidity('1以上の整数を入力してください');
+    braceletQuantityInput?.reportValidity();
+    braceletQuantityInput?.focus();
+    showToast('error', '入力エラー', 'BRACELET PARTSのコマ数を1以上の整数で入力してください');
+    return;
+  }
+  braceletQuantityInput?.setCustomValidity('');
   const newVals = {
     originalCode:  String(item.code || originalCode || ''),
     code,
@@ -3270,7 +3767,8 @@ async function saveItemEdit() {
     staff:         document.getElementById('ie-staff').value,
     supplier:      document.getElementById('ie-supplier').value,
     boxNo:         parseInt(document.getElementById('ie-box')?.value) || null,
-    accessories:   [...document.querySelectorAll('#ie-accessories input:checked')].map(c=>c.value),
+    accessories,
+    braceletQty,
     note:          document.getElementById('ie-note').value,
   };
   const editNote = document.getElementById('ie-editNote').value.trim();
@@ -3282,7 +3780,7 @@ async function saveItemEdit() {
     code:'管理番号', brand:'ブランド', model:'モデル', ref:'型番', serial:'シリアル',
     status:'ステータス', condition:'コンディション', material:'素材', movement:'駆動方式',
     belt:'ベルト素材', dial:'文字盤', purchasePrice:'原価', salePrice:'売価',
-    purchaseDate:'仕入日', staff:'バイヤー', supplier:'仕入先', boxNo:'BOX', note:'備考'
+    purchaseDate:'仕入日', staff:'バイヤー', supplier:'仕入先', boxNo:'BOX', braceletQty:'BRACELET PARTS コマ数', note:'備考'
   };
   Object.keys(fieldLabels).forEach(key => {
     const oldV = String(item[key] ?? '');
@@ -4272,6 +4770,266 @@ function init_purchase() {
   const puCodeEl = document.getElementById('pu-code');
   if (puCodeEl) puCodeEl.value = '';
   _puCodeSetError('');
+  initPartRegistration();
+  switchRegistrationMode(_registrationMode);
+}
+
+// =====================================================
+// 商品登録／パーツ登録 切り替え・パーツ登録
+// =====================================================
+let _registrationMode = 'product';
+let _partPurchaseType = 'domestic';
+let _partCurrency = 'JPY';
+
+function switchRegistrationMode(mode) {
+  _registrationMode = mode === 'part' ? 'part' : 'product';
+  document.getElementById('product-registration-form')?.classList.toggle('hidden', _registrationMode !== 'product');
+  document.getElementById('part-registration-form')?.classList.toggle('hidden', _registrationMode !== 'part');
+  ['product', 'part'].forEach(value => {
+    const button = document.getElementById(`registration-mode-${value}`);
+    const selected = value === _registrationMode;
+    button?.classList.toggle('active', selected);
+    button?.setAttribute('aria-checked', selected ? 'true' : 'false');
+  });
+}
+
+function initPartRegistration() {
+  // The form markup is kept near the adjacent cost-adjustment dialog in the
+  // reference snapshot; move it into the product-registration page before use.
+  const form = document.getElementById('part-registration-form');
+  const page = document.getElementById('page-purchase');
+  if (form && page && form.parentElement !== page) page.appendChild(form);
+  populateBrandMasterSelect('part-brand', {
+    emptyLabel: '-- 選択 --', selected: document.getElementById('part-brand')?.value || '',
+  });
+  populateSupplierMasterSelect('part-supplier', {
+    emptyLabel: '-- 選択 --', selected: document.getElementById('part-supplier')?.value || '', labelMode: 'code-name',
+  });
+  populateStaffMasterSelect('part-staff', {
+    emptyLabel: '-- 選択 --', selected: document.getElementById('part-staff')?.value || '',
+  });
+  const partName = document.getElementById('part-name');
+  if (partName) {
+    const selected = partName.value;
+    partName.innerHTML = '<option value="">-- パーツ名を選択 --</option>' + (APP_DATA.partNameRecords || [])
+      .filter(record => record?.isActive !== false)
+      .map(record => `<option value="${_mEsc(record.code)}">${_mEsc(record.name)}</option>`).join('');
+    partName.value = selected;
+  }
+  const date = document.getElementById('part-date');
+  if (date && !date.value) date.value = getLocalDateISO();
+  _partPurchaseType = ['domestic', 'personal', 'overseas'].includes(_partPurchaseType) ? _partPurchaseType : 'domestic';
+  _partCurrency = ['JPY', 'USD', 'HKD'].includes(_partCurrency) ? _partCurrency : 'JPY';
+  _updatePartRegistrationUI();
+  partNameChanged();
+}
+
+function _updatePartRegistrationUI() {
+  ['domestic', 'personal', 'overseas'].forEach(value => {
+    const button = document.getElementById(`part-purchase-type-${value}`);
+    const selected = value === _partPurchaseType;
+    button?.classList.toggle('active', selected);
+    button?.setAttribute('aria-checked', selected ? 'true' : 'false');
+  });
+  ['JPY', 'USD', 'HKD'].forEach(value => {
+    const button = document.getElementById(`part-currency-${value.toLowerCase()}`);
+    const selected = value === _partCurrency;
+    button?.classList.toggle('active', selected);
+    button?.setAttribute('aria-checked', selected ? 'true' : 'false');
+  });
+  const supplierRequired = _partPurchaseType !== 'personal';
+  const supplier = document.getElementById('part-supplier');
+  if (supplier) {
+    supplier.required = supplierRequired;
+    supplier.setAttribute('aria-required', supplierRequired ? 'true' : 'false');
+  }
+  const required = document.getElementById('part-supplier-required');
+  if (required) required.style.display = supplierRequired ? '' : 'none';
+  const symbols = { JPY: '¥', USD: '$', HKD: 'HK$' };
+  const rate = puGetCurrentPurchaseRate(_partCurrency);
+  const symbol = document.getElementById('part-cost-symbol');
+  if (symbol) symbol.textContent = symbols[_partCurrency];
+  const label = document.getElementById('part-cost-label');
+  if (label) label.innerHTML = `原価（${_partCurrency}） <span class="required">*</span>`;
+  const rateText = document.getElementById('part-rate-text');
+  if (rateText) rateText.textContent = `1 ${_partCurrency} = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
+function partSetPurchaseType(value) {
+  _partPurchaseType = ['personal', 'overseas'].includes(value) ? value : 'domestic';
+  _updatePartRegistrationUI();
+}
+
+function partSetCurrency(value) {
+  _partCurrency = ['USD', 'HKD'].includes(value) ? value : 'JPY';
+  _updatePartRegistrationUI();
+}
+
+function partPurchaseDateChanged() {
+  const code = document.getElementById('part-code');
+  if (code) code.value = '';
+}
+
+function partAssignCode() {
+  const dateValue = document.getElementById('part-date')?.value || '';
+  const match = dateValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) {
+    showToast('error', '仕入日を確認してください', '仕入日を選択してから採番してください');
+    return '';
+  }
+  const prefix = `P${match[3]}${match[2]}${match[1].slice(-2)}`;
+  const max = (APP_DATA.parts || []).reduce((current, part) => {
+    const code = String(part?.partCode || part?.code || '').toUpperCase();
+    const sequence = code.startsWith(prefix) ? Number(code.slice(7)) : 0;
+    return Number.isInteger(sequence) ? Math.max(current, sequence) : current;
+  }, 0);
+  if (max >= 9999) {
+    showToast('error', '採番上限', 'この仕入日の4桁連番が上限に達しています');
+    return '';
+  }
+  const value = `${prefix}${String(max + 1).padStart(4, '0')}`;
+  const input = document.getElementById('part-code');
+  if (input) input.value = value;
+  return value;
+}
+
+const PART_DETAIL_MASTER_CONFIG = {
+  '素材': { type: 'material', recordsKey: 'materials', label: '詳細（素材）', emptyLabel: '-- 素材を選択 --' },
+  'ベルト素材': { type: 'belt', recordsKey: 'beltMaterialRecords', label: '詳細（ベルト素材）', emptyLabel: '-- ベルト素材を選択 --' },
+  '文字盤': { type: 'dial', recordsKey: 'dialRecords', label: '詳細（文字盤）', emptyLabel: '-- 文字盤を選択 --' },
+};
+
+function _partDetailMasterConfig(partName) {
+  return PART_DETAIL_MASTER_CONFIG[String(partName || '').trim()] || null;
+}
+
+function _populatePartDetailMaster(config) {
+  const select = document.getElementById('part-detail-master');
+  if (!select) return;
+  const selected = select.dataset.masterType === config?.type ? select.value : '';
+  const records = config ? (APP_DATA[config.recordsKey] || []) : [];
+  select.innerHTML = `<option value="">${_mEsc(config?.emptyLabel || '-- 選択 --')}</option>` + records
+    .filter(record => record?.isActive !== false)
+    .map(record => `<option value="${_mEsc(record.code)}">${_mEsc(record.name)}</option>`).join('');
+  select.dataset.masterType = config?.type || '';
+  select.value = records.some(record => record.code === selected) ? selected : '';
+}
+
+function partNameChanged() {
+  const code = document.getElementById('part-name')?.value || '';
+  const record = (APP_DATA.partNameRecords || []).find(item => item.code === code);
+  const partName = String(record?.name || '').trim();
+  const bracelet = partName.toUpperCase() === 'BRACELET PARTS';
+  const detailMaster = _partDetailMasterConfig(partName);
+  document.getElementById('part-detail-text-group')?.classList.toggle('hidden', bracelet || Boolean(detailMaster));
+  document.getElementById('part-detail-master-group')?.classList.toggle('hidden', !detailMaster);
+  document.getElementById('part-bracelet-quantity-group')?.classList.toggle('hidden', !bracelet);
+  const masterLabel = document.getElementById('part-detail-master-label');
+  if (masterLabel) masterLabel.textContent = detailMaster?.label || '詳細';
+  _populatePartDetailMaster(detailMaster);
+  if (detailMaster) {
+    const detail = document.getElementById('part-detail');
+    if (detail) detail.value = '';
+  }
+  if (!bracelet) {
+    const quantity = document.getElementById('part-bracelet-quantity');
+    if (quantity) quantity.value = '';
+  }
+}
+
+function resetPartRegistrationForm(options = {}) {
+  const preserveDate = options.preserveDate ? document.getElementById('part-date')?.value : '';
+  ['part-code','part-cost','part-sku','part-model','part-ref','part-detail','part-detail-master','part-bracelet-quantity','part-sale-price-usd','part-notes','part-internal-comment'].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) { input.value = ''; if (input.dataset) input.dataset.rawValue = ''; }
+  });
+  ['part-staff','part-supplier','part-brand','part-name'].forEach(id => {
+    const select = document.getElementById(id);
+    if (select) select.value = '';
+  });
+  const date = document.getElementById('part-date');
+  if (date) date.value = preserveDate || getLocalDateISO();
+  _partPurchaseType = 'domestic';
+  _partCurrency = 'JPY';
+  _updatePartRegistrationUI();
+  partNameChanged();
+  if (!options.silent) showToast('info', 'リセット', 'パーツ登録フォームをリセットしました');
+}
+
+async function savePartRegistration() {
+  if (isWorker()) {
+    showToast('warning', '管理者承認が必要です', '原価を含むパーツ登録は管理者のみ実行できます');
+    return;
+  }
+  const date = document.getElementById('part-date')?.value || '';
+  let code = String(document.getElementById('part-code')?.value || '').trim().toUpperCase();
+  if (!code) code = partAssignCode();
+  const supplier = document.getElementById('part-supplier')?.value || '';
+  const partNameCode = document.getElementById('part-name')?.value || '';
+  const cost = getPriceValue(document.getElementById('part-cost'));
+  const salePriceUsd = getPriceValue(document.getElementById('part-sale-price-usd'));
+  const expectedPrefix = date ? `P${date.slice(8,10)}${date.slice(5,7)}${date.slice(2,4)}` : '';
+  if (!date || !code || !/^P\d{10}$/.test(code) || !code.startsWith(expectedPrefix)) {
+    showToast('error', '管理番号を確認してください', 'P＋日・月・西暦下2桁＋4桁連番で、仕入日と一致する番号を指定してください');
+    return;
+  }
+  if ((_partPurchaseType !== 'personal' && !supplier) || !partNameCode || cost <= 0) {
+    showToast('error', '入力エラー', _partPurchaseType === 'personal'
+      ? '原価とパーツ名は必須です'
+      : '仕入先・原価・パーツ名は必須です');
+    return;
+  }
+  const partName = (APP_DATA.partNameRecords || []).find(item => item.code === partNameCode)?.name || '';
+  const bracelet = String(partName).toUpperCase() === 'BRACELET PARTS';
+  const detailMaster = _partDetailMasterConfig(partName);
+  const detailMasterCode = detailMaster ? String(document.getElementById('part-detail-master')?.value || '').trim() : '';
+  const detailMasterName = detailMaster
+    ? ((APP_DATA[detailMaster.recordsKey] || []).find(item => item.code === detailMasterCode)?.name || '')
+    : '';
+  const braceletQuantity = bracelet ? Number(document.getElementById('part-bracelet-quantity')?.value) : null;
+  if (bracelet && (!Number.isInteger(braceletQuantity) || braceletQuantity < 0)) {
+    showToast('error', 'コマ数を確認してください', 'BRACELET PARTSは0以上の整数でコマ数を入力してください');
+    return;
+  }
+  const brand = document.getElementById('part-brand')?.value || '';
+  const staffName = document.getElementById('part-staff')?.value || '';
+  const payload = {
+    partCode: code, purchaseDate: date, supplierCode: supplier,
+    staffCode: (APP_DATA.staffRecords || []).find(item => item.name === staffName)?.code || '',
+    purchaseTaxMode: _partPurchaseType,
+    taxCategory: document.getElementById('part-tax-category')?.value || 'consumption_tax',
+    costAmountMinor: cost, costCurrency: _partCurrency,
+    sku: String(document.getElementById('part-sku')?.value || '').trim(),
+    brandCode: (APP_DATA.brandRecords || []).find(item => item.name === brand)?.code || '',
+    modelName: String(document.getElementById('part-model')?.value || '').trim(),
+    referenceNumber: String(document.getElementById('part-ref')?.value || '').trim(),
+    partNameCode,
+    detailText: bracelet ? '' : (detailMaster ? detailMasterName : String(document.getElementById('part-detail')?.value || '').trim()),
+    detailMasterType: detailMaster?.type || '',
+    detailMasterCode,
+    braceletQuantity: bracelet ? braceletQuantity : null,
+    salePriceUsdMinor: Math.max(0, salePriceUsd),
+    notes: String(document.getElementById('part-notes')?.value || '').trim(),
+    internalComment: String(document.getElementById('part-internal-comment')?.value || '').trim(),
+  };
+  const button = document.getElementById('part-save-button');
+  if (button) { button.disabled = true; button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> 登録中...'; }
+  try {
+    let record;
+    if (window.ZaikoAPI?.createPart) {
+      record = await window.ZaikoAPI.createPart(payload);
+    } else {
+      record = { ...payload, id: `part-${Date.now()}`, partName, fixedCostJpyMinor: puPurchaseAmountToJPY(cost, _partCurrency) };
+      APP_DATA.parts = [...(APP_DATA.parts || []), record];
+    }
+    resetPartRegistrationForm({ preserveDate: true, silent: true });
+    renderPartInventoryTable();
+    showToast('success', 'パーツを登録しました', `${record.partCode || code} / ${record.partName || partName}`);
+  } catch (error) {
+    showToast('error', 'パーツ登録エラー', error.message || '入力内容を確認してください');
+  } finally {
+    if (button) { button.disabled = false; button.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> パーツを登録する'; }
+  }
 }
 
 let uploadedImages = [];
@@ -4566,7 +5324,8 @@ async function savePurchase() {
         purchaseTaxMode: purchaseType, taxCategory,
         costAmountMinor: purchasePrice, costCurrency: purchaseCurrency,
         baseSalePriceMinor: getPriceValue(document.getElementById('pu-sale-price')), baseSaleCurrency: 'USD',
-        notes: [document.getElementById('pu-note')?.value, document.getElementById('pu-comment')?.value].filter(Boolean).join('\n'),
+        notes: document.getElementById('pu-note')?.value || '',
+        internalComment: document.getElementById('pu-comment')?.value || '',
       }, uploadedImageFiles);
       savePurchaseCarryover();
       _puClearMatchState(); _puFullResetForm(); _puRestoreAfterSubmit();
@@ -4855,7 +5614,7 @@ function _puRegisterNewInventory(code, brand, dateVal, supplier, purchasePrice, 
     purchaseType: puNormalizePurchaseType(purchaseContext.purchaseType || PU_PURCHASE_TYPE_DOMESTIC),
     taxCategory: puNormalizeTaxCategory(purchaseContext.taxCategory || PU_TAX_CATEGORY_CONSUMPTION),
     purchaseDate:  dateVal,
-    status:        '在庫中',
+    status:        '仕入中',
     material:      document.getElementById('pu-material')?.value   || '',
     movement:      document.getElementById('pu-movement')?.value   || '',
     condition:     document.getElementById('pu-condition')?.value  || '',
@@ -5482,6 +6241,16 @@ function initSlipList() {
   switchSlipTab(currentSlipTab);
 }
 
+function configureSlipStatusOptions(type, selectedValue = 'processing') {
+  const statusFilter = document.getElementById('slip-filter-status');
+  if (!statusFilter) return;
+  const options = type === 'purchase'
+    ? [['processing', '処理中'], ['unpaid', '未払い'], ['completed', '処理済'], ['', 'すべて']]
+    : [['processing', '処理中'], ['completed', '処理済'], ['', 'すべて']];
+  statusFilter.innerHTML = options.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+  statusFilter.value = options.some(([value]) => value === selectedValue) ? selectedValue : '';
+}
+
 // ── タブ切替 ──
 function switchSlipTab(type) {
   currentSlipTab = type;
@@ -5496,8 +6265,7 @@ function switchSlipTab(type) {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
-  const statusFilter = document.getElementById('slip-filter-status');
-  if (statusFilter) statusFilter.value = 'processing';
+  configureSlipStatusOptions(type, 'processing');
   // タブをまたいで誤発行しないよう、全伝票の選択状態をリセットする。
   _slResetSelection();
   _shResetSelection();
@@ -5514,8 +6282,7 @@ function switchSlipTabPending(type) {
     document.getElementById('sltab-' + t)?.classList.toggle('active', t === type);
   });
   rebuildSlipPartySelect(type);
-  const statusFilter = document.getElementById('slip-filter-status');
-  if (statusFilter) statusFilter.value = '';
+  configureSlipStatusOptions(type, '');
 
   // 売上伝票選択状態をリセット
   _slResetSelection();
@@ -5655,10 +6422,8 @@ function refreshSlipList() {
  * 承認待ち・差戻し・未処理など、次の操作が必要な状態はすべて「処理中」とする。
  */
 function getSlipSearchStatus(record, tabType = currentSlipTab) {
-  // 仕入伝票一覧で表示する伝票ステータスは入金確認の完了状態。
-  // DB上の record.status は承認・確定フローの状態なので、検索には使用しない。
   if (tabType === 'purchase') {
-    return record?.paidAt ? 'completed' : 'processing';
+    return getPurchaseSlipStatusKeys(record)[0];
   }
 
   // 売上伝票は入金確認済みだけを処理済とする。
@@ -5694,6 +6459,36 @@ function getSlipSearchStatus(record, tabType = currentSlipTab) {
   return 'processing';
 }
 
+/** 仕入伝票は、未入荷（仕入中）の商品が1点でもある場合だけ処理中。 */
+function getPurchaseArrivalStatus(record) {
+  const hasPurchasingItem = (record?.lines || []).some(line => {
+    const inventoryItem = (APP_DATA.inventory || []).find(item => item.code === line.code);
+    return normalizeInventoryStatusLabel(inventoryItem?.status || line.currentStatus || '') === '仕入中';
+  });
+  if (hasPurchasingItem || Number(record?.pendingArrivalCount) > 0) return '処理中';
+  return '処理済';
+}
+
+/** 仕入伝票の複合ステータス。処理中と未払いは同時に成立する。 */
+function getPurchaseSlipStatusKeys(record) {
+  const statuses = [];
+  if (getPurchaseArrivalStatus(record) === '処理中') statuses.push('processing');
+  if (!record?.paidAt) statuses.push('unpaid');
+  if (statuses.length === 0) statuses.push('completed');
+  return statuses;
+}
+
+function renderPurchaseSlipStatusBadges(record, { showPendingCount = false } = {}) {
+  const labels = { processing: '処理中', unpaid: '未払い', completed: '処理済' };
+  const statuses = getPurchaseSlipStatusKeys(record);
+  const badges = statuses.map(status => _slipStatusBadge(labels[status], record?.id, 'purchase')).join('');
+  const pendingCount = Number(record?.pendingArrivalCount)
+    || (record?.lines || []).filter(line => normalizeInventoryStatusLabel(line.currentStatus) === '仕入中').length;
+  const count = showPendingCount && statuses.includes('processing')
+    ? `<small class="purchase-arrival-count">入荷待ち ${pendingCount}点</small>` : '';
+  return `<span class="purchase-slip-status-stack">${badges}</span>${count}`;
+}
+
 /**
  * 出荷伝票に含まれる商品の現在状態から伝票ステータスを算出する。
  * 旧画面・DBでは「出荷中」を「出荷済」と保存しているため、両表記を配送中として扱う。
@@ -5719,6 +6514,7 @@ function getConsignmentProcessingStatus(record) {
 }
 
 function matchesSlipStatusFilter(record, statusFilter, tabType = currentSlipTab) {
+  if (tabType === 'purchase') return !statusFilter || getPurchaseSlipStatusKeys(record).includes(statusFilter);
   return !statusFilter || getSlipSearchStatus(record, tabType) === statusFilter;
 }
 
@@ -5958,7 +6754,8 @@ function renderSlipList(data) {
     const statusValue = document.getElementById('slip-filter-status')?.value || '';
     summaryScope.textContent = statusValue === 'processing'
       ? '処理中の表示件数 / DB全件数'
-      : (statusValue === 'completed' ? '処理済の表示件数 / DB全件数' : '表示件数 / DB全件数');
+      : (statusValue === 'unpaid' ? '未払いの表示件数 / DB全件数'
+        : (statusValue === 'completed' ? '処理済の表示件数 / DB全件数' : '表示件数 / DB全件数'));
   }
   const summaryUsesUSD = ['shipping', 'sales', 'salesreturn'].includes(currentSlipTab);
   const summaryTotalLabel = document.getElementById('slipSummaryTotalLabel');
@@ -6005,8 +6802,8 @@ function renderSlipList(data) {
       <th>備考</th><th style="text-align:center;">伝票ステータス</th>
       <th style="width:92px;text-align:center;">発行</th>
       <th style="width:120px;text-align:center;">発行日</th>
-      <th style="width:105px;text-align:center;">入金確認</th>
-      <th style="width:120px;text-align:center;">入金日付</th>
+      <th style="width:105px;text-align:center;">支払確認</th>
+      <th style="width:120px;text-align:center;">支払日付</th>
       <th style="width:92px;text-align:center;">操作</th>
     </tr>`;
   } else if (currentSlipTab === 'shipping') {
@@ -6182,21 +6979,12 @@ function _slipUpdateBulkControls() {
     sales: '請求書', purchasereturn: '仕入返品伝票', salesreturn: '売上返品伝票',
   };
   const documentLabel = actionLabels[currentSlipTab] || '伝票';
-  const issueLabels = {
-    purchase: '明細書発行',
-    shipping: '明細書発行',
-    consignment: '明細書発行',
-    sales: '請求書発行',
-    purchasereturn: '仕入返品伝票発行',
-    salesreturn: '売上返品伝票発行',
-  };
   if (controls) controls.style.display = 'flex';
   if (badge) {
     badge.textContent = `${set.size}件選択`;
     badge.style.display = set.size ? 'inline-flex' : 'none';
   }
   [
-    ['slipBulkPreviewBtn', 'fa-eye', issueLabels[currentSlipTab] || '伝票発行'],
     ['slipBulkDownloadBtn', 'fa-download', `${documentLabel}ダウンロード`],
     ['slipBulkPrintBtn', 'fa-print', `${documentLabel}印刷`],
   ].forEach(([id, icon, label]) => {
@@ -6330,10 +7118,7 @@ function buildSlipRow(row) {
     const lineCount = (row.lines || []).length;
     const hasRev = (row.revisions||[]).length > 0;
     const revIcon = hasRev ? `<i class="fa-solid fa-circle-check" style="color:#e07b39;" title="修正済"></i>` : '—';
-    // ③④ 要承認ラベル（承認待ちのときのみ）
-    const paymentStatus = row.paidAt
-      ? '<span class="badge badge-approved">処理済</span>'
-      : '<span class="badge badge-pending">処理中</span>';
+    const purchaseStatusBadges = renderPurchaseSlipStatusBadges(row, { showPendingCount: true });
     const canIssue = canIssuePurchaseSlip();
     const issueLabel = row.issuedAt ? '再発行' : '発行';
     return `<tr class="slip-list-row${row.status === '承認待ち' ? ' slip-row-pending' : ''}" onclick="openSlipDetail('purchase','${row.id}')">
@@ -6347,7 +7132,7 @@ function buildSlipRow(row) {
       <td class="purchase-list-money-cell">${displayAmounts.costHTML}</td>
       <td class="purchase-list-money-cell">${displayAmounts.saleHTML}</td>
       <td class="purchase-list-note-cell" title="${_escHtml(row.note||'')}">${_escHtml(row.note||'—')}</td>
-      <td style="text-align:center;">${paymentStatus}${hasRev ? ` ${revIcon}` : ''}</td>
+      <td style="text-align:center;">${purchaseStatusBadges}${hasRev ? ` ${revIcon}` : ''}</td>
       <td style="text-align:center;" onclick="event.stopPropagation()">
         <button type="button" class="btn btn-primary btn-sm purchase-issue-button" ${canIssue ? '' : 'disabled'}
           onclick="issuePurchaseSlipDocument('${row.id}', event)" title="${canIssue ? '発行日時を記録して仕入伝票をダウンロード' : '管理者のみ発行できます'}">
@@ -6358,11 +7143,11 @@ function buildSlipRow(row) {
       <td style="text-align:center;" onclick="event.stopPropagation()">
         <button type="button" class="btn btn-sm ${row.paidAt ? 'btn-outline' : 'btn-success'} purchase-paid-button"
           onclick="markPurchasePaidFromList('${row.id}',event)" ${row.paidAt ? 'disabled' : ''}
-          title="${row.paidAt ? '入金確認済みです' : '入金済みとして日時を記録'}">
-          <i class="fa-solid fa-${row.paidAt ? 'circle-check' : 'money-check-dollar'}"></i> 入金済
+          title="${row.paidAt ? '支払確認済みです' : '支払済みとして日付を記録'}">
+          <i class="fa-solid fa-${row.paidAt ? 'circle-check' : 'money-check-dollar'}"></i> 支払済
         </button>
       </td>
-      <td class="issued-at-cell" style="text-align:center;">${formatPaidAtStacked(row.paidAt)}</td>
+      <td class="issued-at-cell" style="text-align:center;">${formatPurchasePaidAtStacked(row.paidAt)}</td>
       <td style="text-align:center;" onclick="event.stopPropagation()">
         <button type="button" class="btn btn-sm btn-danger purchase-delete-button"
           onclick="deletePurchaseSlipFromList('${row.id}',event)" title="この仕入伝票を削除">
@@ -6558,6 +7343,7 @@ function _slipStatusBadge(status, slipId, tabType) {
     '差戻し':   ['#dc2626','#fef2f2','#fca5a5'],
     '処理中':   ['#d97706','#fffbeb','#fcd34d'],
     '処理済':   ['#16a34a','#f0fdf4','#86efac'],
+    '未払い':   ['#dc2626','#fef2f2','#fca5a5'],
     '仕入返品処理中': ['#d97706','#fffbeb','#fcd34d'],
     '仕入返品処理済': ['#16a34a','#f0fdf4','#86efac'],
     '売上返品処理中': ['#d97706','#fffbeb','#fcd34d'],
@@ -8278,6 +9064,19 @@ function closeSlipDetail() {
   document.getElementById('slipDetailOverlay')?.classList.add('hidden');
 }
 
+/** 仕入伝票の明細行から商品詳細を重ねて表示する。 */
+function openPurchaseSlipLineDetail(code) {
+  const productCode = String(code || '').trim();
+  if (!productCode) return;
+  const item = (APP_DATA.inventory || []).find(candidate => candidate.code === productCode);
+  if (!item) {
+    showToast('warning', '商品詳細を表示できません', `${productCode} の在庫情報が見つかりません`);
+    return;
+  }
+  document.getElementById('itemDetailModal')?.classList.add('item-detail-over-slip');
+  showItemDetail(productCode);
+}
+
 function buildSlipDetailBody(type, rec) {
   let metaHtml = '';
   let itemsHtml = '';
@@ -8296,6 +9095,7 @@ function buildSlipDetailBody(type, rec) {
         ${metaRow('<i class="fa-solid fa-file-circle-check"></i> 発行日時', formatPurchaseIssuedAt(rec.issuedAt))}
         ${metaRow('<i class="fa-solid fa-industry"></i> 仕入先',         getSupplierName(rec.supplier))}
         ${metaRow('<i class="fa-solid fa-user"></i> 仕入担当者',          rec.staff||'—')}
+		${metaRow('<i class="fa-solid fa-boxes-stacked"></i> 伝票ステータス', renderPurchaseSlipStatusBadges(rec, { showPendingCount: true }))}
         ${metaRow('<i class="fa-solid fa-receipt"></i> 仕入区分・税区分', `${purchaseTax.modeLabel}（${purchaseTax.taxLabel}）`)}
         ${metaRow('<i class="fa-solid fa-wallet"></i> 支払い方法', getPurchasePaymentMethodLabel(rec.paymentMethod))}
         ${metaRow('<i class="fa-solid fa-arrow-right-arrow-left"></i> 仕入レート', fixedRate.currency === 'JPY' ? '1 JPY = ¥1.00' : `1 ${fixedRate.currency} = ¥${fixedRate.rate.toFixed(2)}（登録時固定）`)}
@@ -8317,6 +9117,7 @@ function buildSlipDetailBody(type, rec) {
             <col class="purchase-slip-col-sku">
             <col class="purchase-slip-col-brand">
             <col class="purchase-slip-col-model">
+            <col class="purchase-slip-col-status">
             <col class="purchase-slip-col-purchase">
             <col class="purchase-slip-col-tax">
             <col class="purchase-slip-col-sale">
@@ -8328,6 +9129,7 @@ function buildSlipDetailBody(type, rec) {
               <th>SKU</th>
               <th>ブランド</th>
               <th>モデル</th>
+              <th>ステータス</th>
               <th class="purchase-slip-money-cell">仕入金額（${purchaseTax.mode === 'overseas' ? 'USD' : 'JPY'}・税抜）</th>
               <th class="purchase-slip-tax-cell">税区分 / 税額</th>
               <th class="purchase-slip-money-cell">売価（USD）</th>
@@ -8336,12 +9138,17 @@ function buildSlipDetailBody(type, rec) {
           <tbody>
             ${(rec.lines || []).map(l => {
               const d = getCurrentPurchaseLineDetail(l);
-              return `<tr>
+              return `<tr class="purchase-slip-product-row" tabindex="0" role="button"
+                data-product-code="${_escStrHtml(l.code || '')}"
+                aria-label="管理番号 ${_escStrHtml(l.code || '')} の商品詳細を表示"
+                onclick="openPurchaseSlipLineDetail(this.dataset.productCode)"
+                onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openPurchaseSlipLineDetail(this.dataset.productCode);}">
                 <td class="purchase-slip-no-cell">${l.lineNo}</td>
                 <td><code style="font-size:11px;">${l.code}</code></td>
                 <td class="purchase-slip-wrap-cell">${l.sku || '—'}</td>
                 <td>${d.brand  || '—'}</td>
                 <td class="purchase-slip-model-cell">${d.model || '—'}</td>
+                <td>${getStatusBadge(normalizeInventoryStatusLabel(l.currentStatus) || '—')}</td>
                 <td class="purchase-slip-money-cell purchase-slip-purchase-amount">${formatPurchaseSlipAmount(l.purchasePrice||0, rec)}</td>
                 <td class="purchase-slip-tax-cell">${purchaseHasTaxDisplay
                   ? `<span class="purchase-slip-tax-type">${purchaseTax.taxLabel}</span><strong class="purchase-slip-tax-amount">${formatPurchaseSlipAmount(Math.floor((Number(l.purchasePrice) || 0) * 0.1), rec)}</strong>`
@@ -8352,17 +9159,17 @@ function buildSlipDetailBody(type, rec) {
           </tbody>
           <tfoot>
             <tr class="purchase-slip-summary-row">
-              <td colspan="5" class="purchase-slip-summary-label">仕入小計</td>
+              <td colspan="6" class="purchase-slip-summary-label">仕入小計</td>
               <td class="purchase-slip-money-cell purchase-slip-purchase-amount">${formatPurchaseSlipAmount(purchaseTax.subtotal, rec)}</td>
               <td class="purchase-slip-tax-cell">${purchaseHasTaxDisplay
                 ? `<span class="purchase-slip-tax-type">${purchaseTax.taxLabel}</span><strong class="purchase-slip-tax-amount">${formatPurchaseSlipAmount(purchaseTaxDisplayAmount, rec)}</strong>`
                 : '<span class="purchase-slip-tax-type">対象外</span>'}</td>
-              <td class="purchase-slip-money-cell purchase-slip-sale-amount"><span class="purchase-slip-footer-caption">合計売価</span>${formatSalePrice(saleTotal)}</td>
+			  <td class="purchase-slip-money-cell purchase-slip-sale-amount"><span class="purchase-slip-footer-caption">合計売価</span>${formatSalePrice(saleTotal)}</td>
             </tr>
             <tr class="purchase-slip-grand-total-row">
-              <td colspan="5" class="purchase-slip-summary-label">合計仕入金額</td>
+              <td colspan="6" class="purchase-slip-summary-label">合計仕入金額</td>
               <td colspan="2" class="purchase-slip-grand-total">${formatPurchaseSlipAmount(purchaseTax.grandTotal, rec)}</td>
-              <td></td>
+			  <td></td>
             </tr>
           </tfoot>
         </table>
@@ -8582,6 +9389,13 @@ function buildSlipDetailFooter(type, rec) {
        </button>`
     : '';
 
+  const purchaseArrivalScanBtn = (type === 'purchase' && !isGuest_)
+	? `<button class="btn btn-outline purchase-arrival-scan-button" style="display:flex;align-items:center;gap:6px;"
+		 onclick="openPurchaseArrivalScanner('${rec._id || recId}')">
+		 <i class="fa-solid fa-qrcode"></i> 入荷スキャン
+	   </button>`
+	: '';
+
   const consignmentReturnScanBtn = (type === 'consignment' && !isGuest_)
     ? `<button class="btn btn-outline" style="display:flex;align-items:center;gap:6px;"
          onclick="openConsignmentReturnScanner('${rec._id || recId}')">
@@ -8590,7 +9404,7 @@ function buildSlipDetailFooter(type, rec) {
     : '';
 
   return `
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">${shipmentReturnScanBtn}${consignmentReturnScanBtn}${revInfo}</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">${purchaseArrivalScanBtn}${shipmentReturnScanBtn}${consignmentReturnScanBtn}${revInfo}</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;">
       <button class="btn btn-outline" onclick="closeSlipDetail()">
         <i class="fa-solid fa-xmark"></i> 閉じる
@@ -10681,7 +11495,8 @@ function exportSalesCSV()      { exportSlipCSV(); }
 // QRコード / バーコードスキャン機能 (jsQR + getUserMedia)
 // USB/Bluetoothスキャナーは Enter 確定で同一ロジック処理
 // =====================================================
-let _barcodeMode     = null;  // 'pr' | 'sr' | 'shipping' | 'shipment-return' | 'consignment-return' | 'stocktake' | 'inventory-search' | 'product-registration'
+let _barcodeMode     = null;  // 'pr' | 'sr' | 'shipping' | 'purchase-arrival' | 'shipment-return' | 'consignment-return' | 'stocktake' | 'inventory-search' | 'product-registration' | 'cost-adjustment'
+let _purchaseArrivalSlipId = null;
 let _shipmentReturnSlipId = null;
 let _consignmentReturnSlipId = null;
 let _barcodeStream   = null;  // MediaStream
@@ -10691,11 +11506,12 @@ let _barcodeLastCode  = '';
 let _barcodeCooldown  = false; // 連続読み取り防止（同一コードの連打防止）
 let _shipmentReturnScanPending = false;
 let _consignmentReturnScanPending = false;
+let _purchaseArrivalScanPending = false;
 
 /**
  * スキャナーモーダルを開く
  * mode: 'pr' = 仕入返品、'sr' = 売上返品、'shipping' = 出荷登録、'consignment' = 委託登録、'stocktake' = 棚卸、
- *       'inventory-search' = 在庫一覧、'product-registration' = 商品登録
+ *       'inventory-search' = 在庫一覧、'product-registration' = 商品登録、'cost-adjustment' = 原価調整
  */
 function openBarcodeScanner(mode) {
   _barcodeMode      = mode;
@@ -10712,11 +11528,13 @@ function openBarcodeScanner(mode) {
     shipping: '出荷登録の商品管理番号をQRコードから連続読取',
     consignment: '委託登録の商品管理番号をQRコードから連続読取',
     sales: '売上登録の商品管理番号をQRコードから連続読取',
+	'purchase-arrival': '仕入伝票の商品を入荷QRコードから連続読取',
     'shipment-return': '出荷伝票の商品を返却QRコードから連続読取',
     'consignment-return': '委託伝票の商品を返却QRコードから連続読取',
     stocktake: '棚卸用QRコードを読み取る',
     'inventory-search': '在庫一覧の管理番号をQRコードから読み取る',
     'product-registration': '商品登録の管理番号をQRコードから読み取る',
+    'cost-adjustment': '原価調整の商品管理番号をタグ・QRコードから読み取る',
   };
   title.textContent = titleMap[mode] || 'QRコード / バーコードスキャン';
   document.getElementById('barcodeScanCount').textContent = '0';
@@ -10850,6 +11668,10 @@ function _onBarcodeDetected(rawCode) {
     _handleShipmentReturnScan(code, { status, lastEl, codeEl, countEl });
     return;
   }
+  if (_barcodeMode === 'purchase-arrival') {
+	_handlePurchaseArrivalScan(code, { status, lastEl, codeEl, countEl });
+	return;
+  }
   if (_barcodeMode === 'consignment-return') {
     _handleConsignmentReturnScan(code, { status, lastEl, codeEl, countEl });
     return;
@@ -10871,6 +11693,11 @@ function _onBarcodeDetected(rawCode) {
       inputId: 'pu-code',
       toastTitle: '商品の管理番号を読み取りました',
       toastMessage: item => `管理番号 ${item.code} を反映し、既存在庫を照合しました`,
+    },
+    'cost-adjustment': {
+      inputId: 'ca-product-code',
+      toastTitle: '原価調整の商品を読み取りました',
+      toastMessage: item => `管理番号 ${item.code} の商品情報を反映しました`,
     },
   };
   const singleEntryConfig = singleEntryModes[_barcodeMode];
@@ -10894,6 +11721,8 @@ function _onBarcodeDetected(rawCode) {
     } else if (_barcodeMode === 'product-registration' && typeof puCodeSearch === 'function') {
       if (_puManagementNumberLookupTimer) clearTimeout(_puManagementNumberLookupTimer);
       puCodeSearch(item.code);
+    } else if (_barcodeMode === 'cost-adjustment' && typeof costAdjustmentLoadProduct === 'function') {
+      costAdjustmentLoadProduct(item.code);
     }
     _barcodeScanCount = 1;
     if (countEl) countEl.textContent = '1';
@@ -10984,10 +11813,66 @@ function closeBarcodeScanner() {
   document.getElementById('barcodeScanStatus').style.color = 'var(--text-muted)';
   document.getElementById('barcodeLastResult').style.display = 'none';
   _barcodeMode = null;
+	_purchaseArrivalSlipId = null;
+	_purchaseArrivalScanPending = false;
   _shipmentReturnSlipId = null;
   _shipmentReturnScanPending = false;
   _consignmentReturnSlipId = null;
   _consignmentReturnScanPending = false;
+}
+
+function openPurchaseArrivalScanner(purchaseID) {
+  _purchaseArrivalSlipId = purchaseID;
+  openBarcodeScanner('purchase-arrival');
+}
+
+async function _handlePurchaseArrivalScan(code, elements) {
+  const { status, lastEl, codeEl, countEl } = elements;
+  if (_purchaseArrivalScanPending) return;
+  const purchase = (APP_DATA.purchaseSlips || []).find(record => record._id === _purchaseArrivalSlipId || record.id === _purchaseArrivalSlipId);
+  if (!purchase || !window.ZaikoAPI?.receivePurchaseProduct) {
+    if (status) {
+      status.textContent = '入荷対象の仕入伝票を確認できません。伝票を開き直してください。';
+      status.style.color = '#dc2626';
+    }
+    return;
+  }
+  _purchaseArrivalScanPending = true;
+  try {
+    const result = await window.ZaikoAPI.receivePurchaseProduct(purchase, code);
+    if (codeEl) codeEl.textContent = code;
+    if (lastEl) lastEl.style.display = '';
+    if (result.result === 'received') {
+      _barcodeScanCount++;
+      if (countEl) countEl.textContent = String(_barcodeScanCount);
+      if (status) {
+        status.textContent = `✓ ${code} を「在庫中」へ変更しました。次の商品を読み取れます。`;
+        status.style.color = '#16a34a';
+      }
+      if (typeof showToast === 'function') showToast('success', '入荷スキャンが完了しました', `${code} のステータスを在庫中へ変更しました。`);
+    } else if (status) {
+      status.textContent = `${code} はすでに「在庫中」です。`;
+      status.style.color = '#f59e0b';
+    }
+    const refreshed = (APP_DATA.purchaseSlips || []).find(record => record._id === purchase._id || record.id === purchase.id);
+    if (refreshed) {
+      const body = document.getElementById('slipDetailBody');
+      const footer = document.getElementById('slipDetailFooter');
+      if (body) body.innerHTML = buildSlipDetailBody('purchase', refreshed);
+      if (footer) footer.innerHTML = buildSlipDetailFooter('purchase', refreshed);
+    }
+    refreshSlipList();
+  } catch (error) {
+    if (status) {
+      status.textContent = error.message || '入荷処理に失敗しました。';
+      status.style.color = error.status === 404 || error.status === 409 ? '#f59e0b' : '#dc2626';
+    }
+    setTimeout(() => {
+      if (_barcodeLastCode === code) _barcodeLastCode = '';
+    }, 1500);
+  } finally {
+    _purchaseArrivalScanPending = false;
+  }
 }
 
 
@@ -11111,9 +11996,13 @@ function formatPaidAtStacked(value) {
   return value ? formatIssuedAtStacked(value) : '<span class="issued-at-stack issued-at-empty">未入金</span>';
 }
 
+function formatPurchasePaidAtStacked(value) {
+  return value ? formatIssuedAtStacked(value) : '<span class="issued-at-stack issued-at-empty">未払い</span>';
+}
+
 async function markPurchasePaidFromList(slipId, event) {
   event?.stopPropagation?.();
-  if (!requireAdminForSensitiveOperation('仕入伝票の入金確認')) return;
+  if (!requireAdminForSensitiveOperation('仕入伝票の支払確認')) return;
   const slip = (APP_DATA.purchaseSlips || []).find(record => record.id === slipId);
   if (!slip || slip.paidAt) return;
   const button = event?.currentTarget;
@@ -11125,10 +12014,10 @@ async function markPurchasePaidFromList(slipId, event) {
       slip.paidAt = new Date().toISOString();
     }
     renderSlipList(getFilteredSlipData());
-    showToast('success', '入金確認を記録しました', `${slipId} を処理済に変更しました`);
+    showToast('success', '支払確認を記録しました', `${slipId} の支払日付を保存しました`);
   } catch (error) {
-    if (button) { button.disabled = false; button.innerHTML = '<i class="fa-solid fa-money-check-dollar"></i> 入金済'; }
-    showToast('error', '入金確認エラー', error.message || '入金確認を保存できませんでした');
+    if (button) { button.disabled = false; button.innerHTML = '<i class="fa-solid fa-money-check-dollar"></i> 支払済'; }
+    showToast('error', '支払確認エラー', error.message || '支払確認を保存できませんでした');
   }
 }
 
@@ -14913,7 +15802,8 @@ function refreshAccessoryMasterConsumers(previousName = '', nextName = '') {
   if (itemEditArea) {
     const selected = [...itemEditArea.querySelectorAll('input:checked')].map(input => input.value === previousName ? nextName : input.value);
     itemEditArea.innerHTML = getAccessoryMasterNames(selected).map(name => `
-      <label class="checkbox-label ${selected.includes(name) ? 'checked' : ''}"><input type="checkbox" value="${_mEsc(name)}" ${selected.includes(name) ? 'checked' : ''}> ${_mEsc(name)}</label>`).join('');
+      <label class="checkbox-label ${selected.includes(name) ? 'checked' : ''}"><input type="checkbox" value="${_mEsc(name)}" ${selected.includes(name) ? 'checked' : ''} onchange="itemEditAccessoryChanged(this)"> ${_mEsc(name)}</label>`).join('');
+    _itemEditToggleBraceletQuantity(selected.includes('BRACELET PARTS'), undefined, false);
   }
   if (typeof _pepRenderAccessories === 'function') {
     const selected = [...document.querySelectorAll('#pep-accessories input:checked')].map(input => input.value === previousName ? nextName : input.value);
@@ -15293,6 +16183,7 @@ const MASTER_TABS = [
   { key: 'marking',   icon: '<i class="fa-regular fa-heart"></i>',       label: 'マーキング',    data: () => APP_DATA.markingRecords || [] },
   { key: 'belt',      icon: '<i class="fa-solid fa-link"></i>',           label: 'ベルト素材',    data: () => APP_DATA.beltMaterialRecords || [] },
   { key: 'accessory', icon: '<i class="fa-solid fa-box"></i>',            label: '付属品',        data: () => APP_DATA.accessoryRecords || [] },
+  { key: 'partName',  icon: '<i class="fa-solid fa-puzzle-piece"></i>',   label: 'パーツ名',      data: () => APP_DATA.partNameRecords || [] },
   { key: 'condition', icon: '<i class="fa-solid fa-star"></i>',           label: 'コンディション', data: () => APP_DATA.conditions },
   { key: 'fxrate',    icon: '<i class="fa-solid fa-coins"></i>',          label: '外貨レート',    data: () => APP_DATA.fxRates || [] },
   { key: 'box',       icon: '<i class="fa-solid fa-users-gear"></i>',     label: 'ゲスト管理',    data: () => typeof getGuestManagedBuyers === 'function' ? getGuestManagedBuyers() : APP_DATA.guestAccounts },
@@ -15534,6 +16425,7 @@ function _getMasterRawArray(key) {
 	case 'marking':   return APP_DATA.markingRecords || [];
     case 'buyer':     return APP_DATA.buyers;
     case 'accessory': return APP_DATA.accessoryRecords || [];
+    case 'partName':  return APP_DATA.partNameRecords || [];
     case 'condition': return APP_DATA.conditions;
     default:          return [];
   }
@@ -15638,6 +16530,17 @@ function _getMasterFormDef(key) {
         APP_DATA.users = (APP_DATA.users || []).filter(user => user.staffCode !== record.code);
         _syncLegacyStaffNames();
       },
+    },
+    partName: {
+      label: 'パーツ名', icon: '<i class="fa-solid fa-puzzle-piece"></i>',
+      fields: [
+        { id: 'code', label: 'パーツ名コード', type: 'text', required: true, readonly: true, placeholder: '自動採番' },
+        { id: 'name', label: 'パーツ名', type: 'text', required: true, placeholder: '例: ベゼル' },
+      ],
+      getValues: (arr, idx) => ({ ...arr[idx] }),
+      applyNew: (arr, vals) => { arr.push({ code: vals.code, name: vals.name }); },
+      applyEdit: (arr, idx, vals) => { arr[idx] = { ...arr[idx], name: vals.name }; },
+      applyDelete: (arr, idx) => { arr.splice(idx, 1); },
     },
     accessory: {
       label: '付属品', icon: '<i class="fa-solid fa-box"></i>',
@@ -15865,6 +16768,7 @@ function showAddMasterModal(key) {
     auction: { code: nextShortCode('AUC-', APP_DATA.auctionRecords || []) },
     staff: { code: getNextStaffCode() },
     accessory: { code: getNextAccessoryCode() },
+    partName: { code: nextShortCode('PRT-', APP_DATA.partNameRecords || []) },
     condition: { code: getNextConditionCode() },
     material: { code: nextShortCode('MAT-', APP_DATA.materials) },
     movement: { code: nextShortCode('MOV-', APP_DATA.movements) },
@@ -16088,6 +16992,21 @@ async function saveMasterEdit() {
     const duplicateName = arr.some((record, recordIndex) => recordIndex !== idx && record.name.toUpperCase() === vals.name);
     if (duplicateCode || duplicateName) {
       showToast('error', '付属品が重複しています', duplicateCode ? '登録済みではない付属品コードを入力してください' : '同じ名称の付属品が登録されています');
+      return;
+    }
+  }
+
+  if (key === 'partName') {
+    vals.code = vals.code.toUpperCase();
+    if (!/^PRT-[0-9]+$/.test(vals.code)) {
+      showToast('error', 'パーツ名コードを確認してください', 'PRT-010 の形式で自動採番されます');
+      return;
+    }
+    const duplicateCode = arr.some((record, recordIndex) => recordIndex !== idx && record.code.toUpperCase() === vals.code);
+    const normalizedName = vals.name.trim().toLocaleLowerCase('ja');
+    const duplicateName = arr.some((record, recordIndex) => recordIndex !== idx && record.name.trim().toLocaleLowerCase('ja') === normalizedName);
+    if (duplicateCode || duplicateName) {
+      showToast('error', 'パーツ名が重複しています', duplicateCode ? '別のコードを使用してください' : '同じ名称が登録されています');
       return;
     }
   }
@@ -17712,11 +18631,1201 @@ function toggleMarketNavGroup() {
   return setMarketNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
 }
 
+function setInventoryNavGroupExpanded(expanded) {
+  const group = document.getElementById('inventoryNavGroup');
+  const toggle = document.getElementById('inventoryNavToggle');
+  const submenu = document.getElementById('inventoryNavSubmenu');
+  if (!group || !toggle || !submenu) return false;
+  const shouldExpand = Boolean(expanded);
+  group.classList.toggle('expanded', shouldExpand);
+  toggle.setAttribute('aria-expanded', String(shouldExpand));
+  submenu.hidden = !shouldExpand;
+  return shouldExpand;
+}
+
+function toggleInventoryNavGroup() {
+  const toggle = document.getElementById('inventoryNavToggle');
+  return setInventoryNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
+}
+
+// =====================================================
+// 原価調整ワークスペース
+// =====================================================
+const COST_ADJUSTMENT_MODES = {
+  breakdown: '崩し',
+  combine: '結合',
+  swap: '入替',
+};
+
+let _costAdjustmentState = {
+  mode: 'breakdown',
+  product: null,
+  breakdownActive: false,
+  breakdownDraft: null,
+  combineActive: false,
+  combineDraft: null,
+  finalizing: false,
+  attributeValues: {},
+  stageItems: [],
+  partSlots: Array(20).fill(null),
+};
+
+function init_cost_adjustment() {
+  if (!Array.isArray(_costAdjustmentState.partSlots) || _costAdjustmentState.partSlots.length !== 20) {
+    _costAdjustmentState.partSlots = Array(20).fill(null);
+  }
+  costAdjustmentSetMode(_costAdjustmentState.mode || 'breakdown');
+  costAdjustmentRenderPartGrid();
+  costAdjustmentRenderStage();
+  if (_costAdjustmentState.product) {
+    costAdjustmentRenderProduct(_costAdjustmentState.product);
+  }
+  costAdjustmentRenderBreakdownWorkspace();
+}
+
+function costAdjustmentSetMode(mode) {
+  if ((_costAdjustmentState.breakdownActive || _costAdjustmentState.combineActive) && mode !== _costAdjustmentState.mode) {
+    if (typeof showToast === 'function') showToast('info', `${COST_ADJUSTMENT_MODES[_costAdjustmentState.mode]}作業を開始済みです`, '現在の商品では開始済みのモードを継続してください');
+    return _costAdjustmentState.mode;
+  }
+  const nextMode = COST_ADJUSTMENT_MODES[mode] ? mode : 'breakdown';
+  _costAdjustmentState.mode = nextMode;
+  document.querySelectorAll('[data-ca-mode]').forEach(button => {
+    const selected = button.dataset.caMode === nextMode;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-checked', String(selected));
+  });
+  const label = document.getElementById('ca-stage-mode-label');
+  if (label) label.textContent = `${COST_ADJUSTMENT_MODES[nextMode]}モード`;
+  costAdjustmentRenderBreakdownWorkspace();
+  return nextMode;
+}
+
+function _costAdjustmentCanStart() {
+  if (!_costAdjustmentState.product || _costAdjustmentState.breakdownActive || _costAdjustmentState.combineActive) return false;
+  if (_costAdjustmentState.mode === 'breakdown') return true;
+  if (_costAdjustmentState.mode === 'combine') return _costAdjustmentState.partSlots.some(item => item?.type === 'part' && item?.part);
+  return false;
+}
+
+function _costAdjustmentUpdateStartButton() {
+  const button = document.getElementById('ca-start-button');
+  if (!button) return;
+  button.disabled = !_costAdjustmentCanStart();
+}
+
+function _costAdjustmentMasterName(records, value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '未選択';
+  const match = (records || []).find(record => String(record.code || '') === raw || String(record.name || '') === raw);
+  return match?.name || raw;
+}
+
+function _costAdjustmentAttributeValues(item) {
+  const accessories = Array.isArray(item?.accessories)
+    ? item.accessories.filter(Boolean).join('・')
+    : String(item?.accessories || '').trim();
+  return {
+    material: _costAdjustmentMasterName(APP_DATA.materials, item?.material),
+    belt: _costAdjustmentMasterName(APP_DATA.beltMaterialRecords, item?.beltMaterial || item?.belt),
+    dial: _costAdjustmentMasterName(APP_DATA.dialRecords, item?.dial),
+    accessories: accessories || '未選択',
+    note: String(item?.note || '').trim() || '—',
+  };
+}
+
+function _costAdjustmentCost(item) {
+  const amount = Number(item?.purchasePrice ?? item?.costJPY ?? item?.cost ?? 0);
+  return Number.isFinite(amount) && amount >= 0 ? `¥${amount.toLocaleString('ja-JP')}` : '—';
+}
+
+function costAdjustmentRenderProduct(item) {
+  if (!item) return false;
+  const fields = {
+    'ca-product-brand': item.brand || '—',
+    'ca-product-ref': item.ref || '—',
+    'ca-product-model': item.model || '—',
+    'ca-product-cost': _costAdjustmentCost(item),
+    'ca-product-sku': item.sku || '—',
+    'ca-product-status': normalizeInventoryStatusLabel(item.status) || '—',
+  };
+  Object.entries(fields).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value;
+  });
+
+  _costAdjustmentState.attributeValues = _costAdjustmentAttributeValues(item);
+  Object.entries(_costAdjustmentState.attributeValues).forEach(([key, value]) => {
+    const element = document.getElementById(`ca-attribute-${key}`);
+    if (element) element.textContent = value;
+  });
+
+  const placeholder = document.getElementById('ca-product-placeholder');
+  const details = document.getElementById('ca-product-details');
+  const startButton = document.getElementById('ca-start-button');
+  if (placeholder) placeholder.hidden = true;
+  if (details) details.hidden = false;
+  if (startButton) _costAdjustmentUpdateStartButton();
+  return true;
+}
+
+function costAdjustmentResetBreakdownWorkspace() {
+  _costAdjustmentState.breakdownActive = false;
+  _costAdjustmentState.breakdownDraft = null;
+  _costAdjustmentState.combineActive = false;
+  _costAdjustmentState.combineDraft = null;
+  _costAdjustmentState.finalizing = false;
+  costAdjustmentRenderBreakdownWorkspace();
+  costAdjustmentRenderPartGrid();
+  costAdjustmentRenderAllocationSummary();
+}
+
+function costAdjustmentRenderBreakdownWorkspace() {
+  const active = Boolean(_costAdjustmentState.breakdownActive && _costAdjustmentState.mode === 'breakdown');
+  const combineActive = Boolean(_costAdjustmentState.combineActive && _costAdjustmentState.mode === 'combine');
+  const workflowActive = active || combineActive;
+  const breakdownLocked = Boolean(active && _costAdjustmentState.breakdownDraft);
+  const panel = document.getElementById('ca-parts-panel');
+  const title = document.getElementById('ca-parts-title');
+  const subtitle = document.getElementById('ca-parts-subtitle');
+  const guide = document.getElementById('ca-breakdown-drop-guide');
+  const summary = document.getElementById('ca-product-summary');
+  const startButton = document.getElementById('ca-start-button');
+  const result = document.getElementById('ca-breakdown-result');
+  const partEntry = document.querySelector('#ca-parts-panel .ca-part-entry');
+  const partInput = document.getElementById('ca-part-code');
+  const partButton = document.querySelector('#ca-parts-panel .ca-add-part-button');
+
+  panel?.classList.toggle('ca-breakdown-active', active);
+  panel?.classList.toggle('ca-combine-active', combineActive);
+  if (title) title.textContent = active ? '崩し作業スペース' : 'パーツBOX';
+  if (subtitle) subtitle.textContent = active
+    ? '対象商品を丸ごとドラッグ＆ドロップ'
+    : (combineActive ? 'パーツを左の対象商品へドラッグ＆ドロップ' : '4列×5段・ドラッグ移動対応');
+  if (guide) guide.hidden = !active;
+  if (summary) {
+    summary.draggable = active;
+    summary.classList.toggle('ca-product-draggable', active);
+    summary.classList.toggle('ca-combine-drop-target', combineActive);
+  }
+  const partEntryLocked = breakdownLocked || combineActive;
+  partEntry?.classList.toggle('ca-entry-disabled', partEntryLocked);
+  if (partInput) partInput.disabled = partEntryLocked;
+  if (partButton) partButton.disabled = partEntryLocked;
+  document.querySelectorAll('[data-ca-mode]').forEach(button => {
+    button.disabled = workflowActive;
+  });
+  if (startButton && workflowActive) {
+    startButton.disabled = true;
+    startButton.innerHTML = '<i class="fa-solid fa-circle-check"></i> 原価調整中';
+  } else if (startButton) {
+    startButton.innerHTML = '<i class="fa-solid fa-play"></i> 原価調整開始';
+    _costAdjustmentUpdateStartButton();
+  }
+  if (result) {
+    const draft = _costAdjustmentState.breakdownDraft;
+    result.hidden = !active || !draft;
+    result.innerHTML = draft ? `
+      <strong><i class="fa-solid fa-box-open"></i> ${_escHtml(draft.code)} の崩し内容</strong>
+      <span>商品 <b>${draft.productCount}</b> 点</span>
+      <span>パーツ <b>${draft.partCount}</b> 点</span>` : '';
+  }
+  costAdjustmentRenderCombineDiff();
+  costAdjustmentRenderAllocationSummary();
+  return workflowActive;
+}
+
+function costAdjustmentLoadProduct(codeValue) {
+  if (_costAdjustmentState.breakdownActive || _costAdjustmentState.combineActive) {
+    if (typeof showToast === 'function') showToast('info', '原価調整を開始済みです', '現在の作業を確定してから別の商品を読み込んでください');
+    return false;
+  }
+  const input = document.getElementById('ca-product-code');
+  const requested = String(codeValue ?? input?.value ?? '').trim();
+  const feedback = document.getElementById('ca-product-feedback');
+  if (!requested) {
+    if (feedback) {
+      feedback.textContent = '商品管理番号を入力してください';
+      feedback.className = 'ca-input-feedback error';
+    }
+    input?.focus();
+    return false;
+  }
+
+  const item = (APP_DATA.inventory || []).find(candidate =>
+    String(candidate.code || '').trim().toUpperCase() === requested.toUpperCase());
+  if (!item) {
+    if (feedback) {
+      feedback.textContent = `「${requested}」に一致する商品がありません`;
+      feedback.className = 'ca-input-feedback error';
+    }
+    if (typeof showToast === 'function') showToast('error', '商品が見つかりません', '管理番号を確認してください');
+    return false;
+  }
+
+  _costAdjustmentState.product = item;
+  _costAdjustmentState.stageItems = [];
+  costAdjustmentResetBreakdownWorkspace();
+  if (input) input.value = item.code;
+  costAdjustmentRenderProduct(item);
+  costAdjustmentRenderStage();
+  if (feedback) {
+    feedback.textContent = `管理番号 ${item.code} を読み込みました`;
+    feedback.className = 'ca-input-feedback success';
+  }
+  if (typeof showToast === 'function') {
+    showToast('success', '対象商品を読み込みました', `${item.brand || ''} ${item.model || ''}`.trim());
+  }
+  return true;
+}
+
+function costAdjustmentAddPart(codeValue) {
+  if ((_costAdjustmentState.breakdownActive && _costAdjustmentState.breakdownDraft) || _costAdjustmentState.combineActive) {
+    if (typeof showToast === 'function') showToast('info', '崩し内容は確定済みです', '確定後の枠にはパーツを追加できません');
+    return false;
+  }
+  const input = document.getElementById('ca-part-code');
+  const code = String(codeValue ?? input?.value ?? '').trim();
+  if (!code) {
+    input?.focus();
+    if (typeof showToast === 'function') showToast('error', 'パーツ管理番号が未入力です', '番号を入力してください');
+    return false;
+  }
+
+  const alreadyExists = _costAdjustmentState.partSlots.some(item => item?.label === code)
+    || _costAdjustmentState.stageItems.some(item => item?.type === 'part' && item?.label === code);
+  if (alreadyExists) {
+    if (typeof showToast === 'function') showToast('info', '登録済みのパーツです', code);
+    return false;
+  }
+
+  const emptyIndex = _costAdjustmentState.partSlots.findIndex(item => !item);
+  if (emptyIndex < 0) {
+    if (typeof showToast === 'function') showToast('error', 'パーツBOXがいっぱいです', '中央へ移動して空きを作ってください');
+    return false;
+  }
+
+  let part = null;
+  if (_costAdjustmentState.mode === 'combine') {
+    part = (APP_DATA.parts || []).find(candidate => String(candidate.partCode || candidate.code || '').trim().toUpperCase() === code.toUpperCase());
+    if (!part) {
+      if (typeof showToast === 'function') showToast('error', 'パーツが見つかりません', '登録済みのパーツ管理番号を入力してください');
+      return false;
+    }
+    const status = String(part.status || '').trim();
+    if (!['in_stock', '在庫中'].includes(status)) {
+      if (typeof showToast === 'function') showToast('error', 'このパーツは結合できません', `現在のステータス: ${status || '不明'}`);
+      return false;
+    }
+  }
+  _costAdjustmentState.partSlots[emptyIndex] = {
+    id: `part-${Date.now()}-${emptyIndex}`,
+    type: 'part',
+    label: code,
+    part,
+  };
+  if (input) {
+    input.value = '';
+    input.focus();
+  }
+  costAdjustmentRenderPartGrid();
+  _costAdjustmentUpdateStartButton();
+  return true;
+}
+
+function _costAdjustmentCloneProduct(item) {
+  return {
+    ...item,
+    accessories: Array.isArray(item?.accessories) ? [...item.accessories] : [],
+    braceletQty: item?.braceletQty ?? null,
+    purchasePrice: Math.max(0, Number(item?.purchasePrice || 0)),
+    note: String(item?.note || ''),
+    comment: String(item?.comment || ''),
+  };
+}
+
+function _costAdjustmentPartDetail(part) {
+  const type = String(part?.detailMasterType || '');
+  const code = String(part?.detailMasterCode || '');
+  const records = type === 'material' ? APP_DATA.materials
+    : (type === 'belt' ? APP_DATA.beltMaterialRecords : (type === 'dial' ? APP_DATA.dialRecords : []));
+  return (records || []).find(record => record.code === code)?.name || String(part?.detailText || '').trim();
+}
+
+function _costAdjustmentApplyCombinePart(part) {
+  const draft = _costAdjustmentState.combineDraft;
+  if (!draft || !part) return false;
+  const id = part.id || part._id || part.partCode;
+  if (draft.appliedParts.some(item => (item.id || item._id || item.partCode) === id)) return false;
+  const preview = draft.preview;
+  const partName = String(part.partName || '').trim();
+  const detail = _costAdjustmentPartDetail(part);
+  const accessories = new Set(preview.accessories || []);
+  if (partName === '素材') preview.material = part.detailMasterCode || detail || preview.material;
+  else if (partName === 'ベルト素材') preview.belt = detail || preview.belt;
+  else if (partName === '文字盤') preview.dial = detail || preview.dial;
+  else if (partName === 'BRACELET PARTS') {
+    accessories.add('BRACELET PARTS');
+    preview.braceletQty = Math.max(0, Number(preview.braceletQty || 0)) + Math.max(0, Number(part.braceletQuantity || 0));
+  } else if ((APP_DATA.accessories || []).includes(partName)) accessories.add(partName);
+  else {
+    const detailSuffix = detail ? `：${detail}` : '';
+    const noteSuffix = String(part.notes || '').trim() ? `（${String(part.notes).trim()}）` : '';
+    preview.note = [preview.note, `${partName}${detailSuffix}${noteSuffix}`].filter(Boolean).join('\n');
+  }
+  preview.accessories = [...accessories];
+  preview.purchasePrice += Math.max(0, Number(part.fixedCostJpyMinor || part.costAmountMinor || 0));
+  preview.comment = [preview.comment, `結合パーツ管理番号: ${part.partCode || part.code || ''}`].filter(Boolean).join('\n');
+  draft.appliedParts.push(part);
+  return true;
+}
+
+function costAdjustmentRenderCombineDiff() {
+  const container = document.getElementById('ca-combine-diff');
+  if (!container) return;
+  const draft = _costAdjustmentState.combineDraft;
+  const show = Boolean(_costAdjustmentState.combineActive && draft?.appliedParts?.length);
+  container.hidden = !show;
+  if (!show) {
+    container.innerHTML = '';
+    return;
+  }
+  const before = draft.original;
+  const after = draft.preview;
+  const fields = [
+    ['material', '素材', value => _costAdjustmentMasterName(APP_DATA.materials, value)],
+    ['belt', 'ベルト素材', value => value || '—'],
+    ['dial', '文字盤', value => value || '—'],
+    ['accessories', '付属品', value => (value || []).join('・') || '—'],
+    ['braceletQty', 'BRACELET PARTS コマ数', value => value == null ? '—' : `${value}コマ`],
+    ['purchasePrice', '原価', value => `¥${Math.max(0, Number(value || 0)).toLocaleString('ja-JP')}`],
+    ['note', '特徴・備考', value => value || '—'],
+    ['comment', 'コメント', value => value || '—'],
+  ];
+  const rows = fields.map(([key, label, format]) => {
+    const beforeValue = format(before[key]);
+    const afterValue = format(after[key]);
+    if (beforeValue === afterValue) return '';
+    return `<div class="ca-combine-diff-row"><span>${_escHtml(label)}</span><strong>${_escHtml(beforeValue)}</strong><i class="fa-solid fa-arrow-right ca-combine-diff-arrow"></i><strong>${_escHtml(afterValue)}</strong></div>`;
+  }).filter(Boolean).join('');
+  container.innerHTML = `<div class="ca-combine-diff-title"><i class="fa-solid fa-clock-rotate-left"></i> 以前の対象商品情報 → 変更後</div>${rows}`;
+}
+
+function costAdjustmentAllowProductDrop(event) {
+  if (!_costAdjustmentState.combineActive) return false;
+  event?.preventDefault?.();
+  if (event?.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  event?.currentTarget?.classList?.add('drag-over');
+  return true;
+}
+
+function costAdjustmentProductDragLeave(event) {
+  event?.currentTarget?.classList?.remove('drag-over');
+}
+
+function costAdjustmentDropPartOnProduct(event) {
+  event?.preventDefault?.();
+  event?.currentTarget?.classList?.remove('drag-over');
+  if (!_costAdjustmentState.combineActive) return false;
+  let payload;
+  try {
+    payload = JSON.parse(event?.dataTransfer?.getData('text/plain') || '{}');
+  } catch (_) {
+    return false;
+  }
+  if (payload?.source !== 'slot') return false;
+  const index = Number(payload.index);
+  const stored = _costAdjustmentState.partSlots[index];
+  if (!stored?.part || !_costAdjustmentApplyCombinePart(stored.part)) return false;
+  _costAdjustmentState.partSlots[index] = null;
+  costAdjustmentRenderProduct(_costAdjustmentState.combineDraft.preview);
+  costAdjustmentRenderPartGrid();
+  costAdjustmentRenderCombineDiff();
+  costAdjustmentRenderAllocationSummary();
+  if (typeof showToast === 'function') showToast('success', 'パーツを結合しました', `${stored.label} の情報と原価を対象商品へ反映しました`);
+  return true;
+}
+
+function _costAdjustmentAllocationState() {
+  const draft = _costAdjustmentState.breakdownDraft;
+  const items = Array.isArray(draft?.items) ? draft.items : [];
+  const target = Math.max(0, Number(draft?.targetCostJpyMinor || 0));
+  const allocated = items.reduce((sum, item) => sum + Math.max(0, Number(item?.allocatedCostJpyMinor || 0)), 0);
+  const allCompleted = items.length > 0 && items.every(item => item?.completed === true);
+  const exact = allocated === target;
+  return {
+    items, target, allocated, allCompleted, exact,
+    ready: allCompleted && exact && !draft?.finalized,
+    finalized: Boolean(draft?.finalized),
+  };
+}
+
+function costAdjustmentRenderAllocationSummary() {
+  if (_costAdjustmentState.mode === 'combine') {
+    const draft = _costAdjustmentState.combineDraft;
+    const originalCost = Math.max(0, Number(draft?.original?.purchasePrice || 0));
+    const combinedCost = Math.max(0, Number(draft?.preview?.purchasePrice || originalCost));
+    const inputCount = draft?.inputParts?.length || 0;
+    const appliedCount = draft?.appliedParts?.length || 0;
+    const ready = Boolean(_costAdjustmentState.combineActive && inputCount > 0 && appliedCount === inputCount && !draft?.finalized);
+    const source = document.getElementById('ca-source-cost-total');
+    const allocated = document.getElementById('ca-allocated-cost-total');
+    const sourceLabel = document.getElementById('ca-source-cost-label');
+    const allocatedLabel = document.getElementById('ca-allocated-cost-label');
+    const balance = document.getElementById('ca-allocation-balance');
+    const button = document.getElementById('ca-finalize-button');
+    const bar = document.getElementById('ca-finalize-bar');
+    if (sourceLabel) sourceLabel.textContent = '変更前の原価';
+    if (allocatedLabel) allocatedLabel.textContent = '結合後の原価';
+    if (source) source.textContent = `¥${originalCost.toLocaleString('ja-JP')}`;
+    if (allocated) allocated.textContent = `¥${combinedCost.toLocaleString('ja-JP')}`;
+    if (balance) {
+      balance.textContent = draft?.finalized
+        ? '結合原価調整を確定しました'
+        : (!draft ? '商品とパーツを読み込んで開始してください' : (ready ? 'すべてのパーツを反映しました' : `未反映 ${Math.max(0, inputCount - appliedCount)}件`));
+      balance.classList.toggle('is-ready', ready || Boolean(draft?.finalized));
+      balance.classList.remove('is-error');
+    }
+    if (bar) bar.classList.toggle('ca-finalize-ready', ready || Boolean(draft?.finalized));
+    if (button) {
+      button.disabled = !ready || _costAdjustmentState.finalizing;
+      button.innerHTML = draft?.finalized
+        ? '<i class="fa-solid fa-circle-check"></i> 原価調整確定済み'
+        : (_costAdjustmentState.finalizing ? '<i class="fa-solid fa-spinner fa-spin"></i> 確定処理中...' : '<i class="fa-solid fa-circle-check"></i> 原価調整確定');
+    }
+    return { ready, finalized: Boolean(draft?.finalized), target: originalCost, allocated: combinedCost };
+  }
+  const draft = _costAdjustmentState.breakdownDraft;
+  const summary = _costAdjustmentAllocationState();
+  const bar = document.getElementById('ca-finalize-bar');
+  const source = document.getElementById('ca-source-cost-total');
+  const allocated = document.getElementById('ca-allocated-cost-total');
+  const balance = document.getElementById('ca-allocation-balance');
+  const button = document.getElementById('ca-finalize-button');
+  const sourceLabel = document.getElementById('ca-source-cost-label');
+  const allocatedLabel = document.getElementById('ca-allocated-cost-label');
+  if (sourceLabel) sourceLabel.textContent = '対象商品の原価';
+  if (allocatedLabel) allocatedLabel.textContent = '配賦済み原価';
+  if (bar) bar.classList.toggle('ca-finalize-ready', summary.ready || summary.finalized);
+  if (source) source.textContent = `¥${summary.target.toLocaleString('ja-JP')}`;
+  if (allocated) allocated.textContent = `¥${summary.allocated.toLocaleString('ja-JP')}`;
+  if (balance) {
+    if (!draft) balance.textContent = '崩し内容を確定してください';
+    else if (summary.finalized) balance.textContent = '原価調整を確定しました';
+    else if (!summary.allCompleted) balance.textContent = `未編集 ${summary.items.filter(item => !item?.completed).length}件`;
+    else if (!summary.exact) {
+      const difference = summary.target - summary.allocated;
+      balance.textContent = difference > 0
+        ? `未配賦 ¥${difference.toLocaleString('ja-JP')}`
+        : `超過 ¥${Math.abs(difference).toLocaleString('ja-JP')}`;
+    } else balance.textContent = '原価が完全一致しました';
+    balance.classList.toggle('is-ready', summary.ready || summary.finalized);
+    balance.classList.toggle('is-error', Boolean(draft && summary.allCompleted && !summary.exact));
+  }
+  if (button) {
+    button.disabled = !summary.ready || _costAdjustmentState.finalizing;
+    button.innerHTML = summary.finalized
+      ? '<i class="fa-solid fa-circle-check"></i> 原価調整確定済み'
+      : (_costAdjustmentState.finalizing
+        ? '<i class="fa-solid fa-spinner fa-spin"></i> 確定処理中...'
+        : '<i class="fa-solid fa-circle-check"></i> 原価調整確定');
+  }
+  return summary;
+}
+
+function _costAdjustmentCodePrefix(kind, dateValue) {
+  const date = String(dateValue || getLocalDateISO());
+  const digits = `${date.slice(8, 10)}${date.slice(5, 7)}${date.slice(2, 4)}`;
+  return kind === 'part' ? `P${digits}` : digits;
+}
+
+function _costAdjustmentPredictCodes(kind, count, dateValue) {
+  const prefix = _costAdjustmentCodePrefix(kind, dateValue);
+  const records = kind === 'part' ? (APP_DATA.parts || []) : (APP_DATA.inventory || []);
+  const max = records.reduce((current, record) => {
+    const code = String(kind === 'part' ? (record.partCode || record.code || '') : (record.code || ''));
+    if (!code.startsWith(prefix)) return current;
+    const sequence = Number(code.slice(prefix.length));
+    return Number.isInteger(sequence) ? Math.max(current, sequence) : current;
+  }, 0);
+  return Array.from({ length: count }, (_, index) => `${prefix}${String(max + index + 1).padStart(4, '0')}`);
+}
+
+function costAdjustmentRenderPartGrid() {
+  const grid = document.getElementById('ca-part-grid');
+  if (!grid) return;
+  const draft = _costAdjustmentState.breakdownActive ? _costAdjustmentState.breakdownDraft : null;
+  if (draft) {
+    grid.classList.add('ca-breakdown-grid-locked');
+    const allocation = _costAdjustmentAllocationState();
+    const complete = allocation.allCompleted && allocation.exact;
+    grid.innerHTML = Array.from({ length: 20 }, (_, index) => {
+      const item = draft.items?.[index];
+      if (item?.kind === 'product') {
+        const ordinal = index + 1;
+        return `<button type="button" class="ca-part-slot ca-breakdown-product-slot${complete ? ' ca-breakdown-output-complete' : ''}" role="gridcell" data-slot-label="${index + 1}"
+          aria-label="崩し後の商品 ${ordinal}点目を編集" onclick="costAdjustmentOpenItemEditor(${index})">
+          <div class="ca-breakdown-count-token ca-breakdown-product-token">
+            <i class="fa-solid fa-box"></i><span>商品</span><strong>${ordinal}</strong>
+          </div>
+          <small>${_escHtml(item.managementCode || '採番予定')}</small>
+          <small>${item.completed ? `¥${Number(item.allocatedCostJpyMinor || 0).toLocaleString('ja-JP')}・編集済み` : 'タップして編集'}</small>
+        </button>`;
+      }
+      if (item?.kind === 'part') {
+        const ordinal = index - draft.productCount + 1;
+        return `<button type="button" class="ca-part-slot ca-breakdown-part-slot${complete ? ' ca-breakdown-output-complete' : ''}" role="gridcell" data-slot-label="${index + 1}"
+          aria-label="崩し後のパーツ ${ordinal}点目を編集" onclick="costAdjustmentOpenItemEditor(${index})">
+          <div class="ca-breakdown-count-token ca-breakdown-part-token">
+            <i class="fa-solid fa-puzzle-piece"></i><span>パーツ</span><strong>${ordinal}</strong>
+          </div>
+          <small>${_escHtml(item.managementCode || '採番予定')}</small>
+          <small>${item.completed ? `¥${Number(item.allocatedCostJpyMinor || 0).toLocaleString('ja-JP')}・編集済み` : 'タップして編集'}</small>
+        </button>`;
+      }
+      return `<div class="ca-part-slot ca-part-slot-disabled" role="gridcell" data-slot-label="${index + 1}"
+        aria-label="未使用枠 ${index + 1}（操作不可）" aria-disabled="true">
+        <span class="ca-disabled-slot-label">操作不可</span>
+      </div>`;
+    }).join('');
+    costAdjustmentRenderAllocationSummary();
+    return;
+  }
+  grid.classList.remove('ca-breakdown-grid-locked');
+  grid.innerHTML = _costAdjustmentState.partSlots.map((item, index) => {
+    const token = item
+      ? `<div class="ca-part-token" draggable="true"
+          ondragstart="costAdjustmentDragStoredItem(event, 'slot', ${index})"
+          title="${_escHtml(item.label)}">${_escHtml(item.label)}</div>`
+      : '';
+    return `<div class="ca-part-slot" role="gridcell" data-slot-label="${index + 1}"
+      aria-label="パーツ枠 ${index + 1}${item ? `：${_escHtml(item.label)}` : '：空き'}"
+      ondragover="costAdjustmentAllowDrop(event)"
+      ondragleave="costAdjustmentDragLeave(event)"
+      ondrop="costAdjustmentDrop(event, 'slot', ${index})">${token}</div>`;
+  }).join('');
+}
+
+function costAdjustmentRenderStage() {
+  const container = document.getElementById('ca-stage-items');
+  const count = document.getElementById('ca-stage-count');
+  if (!container) return;
+  container.innerHTML = _costAdjustmentState.stageItems.map((item, index) => `
+    <div class="ca-stage-chip" draggable="true"
+      ondragstart="costAdjustmentDragStoredItem(event, 'stage', ${index})"
+      title="${_escHtml(item.label)}">
+      <i class="fa-solid ${item.type === 'part' ? 'fa-puzzle-piece' : 'fa-tag'}"></i>
+      <span>${_escHtml(item.label)}</span>
+    </div>`).join('');
+  if (count) count.textContent = `配置パーツ ${_costAdjustmentState.stageItems.length}件`;
+}
+
+function costAdjustmentSetDragPayload(event, payload) {
+  if (!event?.dataTransfer) return false;
+  event.dataTransfer.effectAllowed = 'move';
+  event.dataTransfer.setData('text/plain', JSON.stringify(payload));
+  return true;
+}
+
+function costAdjustmentDragAttribute(event, key) {
+  const value = _costAdjustmentState.attributeValues[key] || '未選択';
+  if (!_costAdjustmentState.product || value === '未選択') {
+    event?.preventDefault?.();
+    if (typeof showToast === 'function') showToast('info', '先に商品を読み込んでください', '商品属性を取得してから移動できます');
+    return false;
+  }
+  const labels = { material: '素材', belt: 'ベルト素材', accessories: '付属品', dial: '文字盤' };
+  return costAdjustmentSetDragPayload(event, {
+    source: 'attribute',
+    key,
+    type: 'attribute',
+    label: `${labels[key]}：${value}`,
+  });
+}
+
+function costAdjustmentDragStoredItem(event, source, index) {
+  return costAdjustmentSetDragPayload(event, { source, index: Number(index) });
+}
+
+function costAdjustmentDragProduct(event) {
+  if (!_costAdjustmentState.breakdownActive || _costAdjustmentState.mode !== 'breakdown' || !_costAdjustmentState.product) {
+    event?.preventDefault?.();
+    return false;
+  }
+  return costAdjustmentSetDragPayload(event, {
+    source: 'breakdown-product',
+    productId: _costAdjustmentState.product._id || '',
+    code: _costAdjustmentState.product.code || '',
+  });
+}
+
+function costAdjustmentAllowWorkspaceDrop(event) {
+  if (!_costAdjustmentState.breakdownActive || _costAdjustmentState.mode !== 'breakdown') return false;
+  event?.preventDefault?.();
+  if (event?.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  document.getElementById('ca-parts-panel')?.classList.add('drag-over');
+  return true;
+}
+
+function costAdjustmentWorkspaceDragLeave(event) {
+  const panel = document.getElementById('ca-parts-panel');
+  if (!panel || (event?.relatedTarget && panel.contains(event.relatedTarget))) return false;
+  panel.classList.remove('drag-over');
+  return true;
+}
+
+function costAdjustmentDropProduct(event) {
+  event?.preventDefault?.();
+  event?.stopPropagation?.();
+  document.getElementById('ca-parts-panel')?.classList.remove('drag-over');
+  if (!_costAdjustmentState.breakdownActive || _costAdjustmentState.mode !== 'breakdown') return false;
+  let payload;
+  try {
+    payload = JSON.parse(event?.dataTransfer?.getData('text/plain') || '{}');
+  } catch (_) {
+    return false;
+  }
+  if (payload?.source !== 'breakdown-product' || payload.code !== _costAdjustmentState.product?.code) return false;
+  return costAdjustmentOpenBreakdownModal();
+}
+
+function costAdjustmentOpenBreakdownModal() {
+  const item = _costAdjustmentState.product;
+  if (!_costAdjustmentState.breakdownActive || !item) return false;
+  const modal = document.getElementById('costAdjustmentBreakdownModal');
+  const productName = document.getElementById('ca-breakdown-product-name');
+  const productCount = document.getElementById('ca-breakdown-product-count');
+  const partCount = document.getElementById('ca-breakdown-part-count');
+  const error = document.getElementById('ca-breakdown-modal-error');
+  if (!modal) return false;
+  if (productName) productName.textContent = `${item.code}｜${item.brand || '—'} ${item.model || ''}`.trim();
+  if (productCount) productCount.value = String(_costAdjustmentState.breakdownDraft?.productCount || 1);
+  if (partCount) partCount.value = String(_costAdjustmentState.breakdownDraft?.partCount || 1);
+  if (error) error.textContent = '';
+  modal.classList.remove('hidden');
+  setTimeout(() => productCount?.focus(), 0);
+  return true;
+}
+
+function costAdjustmentCloseBreakdownModal() {
+  document.getElementById('costAdjustmentBreakdownModal')?.classList.add('hidden');
+  return true;
+}
+
+function costAdjustmentConfirmBreakdown() {
+  const productCount = Number(document.getElementById('ca-breakdown-product-count')?.value);
+  const partCount = Number(document.getElementById('ca-breakdown-part-count')?.value);
+  const error = document.getElementById('ca-breakdown-modal-error');
+  if (!Number.isInteger(productCount) || productCount < 1 || !Number.isInteger(partCount) || partCount < 1) {
+    if (error) error.textContent = '商品点数とパーツ点数は、どちらも1以上の整数で入力してください。';
+    return false;
+  }
+  if (productCount + partCount > 20) {
+    if (error) error.textContent = '商品点数とパーツ点数の合計は、4×5枠に収まる20点以内で入力してください。';
+    return false;
+  }
+  const source = _costAdjustmentState.product;
+  const adjustmentDate = getLocalDateISO();
+  const productCodes = _costAdjustmentPredictCodes('product', productCount, adjustmentDate);
+  const partCodes = _costAdjustmentPredictCodes('part', partCount, adjustmentDate);
+  const sourceBrandCode = (APP_DATA.brandRecords || []).find(record => record.name === source.brand)?.code || source.brandCode || '';
+  const sourceComment = `対象商品管理番号: ${source.code}`;
+  const productItems = Array.from({ length: productCount }, (_, index) => ({
+    position: index + 1,
+    kind: 'product',
+    managementCode: productCodes[index],
+    sku: source.sku || '',
+    allocatedCostJpyMinor: 0,
+    completed: false,
+    product: {
+      brandCode: sourceBrandCode,
+      modelName: source.model || '',
+      referenceNumber: source.ref || '',
+      serialNumber: '',
+      materialCode: source.material || '',
+      movementCode: source.movement || '',
+      conditionCode: source.condition || '',
+      beltMaterial: source.beltMaterial || source.belt || '',
+      dial: source.dial || '',
+      accessories: Array.isArray(source.accessories) ? [...source.accessories] : [],
+      salePriceUsdMinor: Math.max(0, Number(source.salePriceUsdMinor || source.salePrice || 0)),
+      notes: source.notes || source.note || '',
+      internalComment: sourceComment,
+    },
+  }));
+  const partItems = Array.from({ length: partCount }, (_, index) => ({
+    position: productCount + index + 1,
+    kind: 'part',
+    managementCode: partCodes[index],
+    sku: source.sku || '',
+    allocatedCostJpyMinor: 0,
+    completed: false,
+    part: {
+      brandCode: sourceBrandCode,
+      modelName: source.model || '',
+      referenceNumber: source.ref || '',
+      partNameCode: '',
+      detailText: '',
+      detailMasterType: '',
+      detailMasterCode: '',
+      braceletQuantity: null,
+      salePriceUsdMinor: 0,
+      notes: '',
+      internalComment: sourceComment,
+    },
+  }));
+  _costAdjustmentState.breakdownDraft = {
+    code: source.code,
+    productCount,
+    partCount,
+    adjustmentDate,
+    targetCostJpyMinor: Math.max(0, Number(source.purchasePrice || source.costJPY || 0)),
+    items: [...productItems, ...partItems],
+    finalized: false,
+  };
+  _costAdjustmentState.partSlots = Array(20).fill(null);
+  _costAdjustmentState.stageItems = [];
+  costAdjustmentRenderBreakdownWorkspace();
+  costAdjustmentRenderPartGrid();
+  costAdjustmentRenderStage();
+  costAdjustmentCloseBreakdownModal();
+  if (typeof showToast === 'function') showToast('success', '崩し内容を確定しました', `商品 ${productCount}点・パーツ ${partCount}点`);
+  return true;
+}
+
+function _costAdjustmentSetSelect(id, records, selected = '', emptyLabel = '-- 選択 --') {
+  const select = document.getElementById(id);
+  if (!select) return;
+  select.innerHTML = `<option value="">${_escHtml(emptyLabel)}</option>` + (records || [])
+    .filter(record => record?.isActive !== false)
+    .map(record => `<option value="${_escHtml(record.code || record.name || '')}">${_escHtml(record.name || record.code || '')}</option>`)
+    .join('');
+  select.value = selected || '';
+}
+
+function _costAdjustmentSetPrice(id, value) {
+  const input = document.getElementById(id);
+  if (!input) return;
+  input.value = String(Math.max(0, Number(value || 0)));
+  priceFormatHandler(input);
+}
+
+function _costAdjustmentSourceComment(value = '') {
+  const prefix = `対象商品管理番号: ${_costAdjustmentState.product?.code || ''}`;
+  const extra = String(value || '').trim();
+  if (!extra || extra === prefix) return prefix;
+  return extra.includes(prefix) ? extra : `${prefix}\n${extra}`;
+}
+
+function costAdjustmentOpenItemEditor(index) {
+  const draft = _costAdjustmentState.breakdownDraft;
+  const item = draft?.items?.[Number(index)];
+  if (!item || draft?.finalized) return false;
+  const modal = document.getElementById('costAdjustmentItemModal');
+  if (!modal) return false;
+  const productMode = item.kind === 'product';
+  const detail = productMode ? item.product : item.part;
+  document.getElementById('ca-item-editor-index').value = String(index);
+  document.getElementById('ca-item-code').value = item.managementCode || '確定時に採番';
+  document.getElementById('ca-item-sku').value = item.sku || '';
+  _costAdjustmentSetPrice('ca-item-cost', item.allocatedCostJpyMinor || 0);
+  const caption = document.getElementById('ca-item-editor-caption');
+  if (caption) caption.textContent = `${productMode ? '商品' : 'パーツ'} ${Number(index) + 1}｜原価調整日 ${draft.adjustmentDate}`;
+  document.getElementById('ca-product-editor-fields')?.classList.toggle('hidden', !productMode);
+  document.getElementById('ca-part-editor-fields')?.classList.toggle('hidden', productMode);
+  _costAdjustmentSetSelect('ca-edit-product-brand', APP_DATA.brandRecords, detail?.brandCode);
+  _costAdjustmentSetSelect('ca-edit-product-material', APP_DATA.materials, detail?.materialCode);
+  _costAdjustmentSetSelect('ca-edit-product-movement', APP_DATA.movements, detail?.movementCode);
+  _costAdjustmentSetSelect('ca-edit-product-condition', APP_DATA.conditions, detail?.conditionCode);
+  _costAdjustmentSetSelect('ca-edit-part-brand', APP_DATA.brandRecords, detail?.brandCode);
+  _costAdjustmentSetSelect('ca-edit-part-name', APP_DATA.partNameRecords, detail?.partNameCode, '-- パーツ名を選択 --');
+  const accessories = document.getElementById('ca-edit-product-accessories');
+  if (accessories) {
+    accessories.innerHTML = (APP_DATA.accessories || []).map(value => `<option value="${_escHtml(value)}">${_escHtml(value)}</option>`).join('');
+    [...accessories.options].forEach(option => { option.selected = (detail?.accessories || []).includes(option.value); });
+  }
+  const values = productMode ? {
+    'ca-edit-product-model': detail?.modelName,
+    'ca-edit-product-ref': detail?.referenceNumber,
+    'ca-edit-product-serial': detail?.serialNumber,
+    'ca-edit-product-belt': detail?.beltMaterial,
+    'ca-edit-product-dial': detail?.dial,
+  } : {
+    'ca-edit-part-model': detail?.modelName,
+    'ca-edit-part-ref': detail?.referenceNumber,
+    'ca-edit-part-detail': detail?.detailText,
+    'ca-edit-part-quantity': detail?.braceletQuantity,
+  };
+  Object.entries(values).forEach(([id, value]) => {
+    const element = document.getElementById(id);
+    if (element) element.value = value ?? '';
+  });
+  _costAdjustmentSetPrice(productMode ? 'ca-edit-product-sale' : 'ca-edit-part-sale', detail?.salePriceUsdMinor || 0);
+  document.getElementById('ca-item-notes').value = detail?.notes || '';
+  document.getElementById('ca-item-comment').value = _costAdjustmentSourceComment(detail?.internalComment);
+  const error = document.getElementById('ca-item-editor-error');
+  if (error) error.textContent = '';
+  if (!productMode) costAdjustmentPartNameChanged(detail);
+  modal.classList.remove('hidden');
+  setTimeout(() => document.getElementById('ca-item-cost')?.focus(), 0);
+  return true;
+}
+
+function costAdjustmentCloseItemEditor() {
+  document.getElementById('costAdjustmentItemModal')?.classList.add('hidden');
+  return true;
+}
+
+function costAdjustmentPartNameChanged(existing = null) {
+  const code = document.getElementById('ca-edit-part-name')?.value || '';
+  const record = (APP_DATA.partNameRecords || []).find(item => item.code === code);
+  const name = String(record?.name || '').trim();
+  const bracelet = name.toUpperCase() === 'BRACELET PARTS';
+  const config = _partDetailMasterConfig(name);
+  document.getElementById('ca-edit-part-detail-text-group')?.classList.toggle('hidden', bracelet || Boolean(config));
+  document.getElementById('ca-edit-part-detail-master-group')?.classList.toggle('hidden', !config);
+  document.getElementById('ca-edit-part-quantity-group')?.classList.toggle('hidden', !bracelet);
+  const label = document.getElementById('ca-edit-part-detail-master-label');
+  if (label) label.textContent = config?.label || '詳細';
+  const select = document.getElementById('ca-edit-part-detail-master');
+  if (select) {
+    const selected = existing?.detailMasterCode || select.value || '';
+    _costAdjustmentSetSelect('ca-edit-part-detail-master', config ? APP_DATA[config.recordsKey] : [], selected, config?.emptyLabel || '-- 選択 --');
+  }
+  if (!bracelet) {
+    const quantity = document.getElementById('ca-edit-part-quantity');
+    if (quantity && !existing) quantity.value = '';
+  }
+  return { record, name, bracelet, config };
+}
+
+function costAdjustmentCompleteItemEdit() {
+  const index = Number(document.getElementById('ca-item-editor-index')?.value);
+  const item = _costAdjustmentState.breakdownDraft?.items?.[index];
+  const error = document.getElementById('ca-item-editor-error');
+  if (!item) return false;
+  const allocatedCostJpyMinor = getPriceValue(document.getElementById('ca-item-cost'));
+  if (item.kind === 'product') {
+    const brandCode = document.getElementById('ca-edit-product-brand')?.value || '';
+    if (!brandCode) {
+      if (error) error.textContent = '商品のブランドを選択してください。';
+      return false;
+    }
+    item.product = {
+      brandCode,
+      modelName: String(document.getElementById('ca-edit-product-model')?.value || '').trim(),
+      referenceNumber: String(document.getElementById('ca-edit-product-ref')?.value || '').trim(),
+      serialNumber: String(document.getElementById('ca-edit-product-serial')?.value || '').trim(),
+      materialCode: document.getElementById('ca-edit-product-material')?.value || '',
+      movementCode: document.getElementById('ca-edit-product-movement')?.value || '',
+      conditionCode: document.getElementById('ca-edit-product-condition')?.value || '',
+      beltMaterial: String(document.getElementById('ca-edit-product-belt')?.value || '').trim(),
+      dial: String(document.getElementById('ca-edit-product-dial')?.value || '').trim(),
+      accessories: [...(document.getElementById('ca-edit-product-accessories')?.selectedOptions || [])].map(option => option.value),
+      salePriceUsdMinor: getPriceValue(document.getElementById('ca-edit-product-sale')),
+      notes: String(document.getElementById('ca-item-notes')?.value || '').trim(),
+      internalComment: _costAdjustmentSourceComment(document.getElementById('ca-item-comment')?.value),
+    };
+  } else {
+    const partMeta = costAdjustmentPartNameChanged();
+    const partNameCode = document.getElementById('ca-edit-part-name')?.value || '';
+    if (!partNameCode) {
+      if (error) error.textContent = 'パーツ名を選択してください。';
+      return false;
+    }
+    const braceletQuantity = partMeta.bracelet ? Number(document.getElementById('ca-edit-part-quantity')?.value) : null;
+    if (partMeta.bracelet && (!Number.isInteger(braceletQuantity) || braceletQuantity < 0)) {
+      if (error) error.textContent = 'BRACELET PARTSのコマ数を0以上の整数で入力してください。';
+      return false;
+    }
+    const detailMasterCode = partMeta.config ? (document.getElementById('ca-edit-part-detail-master')?.value || '') : '';
+    const detailText = partMeta.config
+      ? ((APP_DATA[partMeta.config.recordsKey] || []).find(record => record.code === detailMasterCode)?.name || '')
+      : (partMeta.bracelet ? '' : String(document.getElementById('ca-edit-part-detail')?.value || '').trim());
+    item.part = {
+      brandCode: document.getElementById('ca-edit-part-brand')?.value || '',
+      modelName: String(document.getElementById('ca-edit-part-model')?.value || '').trim(),
+      referenceNumber: String(document.getElementById('ca-edit-part-ref')?.value || '').trim(),
+      partNameCode,
+      detailText,
+      detailMasterType: partMeta.config?.type || '',
+      detailMasterCode,
+      braceletQuantity,
+      salePriceUsdMinor: getPriceValue(document.getElementById('ca-edit-part-sale')),
+      notes: String(document.getElementById('ca-item-notes')?.value || '').trim(),
+      internalComment: _costAdjustmentSourceComment(document.getElementById('ca-item-comment')?.value),
+    };
+  }
+  item.allocatedCostJpyMinor = allocatedCostJpyMinor;
+  item.completed = true;
+  costAdjustmentCloseItemEditor();
+  costAdjustmentRenderPartGrid();
+  const allocation = costAdjustmentRenderAllocationSummary();
+  if (typeof showToast === 'function') {
+    showToast(allocation.ready ? 'success' : 'info', '明細を更新しました', allocation.ready ? '原価が完全一致しました。確定できます。' : '残りの明細と配賦原価を確認してください。');
+  }
+  return true;
+}
+
+async function _costAdjustmentFinalizeCombine() {
+  const source = _costAdjustmentState.product;
+  const draft = _costAdjustmentState.combineDraft;
+  const summary = costAdjustmentRenderAllocationSummary();
+  if (!source || !draft || !summary.ready || _costAdjustmentState.finalizing) return false;
+  _costAdjustmentState.finalizing = true;
+  costAdjustmentRenderAllocationSummary();
+  try {
+    const partIds = draft.inputParts.map(part => part.id || part._id).filter(Boolean);
+    const fallbackCode = _costAdjustmentPredictCodes('product', 1, draft.adjustmentDate)[0];
+    const result = window.ZaikoAPI?.confirmProductCostAdjustment
+      ? await window.ZaikoAPI.confirmProductCostAdjustment(source, { mode: 'combine', partIds })
+      : { outputs: [{ managementCode: fallbackCode, costJpyMinor: draft.preview.purchasePrice }] };
+    const output = result?.outputs?.[0] || {};
+    draft.finalized = true;
+    const refreshed = (APP_DATA.inventory || []).find(item => item._id === source._id);
+    if (refreshed) {
+      _costAdjustmentState.product = refreshed;
+      draft.preview = _costAdjustmentCloneProduct(refreshed);
+    } else {
+      Object.assign(source, draft.preview, {
+        code: output.managementCode || fallbackCode,
+        purchasePrice: Number(output.costJpyMinor ?? draft.preview.purchasePrice),
+        status: '原価調整中',
+      });
+      _costAdjustmentState.product = source;
+      draft.preview = _costAdjustmentCloneProduct(source);
+    }
+    costAdjustmentRenderProduct(draft.preview);
+    costAdjustmentRenderPartGrid();
+    costAdjustmentRenderCombineDiff();
+    costAdjustmentRenderAllocationSummary();
+    refreshLinkedBusinessViews({ source: 'cost-adjustment-combine' });
+    if (typeof showToast === 'function') {
+      showToast('success', '結合原価調整を確定しました', `管理番号を ${draft.preview.code || output.managementCode} に変更し、在庫原価を¥${Number(draft.preview.purchasePrice || 0).toLocaleString('ja-JP')}へ更新しました`);
+    }
+    return true;
+  } catch (error) {
+    if (typeof showToast === 'function') showToast('error', '結合原価調整を確定できませんでした', error?.message || '対象商品とパーツの状態を確認してください');
+    return false;
+  } finally {
+    _costAdjustmentState.finalizing = false;
+    costAdjustmentRenderAllocationSummary();
+  }
+}
+
+async function costAdjustmentFinalize() {
+  if (_costAdjustmentState.mode === 'combine') return _costAdjustmentFinalizeCombine();
+  const source = _costAdjustmentState.product;
+  const draft = _costAdjustmentState.breakdownDraft;
+  const allocation = _costAdjustmentAllocationState();
+  if (!source || !draft || !allocation.ready || _costAdjustmentState.finalizing) return false;
+  _costAdjustmentState.finalizing = true;
+  costAdjustmentRenderAllocationSummary();
+  try {
+    const outputs = draft.items.map(item => ({
+      position: item.position,
+      kind: item.kind,
+      allocatedCostJpyMinor: item.allocatedCostJpyMinor,
+      ...(item.kind === 'product' ? { product: {
+        brandCode: item.product.brandCode,
+        modelNumber: item.product.modelName,
+        referenceNumber: item.product.referenceNumber,
+        serialNumber: item.product.serialNumber,
+        materialCode: item.product.materialCode,
+        movementCode: item.product.movementCode,
+        conditionCode: item.product.conditionCode,
+        accessoryCodes: item.product.accessories,
+        beltText: item.product.beltMaterial,
+        dialText: item.product.dial,
+        salePriceUsdMinor: item.product.salePriceUsdMinor,
+        notes: item.product.notes,
+        internalComment: item.product.internalComment,
+      } } : { part: { ...item.part } }),
+    }));
+    const result = window.ZaikoAPI?.confirmProductCostAdjustment
+      ? await window.ZaikoAPI.confirmProductCostAdjustment(source, { mode: 'breakdown', outputs })
+      : { outputs: draft.items.map(item => ({ position: item.position, managementCode: item.managementCode })) };
+    (result?.outputs || []).forEach(output => {
+      const item = draft.items.find(candidate => candidate.position === output.position);
+      if (item) item.managementCode = output.managementCode || item.managementCode;
+    });
+    draft.finalized = true;
+    source.status = '崩し済み';
+    source.purchasePrice = 0;
+    _costAdjustmentState.product = (APP_DATA.inventory || []).find(item => item._id === source._id) || source;
+    _costAdjustmentState.product.status = '崩し済み';
+    _costAdjustmentState.product.purchasePrice = 0;
+    costAdjustmentRenderProduct(_costAdjustmentState.product);
+    costAdjustmentRenderPartGrid();
+    costAdjustmentRenderBreakdownWorkspace();
+    if (typeof showToast === 'function') showToast('success', '原価調整を確定しました', `${draft.productCount}商品・${draft.partCount}パーツを原価調整中として登録しました`);
+    return true;
+  } catch (error) {
+    if (typeof showToast === 'function') showToast('error', '原価調整を確定できませんでした', error?.message || '入力内容を確認してください');
+    return false;
+  } finally {
+    _costAdjustmentState.finalizing = false;
+    costAdjustmentRenderAllocationSummary();
+  }
+}
+
+function costAdjustmentAllowDrop(event) {
+  if (_costAdjustmentState.breakdownActive && _costAdjustmentState.breakdownDraft) return false;
+  event?.preventDefault?.();
+  if (event?.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  event?.currentTarget?.classList?.add('drag-over');
+}
+
+function costAdjustmentDragLeave(event) {
+  event?.currentTarget?.classList?.remove('drag-over');
+}
+
+function costAdjustmentDrop(event, target, targetIndex) {
+  if (_costAdjustmentState.breakdownActive && _costAdjustmentState.breakdownDraft) return false;
+  event?.preventDefault?.();
+  event?.currentTarget?.classList?.remove('drag-over');
+  let payload;
+  try {
+    payload = JSON.parse(event?.dataTransfer?.getData('text/plain') || '{}');
+  } catch (_) {
+    return false;
+  }
+  return _costAdjustmentMove(payload, target, Number(targetIndex));
+}
+
+function _costAdjustmentMove(payload, target, targetIndex) {
+  if (!payload?.source) return false;
+  if (_costAdjustmentState.breakdownActive && _costAdjustmentState.breakdownDraft) return false;
+
+  if (target === 'stage') {
+    if (payload.source === 'attribute') {
+      const existing = _costAdjustmentState.stageItems.some(item =>
+        item.type === 'attribute' && item.sourceKey === payload.key);
+      if (!existing) {
+        _costAdjustmentState.stageItems.push({
+          id: `attribute-${payload.key}`,
+          type: 'attribute',
+          sourceKey: payload.key,
+          label: payload.label,
+        });
+      }
+    } else if (payload.source === 'slot') {
+      const item = _costAdjustmentState.partSlots[payload.index];
+      if (!item) return false;
+      _costAdjustmentState.partSlots[payload.index] = null;
+      _costAdjustmentState.stageItems.push(item);
+    }
+  } else if (target === 'slot' && Number.isInteger(targetIndex) && targetIndex >= 0 && targetIndex < 20) {
+    if (payload.source === 'attribute') {
+      if (typeof showToast === 'function') showToast('info', '商品属性は中央へ配置してください', 'パーツBOXにはパーツ管理番号を保管します');
+      return false;
+    }
+    if (payload.source === 'slot') {
+      const sourceIndex = Number(payload.index);
+      if (!Number.isInteger(sourceIndex) || sourceIndex < 0 || sourceIndex >= 20) return false;
+      const moving = _costAdjustmentState.partSlots[sourceIndex];
+      if (!moving) return false;
+      const displaced = _costAdjustmentState.partSlots[targetIndex];
+      _costAdjustmentState.partSlots[targetIndex] = moving;
+      _costAdjustmentState.partSlots[sourceIndex] = displaced || null;
+    } else if (payload.source === 'stage') {
+      const sourceIndex = Number(payload.index);
+      const moving = _costAdjustmentState.stageItems[sourceIndex];
+      if (!moving || moving.type !== 'part') return false;
+      const displaced = _costAdjustmentState.partSlots[targetIndex];
+      _costAdjustmentState.partSlots[targetIndex] = moving;
+      _costAdjustmentState.stageItems.splice(sourceIndex, 1);
+      if (displaced) _costAdjustmentState.stageItems.push(displaced);
+    }
+  }
+
+  costAdjustmentRenderPartGrid();
+  costAdjustmentRenderStage();
+  return true;
+}
+
+function costAdjustmentClearStage() {
+  const returningParts = _costAdjustmentState.stageItems.filter(item => item.type === 'part');
+  returningParts.forEach(item => {
+    const emptyIndex = _costAdjustmentState.partSlots.findIndex(slot => !slot);
+    if (emptyIndex >= 0) _costAdjustmentState.partSlots[emptyIndex] = item;
+  });
+  _costAdjustmentState.stageItems = [];
+  costAdjustmentRenderPartGrid();
+  costAdjustmentRenderStage();
+}
+
+async function costAdjustmentStart() {
+  if (!_costAdjustmentState.product) {
+    if (typeof showToast === 'function') showToast('error', '対象商品が未選択です', '商品管理番号またはタグから商品を読み込んでください');
+    return false;
+  }
+  if (_costAdjustmentState.mode === 'swap') {
+    if (typeof showToast === 'function') showToast('info', `${COST_ADJUSTMENT_MODES[_costAdjustmentState.mode]}は準備中です`, '現在は崩し作業の開始に対応しています');
+    return false;
+  }
+  const combineParts = _costAdjustmentState.mode === 'combine'
+    ? _costAdjustmentState.partSlots.filter(item => item?.type === 'part' && item?.part).map(item => item.part)
+    : [];
+  if (_costAdjustmentState.mode === 'combine' && combineParts.length === 0) {
+    if (typeof showToast === 'function') showToast('error', '結合するパーツが未選択です', 'パーツ管理番号を読み込んでパーツBOXに表示してください');
+    return false;
+  }
+  const startButton = document.getElementById('ca-start-button');
+  if (startButton) startButton.disabled = true;
+  try {
+    const item = _costAdjustmentState.product;
+    const originalProduct = _costAdjustmentCloneProduct(item);
+    const partIds = combineParts.map(part => part.id || part._id).filter(Boolean);
+    if (item._id && window.ZaikoAPI?.startProductCostAdjustment) {
+      await window.ZaikoAPI.startProductCostAdjustment(item, { mode: _costAdjustmentState.mode, partIds });
+      _costAdjustmentState.product = (APP_DATA.inventory || []).find(candidate => candidate._id === item._id) || item;
+    }
+    _costAdjustmentState.product.status = '原価調整中';
+    if (_costAdjustmentState.mode === 'combine') {
+      const refreshedParts = combineParts.map(part => (APP_DATA.parts || []).find(candidate => (candidate.id || candidate._id) === (part.id || part._id)) || part);
+      refreshedParts.forEach(part => { part.status = 'cost_adjustment'; });
+      _costAdjustmentState.combineActive = true;
+      _costAdjustmentState.combineDraft = {
+        adjustmentDate: getLocalDateISO(),
+        original: originalProduct,
+        preview: _costAdjustmentCloneProduct(_costAdjustmentState.product),
+        inputParts: refreshedParts,
+        appliedParts: [],
+        finalized: false,
+      };
+      costAdjustmentRenderProduct(_costAdjustmentState.combineDraft.preview);
+    } else {
+      _costAdjustmentState.breakdownActive = true;
+      costAdjustmentRenderProduct(_costAdjustmentState.product);
+    }
+    costAdjustmentRenderBreakdownWorkspace();
+    costAdjustmentRenderPartGrid();
+    if (typeof showToast === 'function') {
+      const modeLabel = COST_ADJUSTMENT_MODES[_costAdjustmentState.mode];
+      showToast('success', `${modeLabel}作業を開始しました`, `対象商品${combineParts.length ? `と${combineParts.length}点のパーツ` : ''}を原価調整中に変更しました`);
+    }
+    return true;
+  } catch (error) {
+    if (startButton) startButton.disabled = false;
+    if (typeof showToast === 'function') showToast('error', '原価調整を開始できませんでした', error?.message || '時間をおいて再度お試しください');
+    return false;
+  }
+}
+
+
 function syncMarketNavGroup(page) {
   const group = document.getElementById('marketNavGroup');
   const isMarketPage = page === 'market' || page === 'market-entry';
   group?.classList.toggle('has-active', isMarketPage);
   setMarketNavGroupExpanded(isMarketPage);
+}
+
+function syncInventoryNavGroup(page) {
+  const group = document.getElementById('inventoryNavGroup');
+  const isInventoryPage = page === 'inventory' || page === 'parts-management';
+  group?.classList.toggle('has-active', isInventoryPage);
+  setInventoryNavGroupExpanded(isInventoryPage);
 }
 
 const _navOrig = navigateTo;
@@ -17754,6 +19863,7 @@ window.navigateTo = function(page) {
     el.classList.toggle('active', el.dataset.page === activeKey);
   });
   syncMarketNavGroup(page);
+  syncInventoryNavGroup(page);
   document.querySelectorAll('.page-panel').forEach(el => {
     el.classList.add('hidden');
   });
@@ -17763,6 +19873,7 @@ window.navigateTo = function(page) {
   const target = document.getElementById(panelId);
   if (target) {
     target.classList.remove('hidden');
+    window.__zaikoCurrentPage = page;
     // 初期化
     const initFn = {
       'dashboard': init_dashboard,
@@ -17773,7 +19884,9 @@ window.navigateTo = function(page) {
         if (typeof init_market === 'function') init_market();
       },
       'inventory': init_inventory,
+      'parts-management': init_parts_management,
       'purchase': init_purchase,
+      'cost-adjustment': init_cost_adjustment,
       'purchase-entry': () => {
         if (typeof init_purchase_entry === 'function') init_purchase_entry();
       },
@@ -17832,13 +19945,15 @@ window.navigateTo = function(page) {
     'market': '相場表',
     'market-entry': '相場登録',
     'purchase': '商品登録',
+    'cost-adjustment': '原価調整',
     'purchase-entry': '仕入登録',
     'sales': '売上登録',
     'shipping': '出荷登録',
     'consignment': '委託伝票登録',
     'master': 'マスタ登録',
     'performance': '実績管理',
-    'inventory': '在庫一覧',
+    'inventory': '商品管理',
+    'parts-management': 'パーツ管理',
     'purchase-list': '購入一覧',
     'sales-list': '伝票一覧',
     'deleted-slips': '削除伝票一覧',

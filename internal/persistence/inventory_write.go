@@ -52,6 +52,7 @@ type SingleProductInput struct {
 	BaseSalePriceMinor    int64
 	BaseSaleCurrency      string
 	Notes                 string
+	InternalComment       string
 	DuplicateSerialReason string
 }
 
@@ -222,14 +223,14 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 				id,organization_id,product_code,sku,brand,brand_id,model_number,reference_number,serial_number,product_type,
 				material_id,movement_id,condition_id,shape_id,marking_id,supplier_id,supplier_role_id,purchase_staff_profile_id,purchase_slip_line_id,
 				purchase_date,cost_amount_minor,cost_currency,base_sale_price_minor,base_sale_currency,inventory_status,
-				publication_status,condition_text,accessories,belt_text,dial_text,bracelet_quantity,notes,created_at,updated_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'in_stock','private',?,?,?,?,?,?,?,?)`,
+				publication_status,condition_text,accessories,belt_text,dial_text,bracelet_quantity,notes,internal_comment,created_at,updated_at
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'in_stock','private',?,?,?,?,?,?,?,?,?)`,
 			productID, input.OrganizationID, productCode, strings.TrimSpace(input.SKU), brandName, brandID,
 			strings.TrimSpace(input.ModelNumber), strings.TrimSpace(input.ReferenceNumber), strings.TrimSpace(input.SerialNumber), productType,
 			nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), nullIfEmpty(shapeID), nullIfEmpty(markingID), supplierRoleID, nullIfEmpty(supplierRoleID), staffID, lineID,
 			date, input.CostAmountMinor, input.CostCurrency, input.BaseSalePriceMinor, input.BaseSaleCurrency,
 			conditionName, strings.Join(accessoryNames, ", "), strings.TrimSpace(input.BeltText), strings.TrimSpace(input.DialText),
-			input.BraceletQuantity, strings.TrimSpace(input.Notes), now, now).Error; err != nil {
+			input.BraceletQuantity, strings.TrimSpace(input.Notes), strings.TrimSpace(input.InternalComment), now, now).Error; err != nil {
 			if isProductCodeUniqueViolation(err) {
 				return ErrDuplicateProductCode
 			}
@@ -396,6 +397,7 @@ func isCatalogLookupTable(table string) bool {
 		"brands": true, "materials": true, "movements": true,
 		"product_conditions": true, "auction_houses": true,
 		"product_shapes": true, "markings": true,
+		"part_names": true, "belt_materials": true, "dials": true,
 	}[table]
 }
 

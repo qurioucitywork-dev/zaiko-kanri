@@ -57,6 +57,7 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 		BaseSalePriceMinor    int64    `json:"baseSalePriceMinor"`
 		BaseSaleCurrency      string   `json:"baseSaleCurrency"`
 		Notes                 string   `json:"notes"`
+		InternalComment       string   `json:"internalComment"`
 		DuplicateSerialReason string   `json:"duplicateSerialReason"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
@@ -89,7 +90,7 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 		ConditionCode: input.ConditionCode, AccessoryCodes: input.AccessoryCodes, CostAmountMinor: input.CostAmountMinor,
 		BeltText: input.BeltText, DialText: input.DialText, BraceletQuantity: input.BraceletQuantity,
 		CostCurrency: input.CostCurrency, BaseSalePriceMinor: input.BaseSalePriceMinor,
-		BaseSaleCurrency: input.BaseSaleCurrency, Notes: input.Notes, DuplicateSerialReason: input.DuplicateSerialReason,
+		BaseSaleCurrency: input.BaseSaleCurrency, Notes: input.Notes, InternalComment: input.InternalComment, DuplicateSerialReason: input.DuplicateSerialReason,
 	})
 	if err != nil {
 		status, code, message := http.StatusInternalServerError, "product_create_failed", "商品を登録できませんでした。"
@@ -177,6 +178,116 @@ func (s *Server) apiProductUpdate(w http.ResponseWriter, r *http.Request) {
 		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 	})
 	writeJSON(w, http.StatusOK, record)
+}
+
+func (s *Server) apiProductCostAdjustmentStart(w http.ResponseWriter, r *http.Request) {
+	if s.repository.Driver() != "postgres" {
+		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "原価調整APIはPostgreSQLモードで利用してください。")
+		return
+	}
+	user, ok := requireAPIAdmin(w, r, "原価調整の開始")
+	if !ok {
+		return
+	}
+	var input struct {
+		Mode    string   `json:"mode"`
+		PartIDs []string `json:"partIds"`
+	}
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil || (input.Mode != "breakdown" && input.Mode != "combine") {
+		writeAPIError(w, http.StatusBadRequest, "invalid_cost_adjustment_mode", "崩しまたは結合モードを選択してください。")
+		return
+	}
+	if input.Mode == "combine" && len(input.PartIDs) == 0 {
+		writeAPIError(w, http.StatusBadRequest, "combine_parts_required", "結合するパーツを1点以上読み込んでください。")
+		return
+	}
+	before, err := s.repository.ProductByID(r.Context(), user.OrganizationID, r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "product_not_found", "商品が見つかりません。")
+		return
+	}
+	var record persistence.Product
+	if input.Mode == "combine" {
+		record, err = s.repository.StartCombineCostAdjustment(r.Context(), user.OrganizationID, r.PathValue("id"), input.PartIDs, user.ID)
+	} else {
+		record, err = s.repository.StartProductCostAdjustment(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
+	}
+	if err != nil {
+		if errors.Is(err, persistence.ErrProductUnavailable) {
+			writeAPIError(w, http.StatusNotFound, "product_not_found", "商品が見つかりません。")
+			return
+		}
+		if errors.Is(err, persistence.ErrProductConflict) {
+			writeAPIError(w, http.StatusConflict, "product_state_conflict", "在庫中の商品だけ原価調整を開始できます。")
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, "cost_adjustment_start_failed", "原価調整を開始できませんでした。")
+		return
+	}
+	beforeJSON, _ := json.Marshal(before)
+	afterJSON, _ := json.Marshal(record)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
+		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "product", TargetID: record.ID,
+		Action: "product.cost_adjustment_started", BeforeJSON: string(beforeJSON), AfterJSON: string(afterJSON), Reason: map[string]string{"breakdown": "崩し作業を開始", "combine": "結合作業を開始"}[input.Mode],
+		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	writeJSON(w, http.StatusOK, record)
+}
+
+func (s *Server) apiProductCostAdjustmentConfirm(w http.ResponseWriter, r *http.Request) {
+	if s.repository.Driver() != "postgres" {
+		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "原価調整APIはPostgreSQLモードで利用してください。")
+		return
+	}
+	user, ok := requireAPIAdmin(w, r, "原価調整の確定")
+	if !ok {
+		return
+	}
+	var input persistence.CostAdjustmentConfirmInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "原価調整の入力内容を確認してください。")
+		return
+	}
+	input.OrganizationID = user.OrganizationID
+	input.ActorUserID = user.ID
+	input.SourceProductID = r.PathValue("id")
+	var result persistence.CostAdjustmentConfirmResult
+	var err error
+	if input.Mode == "combine" {
+		result, err = s.repository.ConfirmCostAdjustmentCombine(r.Context(), input)
+	} else {
+		result, err = s.repository.ConfirmCostAdjustmentBreakdown(r.Context(), input)
+	}
+	if err != nil {
+		status, code, message := http.StatusInternalServerError, "cost_adjustment_confirm_failed", "原価調整を確定できませんでした。"
+		switch {
+		case errors.Is(err, persistence.ErrProductUnavailable):
+			status, code, message = http.StatusNotFound, "product_not_found", "対象商品が見つかりません。"
+		case errors.Is(err, persistence.ErrCostAllocation):
+			status, code, message = http.StatusConflict, "cost_allocation_mismatch", "配賦原価の総額が対象商品の原価と一致していません。"
+		case errors.Is(err, persistence.ErrCostAdjustmentExists):
+			status, code, message = http.StatusConflict, "cost_adjustment_exists", "この商品の原価調整は既に確定されています。"
+		case errors.Is(err, persistence.ErrCostAdjustmentState):
+			status, code, message = http.StatusConflict, "cost_adjustment_state", "原価調整中の商品と編集済み明細を確認してください。"
+		case errors.Is(err, persistence.ErrMasterCodeNotFound), errors.Is(err, persistence.ErrDuplicateSerialReason):
+			status, code, message = http.StatusBadRequest, "cost_adjustment_master", "商品・パーツの編集内容またはマスタ選択を確認してください。"
+		case errors.Is(err, persistence.ErrDailyProductLimit), errors.Is(err, persistence.ErrDailyPartLimit):
+			status, code, message = http.StatusConflict, "daily_code_limit", "本日の管理番号採番上限に達しました。"
+		}
+		writeAPIError(w, status, code, message)
+		return
+	}
+	afterJSON, _ := json.Marshal(result)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
+		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "product", TargetID: input.SourceProductID,
+		Action: "product.cost_adjustment_confirmed", AfterJSON: string(afterJSON), Reason: map[string]string{"breakdown": "崩し原価調整を確定", "combine": "結合原価調整を確定"}[input.Mode],
+		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	writeJSON(w, http.StatusCreated, result)
 }
 
 func validCurrency(value string) bool { return value == "JPY" || value == "USD" || value == "HKD" }

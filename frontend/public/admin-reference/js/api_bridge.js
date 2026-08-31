@@ -1,9 +1,18 @@
 // REST API bridge for the reference UI. The visual layer stays intact while
 // authentication and durable business data are sourced from Go/PostgreSQL.
 (function () {
-  const state = { csrfToken: '', user: null, hydrated: false, company: null, latestRate: 155 };
+  const state = {
+    csrfToken: '', user: null, hydrated: false, loading: false, company: null, latestRate: 155,
+    lastError: null, lastLoadedAt: '', retryCount: 0, databaseDriver: '',
+  };
+  const transientStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+  const retryDelays = [1500, 5000, 15000, 30000, 60000];
+  let hydrateAdminPromise = null;
+  let hydrateRetryTimer = null;
+  let hydrateRetryStep = 0;
+  let syncSuccessTimer = null;
   const statusLabel = {
-    purchasing: '仕入中', in_stock: '在庫中', reserved: '取置中', return_pending: '仕入返品処理中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '仕入返品処理済',
+    purchasing: '仕入中', in_stock: '在庫中', cost_adjustment: '原価調整中', broken_down: '崩し済み', reserved: '取置中', return_pending: '仕入返品処理中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '仕入返品処理済',
     draft: '未処理', confirmed: '処理済', pending: '未対応', approved: '承認済', rejected: '却下', returned: '差戻し',
   };
   const approvalActionLabel = value => ({
@@ -20,20 +29,81 @@
     'stocktake.mismatch': '棚卸不一致の確定',
   })[String(value || '')] || String(value || '承認申請');
 
+  const wait = milliseconds => new Promise(resolve => window.setTimeout(resolve, milliseconds));
+
+  function retryAfterMilliseconds(response) {
+    const value = response.headers.get('Retry-After');
+    if (!value) return 0;
+    const seconds = Number(value);
+    if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+    const timestamp = Date.parse(value);
+    return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : 0;
+  }
+
+  function shouldRetryRequest(error, method, attempt, maxAttempts, externalSignal) {
+    if (attempt >= maxAttempts || externalSignal?.aborted || !['GET', 'HEAD'].includes(method)) return false;
+    if (error?.code === 'postgres_required') return false;
+    if (error?.code === 'invalid_json_response') return true;
+    if (transientStatuses.has(Number(error?.status))) return true;
+    return error?.name === 'AbortError' || error?.code === 'request_timeout' || error instanceof TypeError;
+  }
+
   async function request(path, options = {}) {
-    const headers = { Accept: 'application/json', ...(options.headers || {}) };
-    if (options.body && !(options.body instanceof FormData)) headers['Content-Type'] = 'application/json; charset=utf-8';
-    if (options.method && options.method !== 'GET' && state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
-    const response = await fetch(`/api/v1${path}`, { credentials: 'same-origin', ...options, headers });
-    if (response.status === 204) return null;
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(payload.error?.message || `API error (${response.status})`);
-      error.status = response.status;
-      error.code = payload.error?.code;
-      throw error;
+    const { retry = true, timeoutMs = 12000, ...fetchOptions } = options;
+    const method = String(fetchOptions.method || 'GET').toUpperCase();
+    const maxAttempts = retry && ['GET', 'HEAD'].includes(method) ? 4 : 1;
+    const headers = { Accept: 'application/json', ...(fetchOptions.headers || {}) };
+    if (fetchOptions.body && !(fetchOptions.body instanceof FormData)) headers['Content-Type'] = 'application/json; charset=utf-8';
+    if (method !== 'GET' && method !== 'HEAD' && state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const controller = new AbortController();
+      const externalSignal = fetchOptions.signal;
+      const abortFromExternal = () => controller.abort(externalSignal.reason);
+      if (externalSignal) externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+      const timeout = window.setTimeout(() => controller.abort('request-timeout'), timeoutMs);
+      try {
+        const response = await fetch(`/api/v1${path}`, {
+          credentials: 'same-origin',
+          cache: method === 'GET' || method === 'HEAD' ? 'no-store' : 'default',
+          ...fetchOptions,
+          headers,
+          signal: controller.signal,
+        });
+        if (response.status === 204) return null;
+        const raw = await response.text();
+        let payload = {};
+        if (raw) {
+          try {
+            payload = JSON.parse(raw);
+          } catch (_) {
+            const invalid = new Error(`API応答を読み取れませんでした (${response.status})`);
+            invalid.status = response.status;
+            invalid.code = 'invalid_json_response';
+            throw invalid;
+          }
+        }
+        if (!response.ok) {
+          const error = new Error(payload.error?.message || `API error (${response.status})`);
+          error.status = response.status;
+          error.code = payload.error?.code;
+          error.retryAfterMs = retryAfterMilliseconds(response);
+          throw error;
+        }
+        return payload;
+      } catch (caught) {
+        const error = caught?.name === 'AbortError' && !externalSignal?.aborted
+          ? Object.assign(new Error('DBからの応答がタイムアウトしました。'), { code: 'request_timeout', name: 'TimeoutError' })
+          : caught;
+        if (!shouldRetryRequest(error, method, attempt, maxAttempts, externalSignal)) throw error;
+        const backoff = Number(error?.retryAfterMs) || Math.min(4000, 350 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 180);
+        await wait(backoff);
+      } finally {
+        window.clearTimeout(timeout);
+        if (externalSignal) externalSignal.removeEventListener('abort', abortFromExternal);
+      }
     }
-    return payload;
+    throw new Error('DBデータを取得できませんでした。');
   }
 
   function sessionPayload(result) {
@@ -70,11 +140,72 @@
     sessionStorage.removeItem('inv_guest_session');
   }
 
-  async function optional(path) {
-    try { return await request(path); } catch (error) {
-      if (error.status === 403 || error.status === 404) return null;
+  async function optional(path, { sqliteFallback = false } = {}) {
+    try { return await request(path, { retry: !(sqliteFallback && state.databaseDriver === 'sqlite') }); } catch (error) {
+      if (error.status === 403 || error.status === 404 || (error.status === 503 && error.code === 'postgres_required')) return null;
+      // The bundled SQLite fallback intentionally omits some PostgreSQL-only
+      // accounting catalogs. Those auxiliary screens must not block core
+      // inventory/purchase hydration; the same error remains fatal in PostgreSQL.
+      if (sqliteFallback && state.databaseDriver === 'sqlite' && Number(error.status) >= 500) return null;
       throw error;
     }
+  }
+
+  function ensureSyncStatus() {
+    let element = document.getElementById('dbSyncStatus');
+    if (element || !document.body) return element;
+    element = document.createElement('aside');
+    element.id = 'dbSyncStatus';
+    element.className = 'db-sync-status hidden';
+    element.setAttribute('role', 'status');
+    element.setAttribute('aria-live', 'polite');
+    element.innerHTML = `<i class="fa-solid fa-database" aria-hidden="true"></i>
+      <span class="db-sync-status-message"></span>
+      <button type="button" class="db-sync-status-retry"><i class="fa-solid fa-rotate-right" aria-hidden="true"></i> 今すぐ再取得</button>`;
+    element.querySelector('.db-sync-status-retry')?.addEventListener('click', () => {
+      if (hydrateRetryTimer) window.clearTimeout(hydrateRetryTimer);
+      hydrateRetryTimer = null;
+      hydrateAdmin().catch(() => {});
+    });
+    document.body.appendChild(element);
+    return element;
+  }
+
+  function showSyncStatus(kind, message) {
+    const element = ensureSyncStatus();
+    if (!element) return;
+    if (syncSuccessTimer) window.clearTimeout(syncSuccessTimer);
+    element.className = `db-sync-status db-sync-status-${kind}`;
+    const text = element.querySelector('.db-sync-status-message');
+    if (text) text.textContent = message;
+    const retryButton = element.querySelector('.db-sync-status-retry');
+    if (retryButton) retryButton.hidden = kind !== 'error';
+    if (kind === 'success') {
+      syncSuccessTimer = window.setTimeout(() => element.classList.add('hidden'), 5000);
+    }
+  }
+
+  function snapshotAppData() {
+    if (!state.hydrated) return null;
+    try { return structuredClone(APP_DATA); } catch (_) {
+      try { return JSON.parse(JSON.stringify(APP_DATA)); } catch (_) { return null; }
+    }
+  }
+
+  function restoreAppData(snapshot) {
+    if (!snapshot) return;
+    Object.keys(APP_DATA).forEach(key => { delete APP_DATA[key]; });
+    Object.assign(APP_DATA, snapshot);
+  }
+
+  function scheduleHydrationRetry(error) {
+    if (hydrateRetryTimer || error?.status === 401 || error?.status === 403) return;
+    const delay = retryDelays[Math.min(hydrateRetryStep, retryDelays.length - 1)];
+    hydrateRetryStep += 1;
+    hydrateRetryTimer = window.setTimeout(() => {
+      hydrateRetryTimer = null;
+      hydrateAdmin().catch(() => {});
+    }, delay);
   }
 
   /**
@@ -101,6 +232,15 @@
       pageSize,
       total: Number(first.total) || items.length,
     };
+  }
+
+  async function fetchAllPagesWithFallback(path, pageSize = 100) {
+    try {
+      return await fetchAllPages(path, pageSize);
+    } catch (error) {
+      if (state.databaseDriver === 'sqlite' && Number(error.status) >= 500) return null;
+      throw error;
+    }
   }
 
   function roleItem(partner, role) {
@@ -142,6 +282,7 @@
     assign('dials', 'dialRecords');
 	assign('product-shapes', 'shapeRecords');
 	assign('markings', 'markingRecords');
+	assign('part-names', 'partNameRecords');
   }
 
   function applyPartners(partners) {
@@ -260,10 +401,12 @@
 	  marking: masterCode(masters.markings?.items, product.markingId),
       accessories: String(product.accessories || '').split(',').map(value => value.trim()).filter(Boolean).map(code =>
         masters.accessories?.items?.find(item => item.code === code)?.name || code),
-      belt: product.beltText || '', dial: product.dialText || '', braceletQty: product.braceletQuantity || null,
+      belt: product.beltText || '', dial: product.dialText || '', braceletQty: product.braceletQuantity ?? null,
       images: [],
       imageCount: product.imageCount || 0,
       note: product.notes || '',
+	  comment: product.internalComment || '',
+	  costAdjustmentId: product.costAdjustmentId || '',
       revisions: [],
       apiManaged: true,
     }));
@@ -300,18 +443,29 @@
       taxRateBasisPoints: Number(record.taxRateBasisPoints) || 0,
       registeredAt: record.createdAt, issuedAt: record.issuedAt || null, issuedBy: record.issuedBy || null,
       paidAt: record.paidAt || null, paidBy: record.paidBy || null,
+	  arrivalStatus: record.arrivalStatus || (Number(record.pendingArrivalCount) > 0 ? 'processing' : 'completed'),
+	  pendingArrivalCount: Number(record.pendingArrivalCount) || 0,
+	  arrivedCount: Number(record.arrivedCount) || 0,
       revisions: [], apiManaged: true,
       lines: (record.lines || []).map(line => {
         // purchaseSlipLineId is the stable DB link. Keep the original line snapshot for audit,
         // while presenting the latest editable product details after the product has been created.
         const currentProduct = productByLine.get(line.id);
+        const isPart = line.lineItemKind === 'part' || Boolean(line.partCode);
         const annotations = productNotes(line.notes);
         return {
           lineNo: line.lineNumber,
-          code: currentProduct?.code || '',
+          code: currentProduct?.code || line.partCode || '',
           sku: currentProduct ? currentProduct.sku : line.sku,
           quantity: line.quantity,
           generatedProductCount: Number(line.generatedProductCount) || 0,
+		  generatedPartCount: Number(line.generatedPartCount) || 0,
+		  lineItemKind: isPart ? 'part' : 'product',
+		  productId: line.productId || currentProduct?._id || '',
+		  partId: line.partId || '',
+		  currentStatus: isPart
+		    ? (statusLabel[line.partStatus] || line.partStatus || '')
+		    : (statusLabel[line.inventoryStatus] || currentProduct?.status || line.inventoryStatus || ''),
           // 仕入伝票の金額は起票時通貨の原額を保持する。商品詳細は最新値へ追随するが、
           // 海外仕入を円換算してしまわないよう伝票明細の通貨スナップショットを優先する。
           purchasePrice: line.unitCostMinor,
@@ -460,21 +614,23 @@
     return Promise.all(items.map(item => request(`${path}/${encodeURIComponent(item.id)}`).catch(() => item)));
   }
 
-  async function hydrateAdmin() {
+  async function hydrateAdminOnce() {
     const me = await request('/auth/me');
     state.csrfToken = me.csrfToken;
     state.user = me.user;
     if (typeof setSession === 'function') setSession(sessionPayload(me));
+    const health = await request('/health');
+    state.databaseDriver = String(health?.database?.driver || '');
 
-    const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials', 'product-shapes', 'markings'];
+    const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials', 'product-shapes', 'markings', 'part-names'];
     const masterResults = {};
     await Promise.all(masterKeys.map(async key => { masterResults[key] = await optional(`/masters/${key}`); }));
-    const [products, partners, users, staff, purchases, deletedPurchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, settings, company, rates, dashboard] = await Promise.all([
-      fetchAllPages('/products?includeCancelled=true'), optional('/partners?includeInactive=true'),
-      optional('/users?includeInactive=true'), optional('/purchase-staff'), fetchAllPages('/purchases'), fetchAllPages('/purchases-deleted'), optional('/market-prices?limit=1000'),
-      optional('/boxes'), optional('/purchase-requests'), optional('/notifications?limit=500'), optional('/approvals'),
-      optional('/sales?limit=500'), optional('/shipments?limit=500'), optional('/consignments?limit=500'), optional('/returns?limit=500'),
-      optional('/settings'), optional('/company'), optional('/exchange-rates?limit=100'), optional('/dashboard?months=24'),
+    const [products, parts, partners, users, staff, purchases, deletedPurchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, settings, company, rates, dashboard] = await Promise.all([
+      fetchAllPages('/products?includeCancelled=true'), optional('/parts'), optional('/partners?includeInactive=true', { sqliteFallback: true }),
+      optional('/users?includeInactive=true'), optional('/purchase-staff'), fetchAllPages('/purchases'), fetchAllPagesWithFallback('/purchases-deleted'), optional('/market-prices?limit=1000'),
+      optional('/boxes', { sqliteFallback: true }), optional('/purchase-requests', { sqliteFallback: true }), optional('/notifications?limit=500', { sqliteFallback: true }), optional('/approvals', { sqliteFallback: true }),
+      optional('/sales?limit=500', { sqliteFallback: true }), optional('/shipments?limit=500', { sqliteFallback: true }), optional('/consignments?limit=500', { sqliteFallback: true }), optional('/returns?limit=500', { sqliteFallback: true }),
+      optional('/settings', { sqliteFallback: true }), optional('/company', { sqliteFallback: true }), optional('/exchange-rates?limit=100', { sqliteFallback: true }), optional('/dashboard?months=24', { sqliteFallback: true }),
     ]);
     // The endpoint mixes currencies in timestamp order. Selecting items[0] as
     // USD made a newly updated HKD rate (19.80) appear as USD/JPY.
@@ -492,6 +648,7 @@
     applyUsers(users?.items);
     applyPurchaseStaff(staff?.items);
     applyProducts(products?.items, masterResults, users?.items || staff?.items, latestRate);
+    APP_DATA.parts = (parts?.items || []).map(item => ({ ...item, apiManaged: true }));
 
     await Promise.all((products?.items || []).filter(product => Number(product.imageCount) > 0).map(async product => {
       const files = await optional(`/products/${encodeURIComponent(product.id)}/files`);
@@ -663,6 +820,57 @@
     return true;
   }
 
+  function hydrateAdmin() {
+    if (hydrateAdminPromise) return hydrateAdminPromise;
+    const previousSnapshot = snapshotAppData();
+    const recovered = Boolean(state.lastError);
+    state.loading = true;
+    document.documentElement.dataset.apiLoading = 'true';
+    showSyncStatus('loading', state.hydrated ? 'DBの更新情報を確認しています…' : 'DB情報を読み込んでいます…');
+
+    hydrateAdminPromise = hydrateAdminOnce()
+      .then(result => {
+        if (hydrateRetryTimer) window.clearTimeout(hydrateRetryTimer);
+        hydrateRetryTimer = null;
+        hydrateRetryStep = 0;
+        state.lastError = null;
+        state.lastLoadedAt = new Date().toISOString();
+        state.retryCount = 0;
+        document.documentElement.dataset.apiConnected = 'true';
+        if (recovered) showSyncStatus('success', 'DB接続が復旧し、最新情報へ更新しました。');
+        else ensureSyncStatus()?.classList.add('hidden');
+        document.dispatchEvent(new CustomEvent('zaiko:data-hydrated', {
+          detail: { recovered, loadedAt: state.lastLoadedAt },
+        }));
+        return result;
+      })
+      .catch(error => {
+        restoreAppData(previousSnapshot);
+        state.lastError = { status: error?.status || 0, code: error?.code || '', message: error?.message || String(error) };
+        state.retryCount += 1;
+        document.documentElement.dataset.apiConnected = 'false';
+        showSyncStatus('error', previousSnapshot
+          ? 'DBの最新情報を取得できません。直前の正常データを表示し、自動で再取得します。'
+          : 'DB情報を取得できません。自動で再取得しています。');
+        document.dispatchEvent(new CustomEvent('zaiko:data-hydrate-failed', { detail: { error: state.lastError } }));
+        scheduleHydrationRetry(error);
+        throw error;
+      })
+      .finally(() => {
+        state.loading = false;
+        delete document.documentElement.dataset.apiLoading;
+        hydrateAdminPromise = null;
+      });
+    return hydrateAdminPromise;
+  }
+
+  window.addEventListener('online', () => {
+    if (!state.lastError) return;
+    if (hydrateRetryTimer) window.clearTimeout(hydrateRetryTimer);
+    hydrateRetryTimer = null;
+    hydrateAdmin().catch(() => {});
+  });
+
   async function hydrateGuest() {
     const me = await request('/auth/me');
     if (me.user.role !== 'guest') throw new Error('ゲストアカウントでログインしてください。');
@@ -818,7 +1026,7 @@
 
   async function saveMasterRecord(key, current, values, mode) {
     const masterKinds = { brand: 'brands', material: 'materials', movement: 'movements',
-      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials', shape: 'product-shapes', marking: 'markings' };
+      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials', shape: 'product-shapes', marking: 'markings', partName: 'part-names' };
     const kind = masterKinds[key];
     if (kind) {
       const result = mode === 'add'
@@ -866,7 +1074,7 @@
 
   async function deactivateMasterRecord(key, current) {
     const masterKinds = { brand: 'brands', material: 'materials', movement: 'movements',
-      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials', shape: 'product-shapes', marking: 'markings' };
+      condition: 'conditions', accessory: 'accessories', auction: 'auctions', belt: 'belt-materials', dial: 'dials', shape: 'product-shapes', marking: 'markings', partName: 'part-names' };
     const kind = masterKinds[key];
     if (kind) {
       await request(`/masters/${kind}/${encodeURIComponent(current.id)}`, {
@@ -956,6 +1164,22 @@
     }
     await hydrateAdmin();
     return { record, approval };
+  }
+
+  async function createPart(payload) {
+    const result = await request('/parts', { method: 'POST', body: JSON.stringify(payload) });
+    await hydrateAdmin();
+    return result;
+  }
+
+  async function updatePart(part, payload) {
+    const partID = part?.id || part?._id;
+    if (!partID) throw new Error('編集対象のパーツが見つかりません。');
+    const result = await request(`/parts/${encodeURIComponent(partID)}`, {
+      method: 'PATCH', body: JSON.stringify(payload),
+    });
+    await hydrateAdmin();
+    return result;
   }
 
   async function returnShipmentProduct(shipment, code) {
@@ -1051,10 +1275,20 @@
 
   async function markPurchasePaid(slip) {
     const purchaseID = slip?._id || slip?.id;
-    if (!purchaseID) throw new Error('入金確認対象の仕入伝票が見つかりません。');
+    if (!purchaseID) throw new Error('支払確認対象の仕入伝票が見つかりません。');
     const record = await request(`/purchases/${encodeURIComponent(purchaseID)}/paid`, { method:'POST', body:'{}' });
     await hydrateAdmin();
     return record;
+  }
+
+  async function receivePurchaseProduct(slip, productCode) {
+	const purchaseID = slip?._id || slip?.id;
+	if (!purchaseID) throw new Error('入荷対象の仕入伝票が見つかりません。');
+	const result = await request(`/purchases/${encodeURIComponent(purchaseID)}/arrival-scan`, {
+	  method: 'POST', body: JSON.stringify({ productCode: String(productCode || '').trim() }),
+	});
+	await hydrateAdmin();
+	return result;
   }
 
   async function deletePurchaseSlip(slip) {
@@ -1096,7 +1330,9 @@
 
   async function importMarketCSV(file) {
     const form = new FormData();
-    form.append('file', file, file.name || 'market.csv');
+    const requestedName = String(file?.name || 'market.csv').trim() || 'market.csv';
+    const uploadName = /\.csv$/i.test(requestedName) ? requestedName : `${requestedName}.csv`;
+    form.append('file', file, uploadName);
     const preview = await request('/market-prices/imports/preview', { method: 'POST', body: form });
     if (Number(preview.errorRows) > 0) {
       const detail = (preview.rows || []).filter(row => !row.valid).slice(0, 3)
@@ -1177,6 +1413,7 @@
       costAmountMinor: Math.round(Number(values.purchasePrice) || 0), costCurrency: 'JPY',
       baseSalePriceMinor: Math.round(Number(values.salePrice) || 0), baseSaleCurrency: 'USD',
       accessoryCodes, beltText: values.belt || '', dialText: values.dial || '', notes: values.note || '',
+      braceletQuantity: (values.accessories || []).includes('BRACELET PARTS') ? values.braceletQty : 0,
       inventoryStatus: statusCode, duplicateSerialReason: reason, reason,
     }) });
     if (Number(values.boxNo || 0) !== Number(item.boxNo || 0)) {
@@ -1191,6 +1428,27 @@
     } else {
       await hydrateAdmin();
     }
+    return result;
+  }
+
+  async function startProductCostAdjustment(item, options = {}) {
+    if (!item?._id) throw new Error('原価調整を開始する商品が見つかりません。');
+    const mode = options.mode === 'combine' ? 'combine' : 'breakdown';
+    const result = await request(`/products/${encodeURIComponent(item._id)}/cost-adjustments/start`, {
+      method: 'POST',
+      body: JSON.stringify({ mode, partIds: mode === 'combine' ? (options.partIds || []) : [] }),
+    });
+    await hydrateAdmin();
+    return result;
+  }
+
+  async function confirmProductCostAdjustment(item, payload) {
+    if (!item?._id) throw new Error('原価調整を確定する対象商品が見つかりません。');
+    const result = await request(`/products/${encodeURIComponent(item._id)}/cost-adjustments/confirm`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    await hydrateAdmin();
     return result;
   }
 
@@ -1252,7 +1510,7 @@
     markNotificationRead, saveExchangeRate,
     changePassword, setUserActive, queuePasswordReset, saveCompany, saveDashboardSettings,
     getAdminAccessCode, rotateAdminAccessCode, verifyAdminAccessCode, createUser,
-    createGuestWithPartner, savePartner, saveMasterRecord, deactivateMasterRecord, createSingleProduct, appendProductImages,
-    createApproval, decideApproval, saveSale, saveShipment, returnShipmentProduct, saveConsignment, returnConsignmentProduct, savePurchaseSlip, issuePurchaseSlip, markPurchasePaid, deletePurchaseSlip, issueSaleSlip, markSalePaid, issueConsignmentSlip, saveBoxes, importMarketCSV, saveReturn,
-    updateProduct, updateProductImages, updateMarketPrice, updateShipmentTracking, updateReturnTracking, recordDocumentEvent };
+    createGuestWithPartner, savePartner, saveMasterRecord, deactivateMasterRecord, createSingleProduct, createPart, updatePart, appendProductImages,
+    createApproval, decideApproval, saveSale, saveShipment, returnShipmentProduct, saveConsignment, returnConsignmentProduct, savePurchaseSlip, issuePurchaseSlip, markPurchasePaid, receivePurchaseProduct, deletePurchaseSlip, issueSaleSlip, markSalePaid, issueConsignmentSlip, saveBoxes, importMarketCSV, saveReturn,
+    updateProduct, startProductCostAdjustment, confirmProductCostAdjustment, updateProductImages, updateMarketPrice, updateShipmentTracking, updateReturnTracking, recordDocumentEvent };
 })();

@@ -873,15 +873,19 @@
 
 .market-currency-prefix {
   position: absolute;
-  left: 11px;
+  left: 0;
   top: 50%;
   transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
   color: var(--primary);
   font-weight: 800;
   pointer-events: none;
 }
 
-.market-currency-field input { padding-left: 28px; }
+.market-currency-field input { padding-left: 62px; }
 
 .market-required-error {
   display: none;

@@ -23,6 +23,7 @@ var masterCodePatterns = map[string]*regexp.Regexp{
 	"dial": regexp.MustCompile(`^DIA-[0-9]{3,}$`), "dials": regexp.MustCompile(`^DIA-[0-9]{3,}$`),
 	"shape": regexp.MustCompile(`^SHP-[0-9]{3,}$`), "shapes": regexp.MustCompile(`^SHP-[0-9]{3,}$`), "product-shapes": regexp.MustCompile(`^SHP-[0-9]{3,}$`),
 	"marking": regexp.MustCompile(`^MRK-[0-9]{3,}$`), "markings": regexp.MustCompile(`^MRK-[0-9]{3,}$`),
+	"part-name": regexp.MustCompile(`^PRT-[0-9]{3,}$`), "part-names": regexp.MustCompile(`^PRT-[0-9]{3,}$`),
 }
 
 func (s *Server) apiMasterItems(w http.ResponseWriter, r *http.Request) {

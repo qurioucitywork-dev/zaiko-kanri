@@ -73,6 +73,18 @@ const APP_DATA = {
     { code: "DIA-004", name: "ブルー" },
     { code: "DIA-005", name: "グリーン" },
   ],
+  partNameRecords: [
+    { code: "PRT-001", name: "素材" },
+    { code: "PRT-002", name: "ベルト素材" },
+    { code: "PRT-003", name: "文字盤" },
+    { code: "PRT-004", name: "BOX" },
+    { code: "PRT-005", name: "CASE" },
+    { code: "PRT-006", name: "BRACELET PARTS" },
+    { code: "PRT-007", name: "竜頭" },
+    { code: "PRT-008", name: "バックル" },
+    { code: "PRT-009", name: "風防" },
+  ],
+  parts: [],
   accessories: ["BOX", "CASE", "GUARANTEE", "BRACELET PARTS", "CERTIFICATE", "ARCHIVE"],
   conditions: [
     { code: "CON-001", name: "未使用品 (N)" },
@@ -1578,6 +1590,8 @@ function getBuyerName(code) {
 function getStatusBadge(status) {
   const map = {
     '在庫中': '<span class="badge badge-stock">● 在庫中</span>',
+    '原価調整中': '<span class="badge badge-cost-adjustment">● 原価調整中</span>',
+    '崩し済み': '<span class="badge badge-secondary">● 崩し済み</span>',
     '取置中': '<span class="badge badge-pending">● 取置中</span>',
     '売上済': '<span class="badge badge-sold">● 売上済</span>',
     '出荷済': '<span class="badge badge-shipped">● 出荷済</span>',

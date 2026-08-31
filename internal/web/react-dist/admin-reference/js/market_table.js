@@ -1076,7 +1076,8 @@ function marketAddDraftRows(countOverride) {
   const requested = countOverride == null ? Number(input?.value || 1) : Number(countOverride);
   const count = Math.min(100, Math.max(1, Math.floor(Number.isFinite(requested) ? requested : 1)));
   if (input) input.value = String(count);
-  if (!_marketPendingImport) _marketPendingImport = { fileName: '手入力明細', rows: [], skipped: 0 };
+  // 手入力もCSV取込と同じAPIへ送るため、アップロード名には必ず.csvを付ける。
+  if (!_marketPendingImport) _marketPendingImport = { fileName: '手入力明細.csv', rows: [], skipped: 0 };
   const startIndex = _marketPendingImport.rows.length;
   for (let index = 0; index < count; index += 1) _marketPendingImport.rows.push(_marketCreateDraftRow());
   _marketDraftInvalidIndexes.clear();
@@ -1438,7 +1439,9 @@ async function marketConfirmCSVImport() {
     let approvalPending = false;
     if (window.ZaikoAPI) {
       const normalizedText = _marketPendingRowsToCSV(pending.rows);
-      const normalizedFile = new File([normalizedText], pending.fileName || 'market.csv', { type: 'text/csv;charset=utf-8' });
+      const requestedFileName = String(pending.fileName || 'market.csv').trim() || 'market.csv';
+      const normalizedFileName = /\.csv$/i.test(requestedFileName) ? requestedFileName : `${requestedFileName}.csv`;
+      const normalizedFile = new File([normalizedText], normalizedFileName, { type: 'text/csv;charset=utf-8' });
       const result = await window.ZaikoAPI.importMarketCSV(normalizedFile);
       approvalPending = result?.status === 'pending_approval';
     } else {

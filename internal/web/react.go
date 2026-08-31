@@ -66,7 +66,7 @@ func serveEmbeddedAsset(w http.ResponseWriter, r *http.Request, assetPath string
 	if contentType := mime.TypeByExtension(path.Ext(assetPath)); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}
-	if path.Ext(assetPath) == ".html" {
+	if extension := path.Ext(assetPath); extension == ".html" || extension == ".js" || extension == ".css" {
 		w.Header().Set("Cache-Control", "no-cache")
 	}
 	http.ServeContent(w, r, path.Base(assetPath), time.Time{}, bytes.NewReader(content))

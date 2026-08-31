@@ -97,6 +97,7 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	}
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /readyz", s.apiHealth)
 	mux.HandleFunc("GET /api/v1/health", s.apiHealth)
 	mux.HandleFunc("POST /api/v1/auth/login", s.apiLogin)
 	mux.HandleFunc("POST /api/v1/auth/password-reset", s.apiPasswordResetComplete)
@@ -105,12 +106,16 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/dashboard", s.apiAuthenticated("dashboard.read", http.HandlerFunc(s.apiDashboard)))
 	mux.Handle("GET /api/v1/products", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProducts)))
 	mux.Handle("POST /api/v1/products", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductCreate)))
+	mux.Handle("GET /api/v1/parts", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiParts)))
+	mux.Handle("POST /api/v1/parts", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiPartCreate)))
+	mux.Handle("PATCH /api/v1/parts/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiPartUpdate)))
 	mux.Handle("GET /api/v1/products/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProduct)))
 	mux.Handle("GET /api/v1/purchases", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiPurchases)))
 	mux.Handle("GET /api/v1/purchases-deleted", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiDeletedPurchases)))
 	mux.Handle("GET /api/v1/purchases/{id}", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiPurchase)))
 	mux.Handle("POST /api/v1/purchases", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseCreate)))
 	mux.Handle("POST /api/v1/purchases/{id}/confirm", s.apiAuthenticated("purchase.confirm", http.HandlerFunc(s.apiPurchaseConfirm)))
+	mux.Handle("POST /api/v1/purchases/{id}/arrival-scan", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseArrivalScan)))
 	mux.Handle("POST /api/v1/purchases/{id}/issue", s.apiAuthenticated("", http.HandlerFunc(s.apiPurchaseIssue)))
 	mux.Handle("POST /api/v1/purchases/{id}/paid", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchasePaid)))
 	mux.Handle("DELETE /api/v1/purchases/{id}", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseDelete)))
@@ -172,6 +177,8 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/products/{id}/files", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProductFiles)))
 	mux.Handle("PUT /api/v1/products/{id}/files/order", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductFilesReorder)))
 	mux.Handle("PATCH /api/v1/products/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductUpdate)))
+	mux.Handle("POST /api/v1/products/{id}/cost-adjustments/start", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductCostAdjustmentStart)))
+	mux.Handle("POST /api/v1/products/{id}/cost-adjustments/confirm", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductCostAdjustmentConfirm)))
 	mux.Handle("GET /api/v1/product-files/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProductFile)))
 	mux.Handle("DELETE /api/v1/product-files/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductFileDelete)))
 	mux.Handle("GET /api/v1/users", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUsers)))
@@ -287,7 +294,7 @@ func (s *Server) parseTemplates() error {
 		},
 		"productStatus": func(status string) string {
 			return map[string]string{
-				"purchasing": "仕入中", "in_stock": "在庫中", "reserved": "取置中",
+				"purchasing": "仕入中", "in_stock": "在庫中", "cost_adjustment": "原価調整中", "reserved": "取置中",
 				"return_pending": "仕入返品処理中", "consigned": "委託中",
 				"sold": "販売済み", "shipped": "出荷済み", "cancelled": "仕入返品処理済", "invalid": "無効",
 				"public": "公開", "private": "非公開",
@@ -628,6 +635,12 @@ func (s *Server) requestIdentity(next http.Handler) http.Handler {
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/api/v1/") || r.URL.Path == "/readyz" {
+			// Business data must always be revalidated. A cached successful empty
+			// response otherwise survives a transient DB reconnect in some proxies.
+			w.Header().Set("Cache-Control", "no-store, max-age=0")
+			w.Header().Set("Pragma", "no-cache")
+		}
 		if r.URL.Path == "/app" || strings.HasPrefix(r.URL.Path, "/app/") {
 			// The reference design is the canonical application UI. It uses inline
 			// styles and handlers plus Font Awesome and Chart.js. Business data still

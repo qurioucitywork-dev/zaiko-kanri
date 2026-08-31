@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>在庫管理ツール — 管理画面</title>
-  <link rel="stylesheet" href="css/style.css?v=20260831-inventory-code-copy-v1">
-<link rel="stylesheet" href="css/market-table.css?v=20260831-market-bracelet-quantity-v1">
+  <link rel="stylesheet" href="css/style.css?v=20260831-cost-adjustment-combine-v1">
+<link rel="stylesheet" href="css/market-table.css?v=20260831-market-modal-currency-spacing-v1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
@@ -1569,6 +1569,14 @@
       <div class="item-edit-section">
         <div class="item-edit-section-title"><i class="fa-solid fa-box-open"></i> 付属品</div>
         <div class="checkbox-group" id="ie-accessories"></div>
+        <div id="ie-bracelet-qty-row" hidden style="margin-top:12px;align-items:center;gap:8px;flex-wrap:wrap;">
+          <label class="form-label" for="ie-bracelet-qty" style="margin:0;white-space:nowrap;">BRACELET PARTS コマ数</label>
+          <input type="number" min="1" step="1" inputmode="numeric"
+            class="form-control" id="ie-bracelet-qty" style="width:110px;display:inline-block;"
+            placeholder="例: 8" aria-describedby="ie-bracelet-qty-help">
+          <span style="font-size:12px;color:var(--text-muted);">コマ</span>
+          <small id="ie-bracelet-qty-help" style="flex-basis:100%;color:var(--text-muted);">BRACELET PARTS を選択した場合に入力してください。</small>
+        </div>
       </div>
       <!-- セクション：備考 -->
       <div class="item-edit-section">
@@ -1888,14 +1896,31 @@
             </a>
           </div>
         </div>
-        <a class="nav-item" data-page="inventory" onclick="navigateTo('inventory')">
-          <span class="nav-icon"><i class="fa-solid fa-box-archive"></i></span> 在庫管理
-        </a>
+        <div class="nav-folder" id="inventoryNavGroup">
+          <button class="nav-item nav-folder-toggle" id="inventoryNavToggle" type="button"
+            aria-expanded="false" aria-controls="inventoryNavSubmenu" onclick="toggleInventoryNavGroup()">
+            <span class="nav-icon"><i class="fa-solid fa-box-archive"></i></span>
+            <span>在庫管理</span>
+            <span class="nav-folder-chevron" aria-hidden="true"><i class="fa-solid fa-chevron-down"></i></span>
+          </button>
+          <div class="nav-submenu" id="inventoryNavSubmenu" aria-label="在庫管理メニュー" hidden>
+            <a class="nav-item nav-subitem" data-page="inventory" onclick="navigateTo('inventory')">
+              <span class="nav-icon"><i class="fa-solid fa-box"></i></span> 商品管理
+            </a>
+            <a class="nav-item nav-subitem" data-page="parts-management" onclick="navigateTo('parts-management')">
+              <span class="nav-icon"><i class="fa-solid fa-puzzle-piece"></i></span> パーツ管理
+            </a>
+          </div>
+        </div>
         <a class="nav-item" data-page="purchase-entry" onclick="navigateTo('purchase-entry')">
           <span class="nav-icon"><i class="fa-solid fa-file-invoice"></i></span> 仕入登録
         </a>
         <a class="nav-item" data-page="purchase" onclick="navigateTo('purchase')">
           <span class="nav-icon"><i class="fa-solid fa-file-import"></i></span> 商品登録
+        </a>
+        <a class="nav-item" id="costAdjustmentNavButton" data-page="cost-adjustment"
+          onclick="navigateTo('cost-adjustment')">
+          <span class="nav-icon"><i class="fa-solid fa-scale-balanced"></i></span> 原価調整
         </a>
       </div>
       <div class="nav-group">
@@ -2477,12 +2502,12 @@
       </div>
     </div>
 
-    <!-- ===== 在庫一覧 ===== -->
+    <!-- ===== 商品管理 ===== -->
     <div class="page-panel page-content hidden" id="page-inventory">
       <!-- ===== 検索パネル ===== -->
       <div class="card mb-20" id="inv-search-panel">
         <div class="card-header" style="padding-bottom:12px;">
-          <h3><i class="fa-solid fa-magnifying-glass"></i> 在庫検索</h3>
+          <h3><i class="fa-solid fa-magnifying-glass"></i> 商品検索</h3>
           <div class="card-actions">
             <button class="btn btn-ghost btn-sm" onclick="resetInventorySearch()" id="inv-reset-btn" style="color:var(--text-muted);display:none;">
               <i class="fa-solid fa-rotate-left"></i> 条件クリア
@@ -2562,7 +2587,10 @@
               <label class="inv-filter-label"><i class="fa-solid fa-circle-dot"></i> ステータス</label>
               <select class="form-control inv-filter-input" id="inv-f-status">
                 <option value="">すべて</option>
+                <option value="仕入中">仕入中</option>
                 <option value="在庫中" selected>在庫中</option>
+                <option value="原価調整中">原価調整中</option>
+                <option value="崩し済み">崩し済み</option>
                 <option value="取置中">取置中</option>
                 <option value="売上済">売上済</option>
                 <option value="委託中">委託中</option>
@@ -2649,7 +2677,7 @@
       <!-- ===== 検索結果エリア（検索後に表示） ===== -->
       <div id="inv-result-area" class="card" style="display:none;overflow:visible;">
         <div class="card-header">
-          <h3><i class="fa-solid fa-box-archive"></i> 在庫一覧</h3>
+          <h3><i class="fa-solid fa-box-archive"></i> 商品一覧</h3>
           <div class="card-actions">
             <span style="font-size:12px;color:var(--text-muted);" id="inventoryCount"></span>
             <div class="inv-column-menu-wrap" id="inv-column-menu-wrap">
@@ -2782,6 +2810,111 @@
           </table>
         </div>
         <div class="pagination" id="inventoryPagination"></div>
+      </div>
+
+    </div>
+
+    <!-- ===== パーツ管理 ===== -->
+    <div class="page-panel page-content hidden" id="page-parts-management">
+      <div class="card mb-20" id="part-search-panel">
+        <div class="card-header" style="padding-bottom:12px;">
+          <h3><i class="fa-solid fa-magnifying-glass"></i> パーツ検索</h3>
+          <div class="card-actions">
+            <button class="btn btn-ghost btn-sm" type="button" onclick="resetPartInventorySearch()" id="part-reset-btn" style="color:var(--text-muted);display:none;">
+              <i class="fa-solid fa-rotate-left"></i> 条件クリア
+            </button>
+            <button class="btn btn-accent btn-sm" type="button" onclick="execPartInventorySearch()">
+              <i class="fa-solid fa-magnifying-glass"></i> 検索
+            </button>
+            <button class="btn btn-accent btn-sm" type="button" onclick="navigateToPartRegistration()">
+              <i class="fa-solid fa-plus"></i> パーツ登録
+            </button>
+          </div>
+        </div>
+        <div class="card-body" style="padding-top:8px;">
+          <div class="inv-filter-grid part-filter-grid">
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-code"><i class="fa-solid fa-barcode"></i> パーツ管理番号</label>
+              <input type="text" class="form-control inv-filter-input" id="part-f-code" placeholder="例：P3108260001">
+            </div>
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-name"><i class="fa-solid fa-puzzle-piece"></i> パーツ名</label>
+              <select class="form-control inv-filter-input" id="part-f-name"><option value="">すべて</option></select>
+            </div>
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-brand"><i class="fa-solid fa-tag"></i> ブランド</label>
+              <select class="form-control inv-filter-input" id="part-f-brand"><option value="">すべて</option></select>
+            </div>
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-reference-model"><i class="fa-solid fa-hashtag"></i> 型番・モデル</label>
+              <input type="text" class="form-control inv-filter-input" id="part-f-reference-model" placeholder="型番またはモデル名">
+            </div>
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-sku"><i class="fa-solid fa-qrcode"></i> SKU</label>
+              <input type="text" class="form-control inv-filter-input" id="part-f-sku" placeholder="SKU">
+            </div>
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-detail"><i class="fa-solid fa-align-left"></i> 詳細</label>
+              <input type="text" class="form-control inv-filter-input" id="part-f-detail" placeholder="素材・仕様・コマ数など">
+            </div>
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-supplier"><i class="fa-solid fa-industry"></i> 仕入先</label>
+              <select class="form-control inv-filter-input" id="part-f-supplier"><option value="">すべて</option></select>
+            </div>
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-staff"><i class="fa-solid fa-user"></i> バイヤー</label>
+              <select class="form-control inv-filter-input" id="part-f-staff"><option value="">すべて</option></select>
+            </div>
+            <div class="form-group inv-filter-item">
+              <label class="inv-filter-label" for="part-f-status"><i class="fa-solid fa-circle-dot"></i> ステータス</label>
+              <select class="form-control inv-filter-input" id="part-f-status">
+                <option value="">すべて</option>
+                <option value="在庫中">在庫中</option>
+                <option value="原価調整中">原価調整中</option>
+                <option value="無効">無効</option>
+              </select>
+            </div>
+          </div>
+          <div class="inv-filter-date-row">
+            <label class="inv-filter-label" style="white-space:nowrap;"><i class="fa-solid fa-calendar-days"></i> 仕入日</label>
+            <input type="date" class="form-control inv-filter-input" id="part-f-date-from" style="width:150px;">
+            <span style="font-size:13px;color:var(--text-muted);">〜</span>
+            <input type="date" class="form-control inv-filter-input" id="part-f-date-to" style="width:150px;">
+          </div>
+          <div id="part-active-filters" class="part-active-filters" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="card part-inventory-card" id="part-inventory-area">
+        <div class="card-header">
+          <h3><i class="fa-solid fa-puzzle-piece"></i> パーツ一覧</h3>
+          <div class="card-actions">
+            <span id="partInventoryCount" class="part-inventory-count"></span>
+          </div>
+        </div>
+        <div class="data-table-wrapper part-inventory-table-wrapper" tabindex="0"
+          aria-label="パーツ一覧。横にスクロールしてすべての項目を確認できます">
+          <table class="data-table part-inventory-table" id="partInventoryTable">
+            <thead>
+              <tr>
+                <th>パーツ管理番号</th>
+                <th>仕入日</th>
+                <th>パーツ名</th>
+                <th>詳細</th>
+                <th>ブランド</th>
+                <th>型番／モデル</th>
+                <th>SKU</th>
+                <th>仕入先</th>
+                <th>バイヤー</th>
+                <th>原価（JPY）</th>
+                <th>売価（USD）</th>
+                <th>ステータス</th>
+              </tr>
+            </thead>
+            <tbody id="partInventoryTableBody"></tbody>
+          </table>
+        </div>
+        <div class="pagination" id="partInventoryPagination"></div>
       </div>
     </div>
 
@@ -2995,8 +3128,8 @@
                 <th style="text-align:center;">伝票ステータス</th>
                 <th style="text-align:center;">発行</th>
                 <th style="text-align:center;">発行日</th>
-                <th style="text-align:center;">入金確認</th>
-                <th style="text-align:center;">入金日付</th>
+                <th style="text-align:center;">支払確認</th>
+                <th style="text-align:center;">支払日付</th>
                 <th style="text-align:center;">操作</th>
               </tr>
             </thead>
@@ -3012,7 +3145,22 @@
 
     <!-- ===== 商品登録 ===== -->
     <div class="page-panel page-content hidden" id="page-purchase">
-      <div class="purchase-form-wrap">
+      <div class="registration-mode-card" aria-labelledby="registration-mode-title">
+        <div>
+          <h2 id="registration-mode-title"><i class="fa-solid fa-boxes-stacked" aria-hidden="true"></i> 登録する種類</h2>
+          <p>通常の商品と、原価調整で使用するパーツを切り替えて登録できます。</p>
+        </div>
+        <div class="registration-mode-switch" role="radiogroup" aria-label="登録する種類">
+          <button type="button" id="registration-mode-product" class="registration-mode-button active" role="radio" aria-checked="true" onclick="switchRegistrationMode('product')">
+            <i class="fa-solid fa-box" aria-hidden="true"></i> 商品登録
+          </button>
+          <button type="button" id="registration-mode-part" class="registration-mode-button" role="radio" aria-checked="false" onclick="switchRegistrationMode('part')">
+            <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i> パーツ登録
+          </button>
+        </div>
+      </div>
+
+      <div class="purchase-form-wrap" id="product-registration-form">
         <!-- 左：メインフォーム -->
         <div>
           <div class="card mb-20">
@@ -3265,6 +3413,450 @@
       </div>
     </div>
 
+    <!-- ===== 原価調整 ===== -->
+    <div class="page-panel page-content hidden" id="page-cost-adjustment">
+      <section class="ca-workspace" aria-labelledby="ca-workspace-title">
+        <div class="ca-toolbar-card">
+          <div class="ca-toolbar-title">
+            <span class="ca-toolbar-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
+            <div>
+              <h2 id="ca-workspace-title">原価調整ワークスペース</h2>
+              <p>対象商品とパーツBOXを使って、原価調整の内容を組み立てます</p>
+            </div>
+          </div>
+          <div class="ca-toolbar-actions">
+            <div class="ca-mode-switch" role="radiogroup" aria-label="原価調整方法">
+              <button type="button" class="ca-mode-button active" data-ca-mode="breakdown" role="radio"
+                aria-checked="true" onclick="costAdjustmentSetMode('breakdown')">
+                <i class="fa-solid fa-cubes-stacked"></i> 崩し
+              </button>
+              <button type="button" class="ca-mode-button" data-ca-mode="combine" role="radio"
+                aria-checked="false" onclick="costAdjustmentSetMode('combine')">
+                <i class="fa-solid fa-object-group"></i> 結合
+              </button>
+              <button type="button" class="ca-mode-button" data-ca-mode="swap" role="radio"
+                aria-checked="false" onclick="costAdjustmentSetMode('swap')">
+                <i class="fa-solid fa-right-left"></i> 入替
+              </button>
+            </div>
+            <button type="button" class="btn btn-primary ca-start-button" id="ca-start-button"
+              onclick="costAdjustmentStart()" disabled>
+              <i class="fa-solid fa-play"></i> 原価調整開始
+            </button>
+          </div>
+        </div>
+
+        <div class="ca-workbench">
+          <section class="ca-panel ca-product-panel" aria-labelledby="ca-product-title">
+            <div class="ca-panel-heading">
+              <span><i class="fa-solid fa-box-open"></i></span>
+              <div><h3 id="ca-product-title">対象商品</h3><small>管理番号またはタグから読込</small></div>
+            </div>
+            <div class="ca-code-entry">
+              <label for="ca-product-code">商品管理番号</label>
+              <div class="ca-code-input-row">
+                <input class="form-control" id="ca-product-code" placeholder="管理番号を入力"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();costAdjustmentLoadProduct();}">
+                <button type="button" class="management-code-scan-button"
+                  onclick="openBarcodeScanner('cost-adjustment')"
+                  aria-label="タグを読み取って原価調整の商品管理番号へ入力" title="タグ・QRコードを読み取る">
+                  <i class="fa-solid fa-qrcode"></i>
+                </button>
+              </div>
+              <button type="button" class="btn btn-outline ca-load-button" onclick="costAdjustmentLoadProduct()">
+                <i class="fa-solid fa-magnifying-glass"></i> 商品を読み込む
+              </button>
+              <p class="ca-input-feedback" id="ca-product-feedback" aria-live="polite">商品を選択してください</p>
+            </div>
+            <div class="ca-product-summary" id="ca-product-summary" draggable="false"
+              ondragstart="costAdjustmentDragProduct(event)"
+              ondragover="costAdjustmentAllowProductDrop(event)"
+              ondragleave="costAdjustmentProductDragLeave(event)"
+              ondrop="costAdjustmentDropPartOnProduct(event)"
+              aria-label="読み込んだ対象商品の情報">
+              <div class="ca-product-placeholder" id="ca-product-placeholder">
+                <i class="fa-solid fa-tag"></i><span>商品情報はここに表示されます</span>
+              </div>
+              <div class="ca-product-details" id="ca-product-details" hidden>
+                <dl class="ca-product-detail-column ca-product-detail-primary" aria-label="商品基本情報">
+                  <div><dt>ブランド</dt><dd id="ca-product-brand">—</dd></div>
+                  <div><dt>型番</dt><dd id="ca-product-ref">—</dd></div>
+                  <div><dt>モデル</dt><dd id="ca-product-model">—</dd></div>
+                  <div><dt>原価</dt><dd class="ca-product-cost" id="ca-product-cost">—</dd></div>
+                  <div><dt>SKU</dt><dd id="ca-product-sku">—</dd></div>
+                  <div><dt>ステータス</dt><dd id="ca-product-status">—</dd></div>
+                </dl>
+                <dl class="ca-product-detail-column ca-product-detail-secondary" aria-label="商品属性情報">
+                  <div><dt>素材</dt><dd id="ca-attribute-material">—</dd></div>
+                  <div><dt>ベルト素材</dt><dd id="ca-attribute-belt">—</dd></div>
+                  <div><dt>文字盤</dt><dd id="ca-attribute-dial">—</dd></div>
+                  <div><dt>付属品</dt><dd id="ca-attribute-accessories">—</dd></div>
+                  <div class="ca-product-note"><dt>特徴・備考</dt><dd id="ca-attribute-note">—</dd></div>
+                </dl>
+              </div>
+              <div class="ca-combine-diff" id="ca-combine-diff" hidden aria-live="polite"></div>
+            </div>
+          </section>
+
+          <aside class="ca-panel ca-parts-panel" id="ca-parts-panel" aria-labelledby="ca-parts-title"
+            ondragover="costAdjustmentAllowWorkspaceDrop(event)"
+            ondragleave="costAdjustmentWorkspaceDragLeave(event)"
+            ondrop="costAdjustmentDropProduct(event)">
+            <div class="ca-panel-heading">
+              <span><i class="fa-solid fa-puzzle-piece"></i></span>
+              <div><h3 id="ca-parts-title">パーツBOX</h3><small id="ca-parts-subtitle">4列×5段・ドラッグ移動対応</small></div>
+            </div>
+            <div class="ca-code-entry ca-part-entry">
+              <label for="ca-part-code">パーツ管理番号</label>
+              <div class="ca-code-input-row">
+                <input class="form-control" id="ca-part-code" placeholder="パーツ番号を入力"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();costAdjustmentAddPart();}">
+                <button type="button" class="btn btn-primary ca-add-part-button" onclick="costAdjustmentAddPart()"
+                  aria-label="パーツBOXへ追加"><i class="fa-solid fa-plus"></i></button>
+              </div>
+            </div>
+            <div class="ca-breakdown-drop-guide" id="ca-breakdown-drop-guide" hidden role="button" tabindex="0"
+              aria-label="対象商品を崩し作業スペースへ取り込む"
+              onclick="costAdjustmentOpenBreakdownModal()"
+              onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();costAdjustmentOpenBreakdownModal();}">
+              <i class="fa-solid fa-hand-pointer"></i>
+              <span>左の商品情報を丸ごとここへドラッグ＆ドロップしてください</span>
+            </div>
+            <div class="ca-breakdown-result" id="ca-breakdown-result" hidden aria-live="polite"></div>
+            <div class="ca-part-box" id="ca-part-grid" role="grid" aria-label="4列5段のパーツBOX"></div>
+            <p class="ca-parts-hint"><i class="fa-solid fa-circle-info"></i> パーツの商品登録・定義は今後追加予定です</p>
+          </aside>
+        </div>
+        <div class="ca-finalize-bar" id="ca-finalize-bar">
+          <div class="ca-allocation-summary" aria-live="polite">
+            <span><span id="ca-source-cost-label">対象商品の原価</span> <strong id="ca-source-cost-total">¥0</strong></span>
+            <span><span id="ca-allocated-cost-label">配賦済み原価</span> <strong id="ca-allocated-cost-total">¥0</strong></span>
+            <span class="ca-allocation-balance" id="ca-allocation-balance">未編集の明細があります</span>
+          </div>
+          <button type="button" class="btn btn-success btn-lg" id="ca-finalize-button"
+            onclick="costAdjustmentFinalize()" disabled>
+            <i class="fa-solid fa-circle-check"></i> 原価調整確定
+          </button>
+        </div>
+      </section>
+    </div>
+
+    <div class="modal-overlay hidden" id="costAdjustmentBreakdownModal" role="dialog" aria-modal="true"
+      aria-labelledby="costAdjustmentBreakdownTitle" onclick="if(event.target===this)costAdjustmentCloseBreakdownModal()">
+      <div class="modal ca-breakdown-modal">
+        <div class="modal-header">
+          <h3 id="costAdjustmentBreakdownTitle"><i class="fa-solid fa-cubes-stacked"></i> 崩し数量の入力</h3>
+          <button type="button" class="modal-close" onclick="costAdjustmentCloseBreakdownModal()" aria-label="閉じる">&times;</button>
+        </div>
+        <div class="modal-body">
+          <p class="ca-breakdown-product-name" id="ca-breakdown-product-name">—</p>
+          <p class="ca-breakdown-modal-help">崩し作業で生じる商品とパーツの点数を入力してください。</p>
+          <div class="ca-breakdown-count-grid">
+            <label for="ca-breakdown-product-count">
+              <span>商品点数</span>
+              <input type="number" class="form-control" id="ca-breakdown-product-count" min="1" max="20" step="1" value="1" inputmode="numeric">
+            </label>
+            <label for="ca-breakdown-part-count">
+              <span>パーツ点数</span>
+              <input type="number" class="form-control" id="ca-breakdown-part-count" min="1" max="20" step="1" value="1" inputmode="numeric">
+            </label>
+          </div>
+          <p class="ca-breakdown-modal-error" id="ca-breakdown-modal-error" aria-live="assertive"></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="costAdjustmentCloseBreakdownModal()">キャンセル</button>
+          <button type="button" class="btn btn-primary" id="ca-breakdown-confirm-button"
+            onclick="costAdjustmentConfirmBreakdown()"><i class="fa-solid fa-check"></i> 確定</button>
+        </div>
+      </div>
+    </div>
+
+      <div id="part-registration-form" class="part-registration-form hidden">
+        <div class="card mb-20">
+          <div class="card-header part-registration-card-header">
+            <h3><i class="fa-solid fa-file-circle-plus"></i> 基本情報</h3>
+            <span><i class="fa-solid fa-database" aria-hidden="true"></i> パーツ専用データとして保存</span>
+          </div>
+          <div class="card-body">
+            <div class="form-row cols-3">
+              <div class="form-group">
+                <label class="form-label" for="part-code">パーツ管理番号 <span class="required">*</span></label>
+                <div class="management-code-input-row">
+                  <input class="form-control" id="part-code" data-fmt="half" placeholder="例：P2908260001" aria-describedby="part-code-help">
+                  <button type="button" class="btn btn-outline btn-sm" id="part-code-assign-btn" onclick="partAssignCode()" title="仕入日に合わせて自動採番">
+                    <i class="fa-solid fa-hashtag"></i> 採番
+                  </button>
+                </div>
+                <small id="part-code-help">P＋日・月・西暦下2桁＋4桁連番</small>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="part-date">仕入日 <span class="required">*</span></label>
+                <input type="date" class="form-control" id="part-date" onchange="partPurchaseDateChanged()">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="part-staff">バイヤー</label>
+                <select class="form-control" id="part-staff"><option value="">-- 選択 --</option></select>
+              </div>
+            </div>
+            <div class="form-row cols-3">
+              <div class="form-group">
+                <label class="form-label" for="part-supplier">仕入先 <span class="required" id="part-supplier-required">*</span></label>
+                <select class="form-control" id="part-supplier"><option value="">-- 選択 --</option></select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" id="part-cost-label" for="part-cost">原価（JPY） <span class="required">*</span></label>
+                <div class="pu-price-input-shell"><span id="part-cost-symbol">¥</span><input type="text" inputmode="numeric" class="form-control" id="part-cost" placeholder="例: 85,000" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)"></div>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="part-sku">SKU</label>
+                <input class="form-control" id="part-sku" data-fmt="half" placeholder="例：PART-BOX-001">
+              </div>
+            </div>
+            <div class="part-procurement-grid">
+              <section class="part-option-panel" aria-labelledby="part-purchase-type-title">
+                <div class="part-option-title" id="part-purchase-type-title"><i class="fa-solid fa-receipt"></i><span><strong>仕入区分</strong><small>パーツの仕入方法</small></span></div>
+                <div class="part-choice-grid" role="radiogroup" aria-label="パーツ仕入区分">
+                  <button type="button" class="part-choice-button active" id="part-purchase-type-domestic" role="radio" aria-checked="true" onclick="partSetPurchaseType('domestic')">国内業者仕入／オークション</button>
+                  <button type="button" class="part-choice-button" id="part-purchase-type-personal" role="radio" aria-checked="false" onclick="partSetPurchaseType('personal')">個人買取仕入</button>
+                  <button type="button" class="part-choice-button" id="part-purchase-type-overseas" role="radio" aria-checked="false" onclick="partSetPurchaseType('overseas')">海外仕入</button>
+                </div>
+              </section>
+              <section class="part-option-panel" aria-labelledby="part-currency-title">
+                <div class="part-option-title" id="part-currency-title"><i class="fa-solid fa-coins"></i><span><strong>原価通貨</strong><small>登録時レートを固定保存</small></span></div>
+                <div class="part-choice-grid compact" role="radiogroup" aria-label="パーツ原価通貨">
+                  <button type="button" class="part-choice-button active" id="part-currency-jpy" role="radio" aria-checked="true" onclick="partSetCurrency('JPY')">円（JPY）</button>
+                  <button type="button" class="part-choice-button" id="part-currency-usd" role="radio" aria-checked="false" onclick="partSetCurrency('USD')">USD</button>
+                  <button type="button" class="part-choice-button" id="part-currency-hkd" role="radio" aria-checked="false" onclick="partSetCurrency('HKD')">HKD</button>
+                </div>
+                <strong class="part-rate-text" id="part-rate-text">1 JPY = ¥1.00</strong>
+              </section>
+              <section class="part-option-panel" aria-labelledby="part-tax-title">
+                <div class="part-option-title" id="part-tax-title"><i class="fa-solid fa-percent"></i><span><strong>税区分</strong><small>原価の税処理</small></span></div>
+                <select class="form-control" id="part-tax-category">
+                  <option value="consumption_tax">消費税</option>
+                  <option value="tax_equivalent">消費税相当額</option>
+                  <option value="out_of_scope">対象外</option>
+                </select>
+              </section>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-20">
+          <div class="card-header part-registration-card-header"><h3><i class="fa-solid fa-puzzle-piece"></i> 商品詳細</h3><span>パーツ名はマスタ登録から追加・編集できます</span></div>
+          <div class="card-body">
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="part-brand">ブランド名</label><select class="form-control" id="part-brand"><option value="">-- 選択 --</option></select></div>
+              <div class="form-group"><label class="form-label" for="part-model">モデル名</label><input class="form-control" id="part-model" placeholder="例：サブマリーナ"></div>
+              <div class="form-group"><label class="form-label" for="part-ref">型番</label><input class="form-control" id="part-ref" data-fmt="half" placeholder="例：116610LN"></div>
+            </div>
+            <div class="form-row cols-3">
+              <div class="form-group">
+                <label class="form-label" for="part-name">パーツ名 <span class="required">*</span></label>
+                <select class="form-control" id="part-name" onchange="partNameChanged()"><option value="">-- パーツ名を選択 --</option></select>
+                <small>選択肢は「マスタ登録 ＞ パーツ名」で管理します。</small>
+              </div>
+              <div class="form-group" id="part-detail-text-group">
+                <label class="form-label" for="part-detail">詳細</label>
+                <input class="form-control" id="part-detail" placeholder="素材・色・仕様などを入力">
+              </div>
+              <div class="form-group hidden" id="part-detail-master-group">
+                <label class="form-label" id="part-detail-master-label" for="part-detail-master">詳細</label>
+                <select class="form-control" id="part-detail-master"><option value="">-- 選択 --</option></select>
+                <small id="part-detail-master-help">選択したパーツ名に対応するマスタから選択します。</small>
+              </div>
+              <div class="form-group hidden" id="part-bracelet-quantity-group">
+                <label class="form-label" for="part-bracelet-quantity">詳細（コマ数） <span class="required">*</span></label>
+                <div class="part-quantity-input"><input type="number" min="0" step="1" inputmode="numeric" class="form-control" id="part-bracelet-quantity" placeholder="例：8"><span>コマ</span></div>
+              </div>
+              <div class="form-group" id="part-sale-price-group">
+                <label class="form-label" for="part-sale-price-usd">売価（USD）</label>
+                <div class="pu-price-input-shell"><span>$</span><input type="text" inputmode="numeric" class="form-control" id="part-sale-price-usd" placeholder="例: 2,500" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)"></div>
+                <small>売価は米ドルを基準通貨として保存します。</small>
+              </div>
+            </div>
+            <div class="form-group"><label class="form-label" for="part-notes">特徴・備考</label><textarea class="form-control" id="part-notes" rows="4" placeholder="状態、サイズ、欠品、保管上の注意など"></textarea></div>
+            <div class="form-group">
+              <label class="form-label" for="part-internal-comment">コメント <span class="internal-only-label"><i class="fa-solid fa-lock"></i> 社内専用</span></label>
+              <textarea class="form-control internal-comment-input" id="part-internal-comment" rows="3" placeholder="社内メモ・原価調整元・注意事項など（帳票・印刷・CSVには含まれません）" data-internal-only="true"></textarea>
+            </div>
+          </div>
+        </div>
+        <div class="part-registration-actions">
+          <button type="button" class="btn btn-outline" onclick="resetPartRegistrationForm()"><i class="fa-solid fa-rotate"></i> リセット</button>
+          <button type="button" class="btn btn-primary btn-lg" id="part-save-button" onclick="savePartRegistration()"><i class="fa-solid fa-floppy-disk"></i> パーツを登録する</button>
+        </div>
+      </div>
+
+    <div class="modal-overlay hidden" id="costAdjustmentItemModal" role="dialog" aria-modal="true"
+      aria-labelledby="costAdjustmentItemTitle" onclick="if(event.target===this)costAdjustmentCloseItemEditor()">
+      <div class="modal ca-item-editor-modal">
+        <div class="modal-header">
+          <div>
+            <h3 id="costAdjustmentItemTitle"><i class="fa-solid fa-pen-to-square"></i> 崩し明細の編集</h3>
+            <p class="ca-item-editor-caption" id="ca-item-editor-caption">—</p>
+          </div>
+          <button type="button" class="modal-close" onclick="costAdjustmentCloseItemEditor()" aria-label="閉じる">&times;</button>
+        </div>
+        <div class="modal-body ca-item-editor-body">
+          <input type="hidden" id="ca-item-editor-index">
+          <div class="form-row cols-3 ca-item-editor-common">
+            <div class="form-group">
+              <label class="form-label" for="ca-item-code">管理番号</label>
+              <input class="form-control" id="ca-item-code" readonly>
+              <small>原価調整日の管理番号として確定時に採番します。</small>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="ca-item-sku">SKU</label>
+              <input class="form-control" id="ca-item-sku" readonly>
+              <small>対象商品のSKUを同一値で引き継ぎます。</small>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="ca-item-cost">配賦原価（JPY） <span class="required">*</span></label>
+              <div class="pu-price-input-shell"><span>¥</span><input class="form-control" id="ca-item-cost" inputmode="numeric" placeholder="0" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)"></div>
+            </div>
+          </div>
+
+          <section id="ca-product-editor-fields">
+            <div class="ca-item-editor-section-title"><i class="fa-solid fa-box"></i> 商品情報</div>
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="ca-edit-product-brand">ブランド <span class="required">*</span></label><select class="form-control" id="ca-edit-product-brand"></select></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-product-model">モデル</label><input class="form-control" id="ca-edit-product-model"></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-product-ref">型番</label><input class="form-control" id="ca-edit-product-ref"></div>
+            </div>
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="ca-edit-product-serial">シリアル</label><input class="form-control" id="ca-edit-product-serial"></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-product-material">素材</label><select class="form-control" id="ca-edit-product-material"></select></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-product-movement">駆動方式</label><select class="form-control" id="ca-edit-product-movement"></select></div>
+            </div>
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="ca-edit-product-condition">コンディション</label><select class="form-control" id="ca-edit-product-condition"></select></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-product-belt">ベルト素材</label><input class="form-control" id="ca-edit-product-belt"></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-product-dial">文字盤</label><input class="form-control" id="ca-edit-product-dial"></div>
+            </div>
+            <div class="form-row cols-2">
+              <div class="form-group"><label class="form-label" for="ca-edit-product-accessories">付属品（複数選択）</label><select class="form-control" id="ca-edit-product-accessories" multiple size="4"></select></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-product-sale">売価（USD）</label><div class="pu-price-input-shell"><span>$</span><input class="form-control" id="ca-edit-product-sale" inputmode="numeric" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)"></div></div>
+            </div>
+          </section>
+
+          <section class="hidden" id="ca-part-editor-fields">
+            <div class="ca-item-editor-section-title"><i class="fa-solid fa-puzzle-piece"></i> パーツ情報</div>
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="ca-edit-part-brand">ブランド</label><select class="form-control" id="ca-edit-part-brand"></select></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-part-model">モデル</label><input class="form-control" id="ca-edit-part-model"></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-part-ref">型番</label><input class="form-control" id="ca-edit-part-ref"></div>
+            </div>
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="ca-edit-part-name">パーツ名 <span class="required">*</span></label><select class="form-control" id="ca-edit-part-name" onchange="costAdjustmentPartNameChanged()"></select></div>
+              <div class="form-group" id="ca-edit-part-detail-text-group"><label class="form-label" for="ca-edit-part-detail">詳細</label><input class="form-control" id="ca-edit-part-detail"></div>
+              <div class="form-group hidden" id="ca-edit-part-detail-master-group"><label class="form-label" id="ca-edit-part-detail-master-label" for="ca-edit-part-detail-master">詳細</label><select class="form-control" id="ca-edit-part-detail-master"></select></div>
+              <div class="form-group hidden" id="ca-edit-part-quantity-group"><label class="form-label" for="ca-edit-part-quantity">詳細（コマ数）</label><input type="number" min="0" step="1" class="form-control" id="ca-edit-part-quantity"></div>
+              <div class="form-group"><label class="form-label" for="ca-edit-part-sale">売価（USD）</label><div class="pu-price-input-shell"><span>$</span><input class="form-control" id="ca-edit-part-sale" inputmode="numeric" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)"></div></div>
+            </div>
+          </section>
+
+          <div class="form-row cols-2">
+            <div class="form-group"><label class="form-label" for="ca-item-notes">特徴・備考</label><textarea class="form-control" id="ca-item-notes" rows="3"></textarea></div>
+            <div class="form-group">
+              <label class="form-label" for="ca-item-comment">コメント <span class="internal-only-label"><i class="fa-solid fa-lock"></i> 社内専用</span></label>
+              <textarea class="form-control internal-comment-input" id="ca-item-comment" rows="3"></textarea>
+              <small>対象商品の管理番号を自動記載します。</small>
+            </div>
+          </div>
+          <p class="ca-breakdown-modal-error" id="ca-item-editor-error" aria-live="assertive"></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="costAdjustmentCloseItemEditor()">キャンセル</button>
+          <button type="button" class="btn btn-primary" id="ca-item-editor-save" onclick="costAdjustmentCompleteItemEdit()"><i class="fa-solid fa-check"></i> 編集完了</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="partDetailEditModal" role="dialog" aria-modal="true"
+      aria-labelledby="partDetailEditTitle" onclick="if(event.target===this)closePartDetailEditor()">
+      <div class="modal part-detail-edit-modal">
+        <div class="modal-header part-detail-edit-header">
+          <div>
+            <h3 id="partDetailEditTitle"><i class="fa-solid fa-puzzle-piece"></i> パーツ詳細・編集</h3>
+            <p id="part-edit-caption" class="part-detail-edit-caption">—</p>
+          </div>
+          <button type="button" class="modal-close" onclick="closePartDetailEditor()" aria-label="閉じる">&times;</button>
+        </div>
+        <div class="modal-body part-detail-edit-body">
+          <input type="hidden" id="part-edit-id">
+
+          <section class="part-detail-edit-section">
+            <div class="part-detail-edit-section-title"><i class="fa-solid fa-circle-info"></i> 基本情報</div>
+            <div class="form-row cols-3">
+              <div class="form-group">
+                <label class="form-label" for="part-edit-code">パーツ管理番号</label>
+                <input class="form-control" id="part-edit-code" readonly>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="part-edit-date">仕入日</label>
+                <input type="date" class="form-control" id="part-edit-date" readonly>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="part-edit-status">ステータス</label>
+                <select class="form-control" id="part-edit-status">
+                  <option value="in_stock">在庫中</option>
+                  <option value="cost_adjustment">原価調整中</option>
+                  <option value="invalid">無効</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="part-edit-staff">バイヤー</label><select class="form-control" id="part-edit-staff"></select></div>
+              <div class="form-group"><label class="form-label" for="part-edit-supplier">仕入先 <span id="part-edit-supplier-required" class="required">*</span></label><select class="form-control" id="part-edit-supplier"></select></div>
+              <div class="form-group"><label class="form-label" for="part-edit-sku">SKU</label><input class="form-control" id="part-edit-sku"></div>
+            </div>
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="part-edit-purchase-type">仕入区分</label><select class="form-control" id="part-edit-purchase-type" onchange="partEditPurchaseTypeChanged()"><option value="domestic">国内業者仕入／オークション</option><option value="personal">個人買取仕入</option><option value="overseas">海外仕入</option></select></div>
+              <div class="form-group"><label class="form-label" for="part-edit-tax">税区分</label><select class="form-control" id="part-edit-tax"><option value="consumption_tax">消費税</option><option value="tax_equivalent">税相当額</option><option value="out_of_scope">対象外</option></select></div>
+              <div class="form-group"><label class="form-label" for="part-edit-cost-currency">原価通貨</label><select class="form-control" id="part-edit-cost-currency" onchange="partEditCostCurrencyChanged()"><option value="JPY">JPY（日本円）</option><option value="USD">USD（米ドル）</option><option value="HKD">HKD（香港ドル）</option></select></div>
+            </div>
+            <div class="form-row cols-2">
+              <div class="form-group">
+                <label class="form-label" for="part-edit-cost">原価 <span class="required">*</span></label>
+                <div class="pu-price-input-shell"><span id="part-edit-cost-symbol">¥</span><input class="form-control" id="part-edit-cost" inputmode="numeric" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)"></div>
+                <small id="part-edit-cost-lock-note" class="hidden"><i class="fa-solid fa-lock"></i> 原価調整の配賦額を維持するため変更できません。</small>
+              </div>
+              <div class="form-group"><label class="form-label" for="part-edit-sale">売価（USD）</label><div class="pu-price-input-shell"><span>$</span><input class="form-control" id="part-edit-sale" inputmode="numeric" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)"></div></div>
+            </div>
+          </section>
+
+          <section class="part-detail-edit-section">
+            <div class="part-detail-edit-section-title"><i class="fa-solid fa-screwdriver-wrench"></i> パーツ情報</div>
+            <div class="form-row cols-3">
+              <div class="form-group"><label class="form-label" for="part-edit-brand">ブランド</label><select class="form-control" id="part-edit-brand"></select></div>
+              <div class="form-group"><label class="form-label" for="part-edit-ref">型番</label><input class="form-control" id="part-edit-ref"></div>
+              <div class="form-group"><label class="form-label" for="part-edit-model">モデル</label><input class="form-control" id="part-edit-model"></div>
+            </div>
+            <div class="form-row cols-3 part-detail-edit-dynamic-row">
+              <div class="form-group"><label class="form-label" for="part-edit-name">パーツ名 <span class="required">*</span></label><select class="form-control" id="part-edit-name" onchange="partEditNameChanged()"></select></div>
+              <div class="form-group" id="part-edit-detail-text-group"><label class="form-label" for="part-edit-detail">詳細</label><input class="form-control" id="part-edit-detail"></div>
+              <div class="form-group hidden" id="part-edit-detail-master-group"><label class="form-label" id="part-edit-detail-master-label" for="part-edit-detail-master">詳細</label><select class="form-control" id="part-edit-detail-master"></select></div>
+              <div class="form-group hidden" id="part-edit-quantity-group"><label class="form-label" for="part-edit-quantity">詳細（コマ数）</label><input type="number" min="0" step="1" class="form-control" id="part-edit-quantity"></div>
+            </div>
+          </section>
+
+          <section class="part-detail-edit-section">
+            <div class="part-detail-edit-section-title"><i class="fa-solid fa-note-sticky"></i> 補足情報</div>
+            <div class="form-row cols-2">
+              <div class="form-group"><label class="form-label" for="part-edit-notes">特徴・備考</label><textarea class="form-control" id="part-edit-notes" rows="4"></textarea></div>
+              <div class="form-group"><label class="form-label" for="part-edit-comment">コメント <span class="internal-only-label"><i class="fa-solid fa-lock"></i> 社内専用</span></label><textarea class="form-control internal-comment-input" id="part-edit-comment" rows="4" data-internal-only="true"></textarea></div>
+            </div>
+          </section>
+          <p class="part-detail-edit-error" id="part-edit-error" aria-live="assertive"></p>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-outline" onclick="closePartDetailEditor()">キャンセル</button>
+          <button type="button" class="btn btn-primary" id="part-edit-save" onclick="savePartDetailEditor()"><i class="fa-solid fa-floppy-disk"></i> 変更を保存</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ===== 売上登録 ===== -->
     <div class="page-panel page-content hidden" id="page-sales">
       <div class="card mb-20">
@@ -3512,6 +4104,7 @@
             <label class="form-label" for="slip-filter-status"><i class="fa-solid fa-circle-half-stroke"></i> ステータス</label>
             <select class="filter-select" id="slip-filter-status" style="height:34px;min-width:120px;">
               <option value="processing" selected>処理中</option>
+              <option value="unpaid">未払い</option>
               <option value="completed">処理済</option>
               <option value="">すべて</option>
             </select>
@@ -3553,12 +4146,9 @@
             <span class="s-label">修正あり</span>
             <span class="s-val" id="slipSummaryRevised" style="color:#e07b39;">0件</span>
           </div>
-          <!-- 6種類の伝票で共通: 選択件数 + 選択伝票のみの帳票操作 -->
+          <!-- 6種類の伝票で共通: 選択件数 + 選択伝票のダウンロード・印刷 -->
           <div class="sales-summary-item slip-bulk-controls" id="slipBulkControls" style="display:none;margin-left:auto;gap:6px;align-items:center;">
             <span id="slipSelectCountBadge" style="display:none;background:#e0edff;color:#1a56db;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;white-space:nowrap;"></span>
-            <button class="btn btn-outline btn-sm" id="slipBulkPreviewBtn" onclick="_slipBulkAction('preview')" disabled style="white-space:nowrap;">
-              <i class="fa-solid fa-eye"></i> プレビュー
-            </button>
             <button class="btn btn-outline btn-sm" id="slipBulkDownloadBtn" onclick="_slipBulkAction('download')" disabled style="white-space:nowrap;">
               <i class="fa-solid fa-download"></i> ダウンロード
             </button>
@@ -5435,19 +6025,19 @@
 
 <script src="js/qrcode-generator.js?v=1.4.4"></script>
 <script src="js/jsQR.js?v=1.4.0"></script>
-<script src="js/data.js?v=20260829-product-code-ddmmyy-v1"></script>
+<script src="js/data.js?v=20260831-part-registration-v1"></script>
 <script src="js/guest_shared.js?v=20260803-workflow-consistency"></script>
 <script src="js/login_info.js?v=20260818-dropdown-name-only-v1"></script>
 <script src="js/auth.js?v=20260829-sensitive-approval-v1"></script>
-<script src="js/api_bridge.js?v=20260831-market-bracelet-quantity-v1"></script>
+<script src="js/api_bridge.js?v=20260831-cost-adjustment-combine-v1"></script>
 <script src="js/approval.js?v=20260817-today-audit-v2"></script>
 <script src="js/notify.js?v=20260817-approval-notification-link"></script>
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
-<script src="js/market_table.js?v=20260831-market-bracelet-quantity-v1"></script>
+<script src="js/market_table.js?v=20260831-market-manual-register-fix-v1"></script>
 <script src="js/qr_inventory.js?v=20260818-product-tag-v1"></script>
-<script src="js/app.js?v=20260831-inventory-code-copy-v1"></script>
+<script src="js/app.js?v=20260831-cost-adjustment-combine-v1"></script>
 <script src="js/consignment.js?v=20260829-product-code-ddmmyy-v1"></script>
 <script src="js/stocktake.js?v=20260817-today-audit-v2"></script>
-<script src="js/purchase_entry.js?v=20260831-purchase-tax-category-v1"></script>
+<script src="js/purchase_entry.js?v=20260831-purchase-payment-status-v1"></script>
 <script src="https://www.genspark.ai/sandbox_inspect.js"></script></body>
 </html>
