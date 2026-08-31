@@ -5,10 +5,10 @@
 </div>
 {{if .Sale.Warning}}<div class="alert warning-alert">⚠ {{.Sale.Warning}}</div>{{end}}
 <section class="card">
-  <div class="card-header"><div><h3>売上明細と出荷進捗</h3><p>確定後の換算額は、後日の為替更新では変化しません。</p></div><strong class="money">{{formatMoney .Sale.TotalJPY "JPY"}}</strong></div>
+  <div class="card-header"><div><h3>売上明細と出荷進捗</h3><p>売上はUSD表示、円換算額は確定時レートの会計用参考値です。</p></div><strong class="money">{{formatMoney .Sale.TotalUSD "USD"}}</strong></div>
   <div class="table-wrap">
     <table>
-      <thead><tr><th>商品</th><th>数量</th><th>売上単価</th><th>確定レート</th><th>換算合計</th><th>出荷済み</th><th>残数</th></tr></thead>
+      <thead><tr><th>商品</th><th>数量</th><th>売上単価（USD）</th><th>確定レート</th><th>円換算合計</th><th>出荷済み</th><th>残数</th></tr></thead>
       <tbody>{{range .Sale.Lines}}<tr>
         <td><a class="record-link" href="/products/{{.ProductID}}">{{.ProductCode}}</a><span class="table-sub">{{.Brand}} {{.ModelNumber}}</span></td>
         <td>{{.Quantity}}</td><td class="money">{{formatMoney .UnitPriceMinor .SaleCurrency}}</td>

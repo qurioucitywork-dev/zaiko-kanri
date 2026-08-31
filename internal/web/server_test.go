@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -13,11 +14,216 @@ import (
 
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/config"
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/persistence"
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/storage"
 )
+
+func TestRESTAPILoginDashboardAndProducts(t *testing.T) {
+	app, _ := testServer(t)
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"preview-admin-2026"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRecorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(loginRecorder, login)
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("api login status=%d body=%s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	var loginPayload struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	if err := json.Unmarshal(loginRecorder.Body.Bytes(), &loginPayload); err != nil || loginPayload.CSRFToken == "" {
+		t.Fatalf("api login payload=%s error=%v", loginRecorder.Body.String(), err)
+	}
+	cookies := loginRecorder.Result().Cookies()
+	if len(cookies) < 2 {
+		t.Fatalf("api login cookies=%d", len(cookies))
+	}
+	for _, endpoint := range []string{"/api/v1/auth/me", "/api/v1/dashboard", "/api/v1/products"} {
+		request := httptest.NewRequest(http.MethodGet, endpoint, nil)
+		for _, cookie := range cookies {
+			request.AddCookie(cookie)
+		}
+		recorder := httptest.NewRecorder()
+		app.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK || !strings.Contains(recorder.Header().Get("Content-Type"), "application/json") {
+			t.Fatalf("%s status=%d body=%s", endpoint, recorder.Code, recorder.Body.String())
+		}
+	}
+	logout := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
+	for _, cookie := range cookies {
+		logout.AddCookie(cookie)
+	}
+	logout.Header.Set("X-CSRF-Token", loginPayload.CSRFToken)
+	logoutRecorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(logoutRecorder, logout)
+	if logoutRecorder.Code != http.StatusNoContent {
+		t.Fatalf("api logout status=%d body=%s", logoutRecorder.Code, logoutRecorder.Body.String())
+	}
+}
+
+func TestAdminAccessCodeIsSharedRotatableAndDoesNotElevateWorker(t *testing.T) {
+	app, _ := testServer(t)
+
+	loginAPI := func(username, password string) ([]*http.Cookie, string) {
+		t.Helper()
+		body := `{"username":"` + username + `","password":"` + password + `"}`
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		recorder := httptest.NewRecorder()
+		app.Handler().ServeHTTP(recorder, request)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("api login %s status=%d body=%s", username, recorder.Code, recorder.Body.String())
+		}
+		var payload struct {
+			CSRFToken string `json:"csrfToken"`
+		}
+		if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil || payload.CSRFToken == "" {
+			t.Fatalf("api login payload=%s error=%v", recorder.Body.String(), err)
+		}
+		return recorder.Result().Cookies(), payload.CSRFToken
+	}
+	requestWithSession := func(method, target, body, csrf string, cookies []*http.Cookie) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, target, strings.NewReader(body))
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		if csrf != "" {
+			request.Header.Set("X-CSRF-Token", csrf)
+		}
+		for _, cookie := range cookies {
+			request.AddCookie(cookie)
+		}
+		recorder := httptest.NewRecorder()
+		app.Handler().ServeHTTP(recorder, request)
+		return recorder
+	}
+
+	adminCookies, adminCSRF := loginAPI("admin", "preview-admin-2026")
+	if _, err := app.repository.AdminAccessCode(t.Context(), "org_preview", "usr_admin"); err != nil {
+		t.Fatalf("prepare access code: %v", err)
+	}
+	current := requestWithSession(http.MethodGet, "/api/v1/admin-access-code", "", "", adminCookies)
+	if current.Code != http.StatusOK {
+		t.Fatalf("get access code status=%d body=%s", current.Code, current.Body.String())
+	}
+	var first persistence.AdminAccessCodeRecord
+	if err := json.Unmarshal(current.Body.Bytes(), &first); err != nil || !regexp.MustCompile(`^[A-Z0-9]{6}$`).MatchString(first.Code) {
+		t.Fatalf("invalid access code payload=%s error=%v", current.Body.String(), err)
+	}
+
+	rotated := requestWithSession(http.MethodPost, "/api/v1/admin-access-code/rotate", `{}`, adminCSRF, adminCookies)
+	if rotated.Code != http.StatusOK {
+		t.Fatalf("rotate access code status=%d body=%s", rotated.Code, rotated.Body.String())
+	}
+	var second persistence.AdminAccessCodeRecord
+	if err := json.Unmarshal(rotated.Body.Bytes(), &second); err != nil || second.Code == first.Code {
+		t.Fatalf("access code was not rotated: first=%q second=%q error=%v", first.Code, second.Code, err)
+	}
+
+	workerCookies, workerCSRF := loginAPI("worker", "preview-worker-2026")
+	workerRead := requestWithSession(http.MethodGet, "/api/v1/admin-access-code", "", "", workerCookies)
+	if workerRead.Code != http.StatusForbidden {
+		t.Fatalf("worker read access code status=%d, want 403", workerRead.Code)
+	}
+	oldCode := requestWithSession(http.MethodPost, "/api/v1/admin-access-code/verify", `{"code":"`+first.Code+`"}`, workerCSRF, workerCookies)
+	if oldCode.Code != http.StatusOK || !strings.Contains(oldCode.Body.String(), `"valid":false`) {
+		t.Fatalf("old code verification status=%d body=%s", oldCode.Code, oldCode.Body.String())
+	}
+	validCode := requestWithSession(http.MethodPost, "/api/v1/admin-access-code/verify", `{"code":"`+strings.ToLower(second.Code)+`"}`, workerCSRF, workerCookies)
+	if validCode.Code != http.StatusOK || !strings.Contains(validCode.Body.String(), `"valid":true`) {
+		t.Fatalf("current code verification status=%d body=%s", validCode.Code, validCode.Body.String())
+	}
+	me := requestWithSession(http.MethodGet, "/api/v1/auth/me", "", "", workerCookies)
+	if me.Code != http.StatusOK || !strings.Contains(me.Body.String(), `"role":"worker"`) {
+		t.Fatalf("verification must not elevate worker session: status=%d body=%s", me.Code, me.Body.String())
+	}
+	workerIssue := requestWithSession(http.MethodPost, "/api/v1/purchases/pur_example/issue", `{}`, workerCSRF, workerCookies)
+	if workerIssue.Code != http.StatusForbidden || !strings.Contains(workerIssue.Body.String(), `"code":"admin_required"`) {
+		t.Fatalf("worker purchase issue status=%d body=%s, want admin-only 403", workerIssue.Code, workerIssue.Body.String())
+	}
+	workerSaleIssue := requestWithSession(http.MethodPost, "/api/v1/sales/sale_example/issue", `{}`, workerCSRF, workerCookies)
+	if workerSaleIssue.Code != http.StatusForbidden || !strings.Contains(workerSaleIssue.Body.String(), `"code":"admin_required"`) {
+		t.Fatalf("worker sales issue status=%d body=%s, want admin-only 403", workerSaleIssue.Code, workerSaleIssue.Body.String())
+	}
+	for _, endpoint := range []string{
+		"/api/v1/purchases/pur_example/confirm",
+		"/api/v1/sales/sale_example/confirm",
+		"/api/v1/shipments/shp_example/confirm",
+	} {
+		directConfirm := requestWithSession(http.MethodPost, endpoint, `{}`, workerCSRF, workerCookies)
+		if directConfirm.Code != http.StatusForbidden {
+			t.Fatalf("worker direct confirm %s status=%d body=%s, want 403", endpoint, directConfirm.Code, directConfirm.Body.String())
+		}
+	}
+}
+
+func TestRESTCSVExportCreatesDocumentHistory(t *testing.T) {
+	app, _ := testServer(t)
+	if _, err := app.repository.RecordDocumentEvent(t.Context(), "org_preview", "usr_admin", persistence.DocumentEventInput{
+		DocumentType: "documents", Action: "preview", OutputFormat: "html", StorageDriver: "local",
+	}); err != nil {
+		t.Fatalf("prepare document event: %v", err)
+	}
+	login := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"username":"admin","password":"preview-admin-2026"}`))
+	login.Header.Set("Content-Type", "application/json")
+	loginRecorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(loginRecorder, login)
+	if loginRecorder.Code != http.StatusOK {
+		t.Fatalf("api login status=%d body=%s", loginRecorder.Code, loginRecorder.Body.String())
+	}
+	var loginPayload struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	if err := json.Unmarshal(loginRecorder.Body.Bytes(), &loginPayload); err != nil {
+		t.Fatal(err)
+	}
+	cookies := loginRecorder.Result().Cookies()
+
+	export := httptest.NewRequest(http.MethodGet, "/api/v1/exports/inventory.csv", nil)
+	for _, cookie := range cookies {
+		export.AddCookie(cookie)
+	}
+	exportRecorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(exportRecorder, export)
+	if exportRecorder.Code != http.StatusOK {
+		t.Fatalf("csv export status=%d body=%s", exportRecorder.Code, exportRecorder.Body.String())
+	}
+	if disposition := exportRecorder.Header().Get("Content-Disposition"); !strings.Contains(disposition, "zaiko-inventory-") {
+		t.Fatalf("csv content disposition=%q", disposition)
+	}
+	body := exportRecorder.Body.Bytes()
+	if len(body) < 3 || body[0] != 0xEF || body[1] != 0xBB || body[2] != 0xBF || !strings.Contains(string(body), "管理番号") {
+		t.Fatalf("csv body is missing UTF-8 BOM or headers: %q", string(body))
+	}
+
+	manual := httptest.NewRequest(http.MethodPost, "/api/v1/document-events", strings.NewReader(`{"documentType":"sale","documentNumber":"INV-TEST","action":"print","outputFormat":"html","metadata":{"source":"test"}}`))
+	manual.Header.Set("Content-Type", "application/json")
+	manual.Header.Set("X-CSRF-Token", loginPayload.CSRFToken)
+	for _, cookie := range cookies {
+		manual.AddCookie(cookie)
+	}
+	manualRecorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(manualRecorder, manual)
+	if manualRecorder.Code != http.StatusCreated {
+		t.Fatalf("document event status=%d body=%s", manualRecorder.Code, manualRecorder.Body.String())
+	}
+
+	history := httptest.NewRequest(http.MethodGet, "/api/v1/document-events?limit=10", nil)
+	for _, cookie := range cookies {
+		history.AddCookie(cookie)
+	}
+	historyRecorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(historyRecorder, history)
+	if historyRecorder.Code != http.StatusOK || !strings.Contains(historyRecorder.Body.String(), "INV-TEST") || !strings.Contains(historyRecorder.Body.String(), `"documentType":"inventory"`) {
+		t.Fatalf("document history status=%d body=%s", historyRecorder.Code, historyRecorder.Body.String())
+	}
+}
 
 func testServer(t *testing.T) (*Server, *database.Store) {
 	t.Helper()
-	store, err := database.Open("file:" + t.TempDir() + "/web.db")
+	tempDir := t.TempDir()
+	databasePath := tempDir + "/web.db"
+	store, err := database.Open("file:" + databasePath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,8 +234,21 @@ func testServer(t *testing.T) (*Server, *database.Store) {
 	if err := store.SeedPreview(t.Context(), "preview-admin-2026", "preview-worker-2026"); err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{Environment: "test", SessionTTL: time.Hour, OrganizationCode: "PREVIEW"}
-	app, err := New(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	cfg := config.Config{
+		Environment: "test", SessionTTL: time.Hour, OrganizationCode: "PREVIEW",
+		DatabaseDriver: "sqlite", DatabasePath: databasePath,
+		StorageDriver: "local", UploadDirectory: tempDir + "/uploads",
+	}
+	repository, err := persistence.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = repository.Close() })
+	objects, err := storage.New(t.Context(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(cfg, store, repository, objects, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,13 +287,51 @@ func loginAs(t *testing.T, app *Server, username, password string) (*http.Cookie
 	return session, csrf
 }
 
-func TestProtectedPageRedirectsToLogin(t *testing.T) {
+func TestRootRedirectsToReactApplication(t *testing.T) {
 	app, _ := testServer(t)
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
 	recorder := httptest.NewRecorder()
 	app.Handler().ServeHTTP(recorder, request)
-	if recorder.Code != http.StatusSeeOther || recorder.Header().Get("Location") != "/login" {
+	if recorder.Code != http.StatusTemporaryRedirect || recorder.Header().Get("Location") != "/app/" {
 		t.Fatalf("status=%d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+}
+
+func TestReferenceAdminIsLoadedByReactWithoutIframe(t *testing.T) {
+	app, _ := testServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/app/admin-reference/app.html", nil)
+	recorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("reference admin status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("X-Frame-Options"); got != "DENY" {
+		t.Fatalf("X-Frame-Options=%q, want DENY", got)
+	}
+	csp := recorder.Header().Get("Content-Security-Policy")
+	for _, expected := range []string{"frame-ancestors 'none'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "img-src 'self' data: blob: https://sspark.genspark.ai"} {
+		if !strings.Contains(csp, expected) {
+			t.Fatalf("reference CSP %q does not contain %q", csp, expected)
+		}
+	}
+	for _, directive := range strings.Split(csp, ";") {
+		if strings.HasPrefix(strings.TrimSpace(directive), "script-src") && strings.Contains(directive, "genspark.ai") {
+			t.Fatalf("reference script-src must not trust Genspark inspection script: %q", csp)
+		}
+	}
+}
+
+func TestLegacyReactRouteRedirectsToCanonicalReferencePage(t *testing.T) {
+	app, _ := testServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/app/market-prices?source=legacy", nil)
+	recorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("status=%d, want %d", recorder.Code, http.StatusTemporaryRedirect)
+	}
+	location := recorder.Header().Get("Location")
+	if location != "/app/?page=market&source=legacy" {
+		t.Fatalf("location=%q", location)
 	}
 }
 
@@ -87,6 +344,27 @@ func TestWorkerCannotOpenAdminUsersPage(t *testing.T) {
 	app.Handler().ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("worker status=%d, want 403", recorder.Code)
+	}
+}
+
+func TestWorkerCannotOpenApprovalManagement(t *testing.T) {
+	app, _ := testServer(t)
+	session, _ := loginAs(t, app, "worker", "preview-worker-2026")
+
+	request := httptest.NewRequest(http.MethodGet, "/approvals", nil)
+	request.AddCookie(session)
+	recorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("worker approvals status=%d, want 403", recorder.Code)
+	}
+
+	dashboardRequest := httptest.NewRequest(http.MethodGet, "/app/", nil)
+	dashboardRequest.AddCookie(session)
+	dashboardRecorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(dashboardRecorder, dashboardRequest)
+	if strings.Contains(dashboardRecorder.Body.String(), `href="/approvals"`) {
+		t.Fatal("worker navigation must not show approval management")
 	}
 }
 
@@ -214,6 +492,20 @@ func TestPhase7AdminCanFindCancelledProductsAndCSVExportIsAudited(t *testing.T) 
 	}
 }
 
+func TestWorkerCanLoadCancelledProductsForInventoryStatusSearch(t *testing.T) {
+	for _, role := range []string{database.RoleAdmin, database.RoleWorker} {
+		if !canViewCancelledInventory(role, "true") {
+			t.Fatalf("%s must be able to request cancelled inventory", role)
+		}
+	}
+	if canViewCancelledInventory(database.RoleGuest, "true") {
+		t.Fatal("guest must not be able to request cancelled inventory")
+	}
+	if canViewCancelledInventory(database.RoleWorker, "false") {
+		t.Fatal("worker request without includeCancelled must not include cancelled inventory")
+	}
+}
+
 func TestWorkerCancellationRoutesEnterApprovalHandler(t *testing.T) {
 	app, _ := testServer(t)
 	session, csrf := loginAs(t, app, "worker", "preview-worker-2026")
@@ -302,7 +594,7 @@ func TestPublicPurchaseRequestFlowRendersWithoutCostData(t *testing.T) {
 func TestAdminCanOpenDashboardWithoutCostDataOnPublicPage(t *testing.T) {
 	app, _ := testServer(t)
 	session, _ := loginAs(t, app, "admin", "preview-admin-2026")
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request := httptest.NewRequest(http.MethodGet, "/legacy", nil)
 	request.AddCookie(session)
 	recorder := httptest.NewRecorder()
 	app.Handler().ServeHTTP(recorder, request)

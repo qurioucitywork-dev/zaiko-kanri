@@ -13,16 +13,19 @@ import (
 	"strings"
 	"time"
 
+	"github.com/glebarez/sqlite"
 	"golang.org/x/crypto/bcrypt"
-	_ "modernc.org/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
-//go:embed migrations/000001_phase1.up.sql migrations/000002_inventory.up.sql migrations/000003_market.up.sql migrations/000004_sales_shipments.up.sql migrations/000005_requests_reservations.up.sql migrations/000006_approvals.up.sql
+//go:embed migrations/000001_phase1.up.sql migrations/000002_inventory.up.sql migrations/000003_market.up.sql migrations/000004_sales_shipments.up.sql migrations/000005_requests_reservations.up.sql migrations/000006_approvals.up.sql migrations/000007_document_operations.up.sql migrations/000008_product_files.up.sql
 var schemaFS embed.FS
 
 const (
 	RoleAdmin  = "admin"
 	RoleWorker = "worker"
+	RoleGuest  = "guest"
 )
 
 type Store struct {
@@ -79,9 +82,13 @@ func Open(path string) (*Store, error) {
 	if path != ":memory:" && !strings.HasPrefix(path, "file:") {
 		dsn = "file:" + path
 	}
-	db, err := sql.Open("sqlite", dsn)
+	orm, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
+	}
+	db, err := orm.DB()
+	if err != nil {
+		return nil, fmt.Errorf("access database connection: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	store := &Store{db: db, now: func() time.Time { return time.Now().UTC() }}
@@ -112,6 +119,8 @@ func (s *Store) Migrate(ctx context.Context) error {
 		{"000004_sales_shipments", "migrations/000004_sales_shipments.up.sql"},
 		{"000005_requests_reservations", "migrations/000005_requests_reservations.up.sql"},
 		{"000006_approvals", "migrations/000006_approvals.up.sql"},
+		{"000007_document_operations", "migrations/000007_document_operations.up.sql"},
+		{"000008_product_files", "migrations/000008_product_files.up.sql"},
 	} {
 		var count int
 		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM schema_migrations WHERE version=?`, migration.version).Scan(&count); err != nil {
@@ -264,10 +273,16 @@ func seedRolesAndPermissions(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 		if key != "approval.approve" && key != "audit.read" && key != "users.manage" && key != "settings.manage" &&
+			key != "purchase.confirm" && key != "sales.confirm" && key != "shipment.confirm" && key != "market.write" &&
 			key != "sales.cancel" && key != "shipment.cancel" {
 			if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO role_permissions(role_key,permission_key) VALUES(?,?)`, RoleWorker, key); err != nil {
 				return err
 			}
+		}
+	}
+	for _, key := range []string{"purchase.confirm", "sales.confirm", "shipment.confirm", "market.write"} {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM role_permissions WHERE role_key=? AND permission_key=?`, RoleWorker, key); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -282,6 +297,7 @@ func defaultOrganizationSettings() []Setting {
 		{"reservation.duration_hours", "", "integer", false},
 		{"exchange_rate.provider", "manual", "string", false},
 		{"csv.encoding", "UTF-8-BOM", "string", false},
+		{"security.admin_access_code", "", "string", false},
 	}
 }
 

@@ -11,6 +11,7 @@ func validConfig() Config {
 		Address: "127.0.0.1:8080", DatabasePath: ".data/zaiko.db",
 		Environment: "development", SessionTTL: 12 * time.Hour,
 		UploadDirectory: ".data/uploads", OrganizationCode: "PREVIEW",
+		DatabaseDriver: "sqlite", StorageDriver: "local", S3Region: "ap-northeast-1",
 	}
 }
 

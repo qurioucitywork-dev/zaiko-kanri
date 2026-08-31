@@ -42,6 +42,11 @@ func TestAuthenticateAndPermissions(t *testing.T) {
 	if store.HasPermission(ctx, worker, "settings.manage") {
 		t.Fatal("worker must not manage settings")
 	}
+	for _, permission := range []string{"purchase.confirm", "sales.confirm", "shipment.confirm", "market.write"} {
+		if store.HasPermission(ctx, worker, permission) {
+			t.Fatalf("worker must not have sensitive direct-mutation permission %q", permission)
+		}
+	}
 	if _, err := store.Authenticate(ctx, "PREVIEW", "admin", "wrong-password"); err == nil {
 		t.Fatal("invalid password must be rejected")
 	}
@@ -192,7 +197,7 @@ func TestMigrateExistingPhase5DatabasePreservesData(t *testing.T) {
 		t.Fatalf("products before=%d after=%d err=%v", len(before), len(after), err)
 	}
 	versions, err := store.MigrationVersions(ctx)
-	if err != nil || len(versions) != 6 || versions[5] != "000006_approvals" {
+	if err != nil || len(versions) != 8 || versions[7] != "000008_product_files" {
 		t.Fatalf("versions=%v err=%v", versions, err)
 	}
 }

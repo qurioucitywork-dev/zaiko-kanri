@@ -41,6 +41,7 @@ type SalesSlip struct {
 	Status         string
 	Notes          string
 	TotalJPY       int64
+	TotalUSD       int64
 	ShipmentStatus string
 	Warning        string
 	CreatedAt      time.Time
@@ -109,6 +110,9 @@ type ShipmentLine struct {
 }
 
 func (s *Store) SeedSalesPreview(ctx context.Context) error {
+	if err := s.migratePreviewSalesToUSD(ctx); err != nil {
+		return err
+	}
 	var count int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sales_slips WHERE organization_id='org_preview'`).Scan(&count); err != nil {
 		return err
@@ -120,7 +124,7 @@ func (s *Store) SeedSalesPreview(ctx context.Context) error {
 		OrganizationID: "org_preview", SupplierID: "sup_002", PurchaseDate: "2026-07-26",
 		SKU: "GS-SBGW301", Brand: "グランドセイコー", ModelNumber: "SBGW301",
 		SerialNumber: "GS-PREVIEW-001", ProductType: "腕時計", CostAmountMinor: 430000, CostCurrency: "JPY",
-		BaseSalePriceMinor: 620000, BaseSaleCurrency: "JPY", Condition: "良品 (A)",
+		BaseSalePriceMinor: 4000, BaseSaleCurrency: "USD", Condition: "良品 (A)",
 		Accessories: "BOX", CreatedBy: "usr_admin",
 	})
 	if err != nil {
@@ -130,15 +134,15 @@ func (s *Store) SeedSalesPreview(ctx context.Context) error {
 		OrganizationID: "org_preview", SupplierID: "sup_003", PurchaseDate: "2026-07-26",
 		SKU: "CARTIER-WSSA0018", Brand: "カルティエ", ModelNumber: "WSSA0018",
 		SerialNumber: "CA-PREVIEW-001", ProductType: "腕時計", CostAmountMinor: 520000, CostCurrency: "JPY",
-		BaseSalePriceMinor: 780000, BaseSaleCurrency: "JPY", Condition: "極美品 (S)",
+		BaseSalePriceMinor: 5032, BaseSaleCurrency: "USD", Condition: "極美品 (S)",
 		Accessories: "BOX, GUARANTEE", CreatedBy: "usr_admin",
 	}); err != nil {
 		return err
 	}
 	sale, err := s.CreateSaleDraft(ctx, CreateSaleInput{
 		OrganizationID: "org_preview", SalesDate: "2026-07-26", CustomerName: "鈴木 様",
-		Notes: "プレビュー用・分納", CreatedBy: "usr_admin",
-		Lines: []SalesLineInput{{ProductID: product.ID, Quantity: 2, UnitPriceMinor: 310000, Currency: "JPY"}},
+		Notes: "", CreatedBy: "usr_admin",
+		Lines: []SalesLineInput{{ProductID: product.ID, Quantity: 2, UnitPriceMinor: 2000, Currency: "USD"}},
 	})
 	if err != nil {
 		return err
@@ -148,7 +152,7 @@ func (s *Store) SeedSalesPreview(ctx context.Context) error {
 	}
 	shipment, err := s.CreateShipmentDraft(ctx, CreateShipmentInput{
 		OrganizationID: "org_preview", ShipmentDate: "2026-07-26", RecipientName: "鈴木 様",
-		Notes: "1回目の分納", CreatedBy: "usr_admin",
+		Notes: "", CreatedBy: "usr_admin",
 		Lines: []ShipmentLineInput{{ProductID: product.ID, Quantity: 1}},
 	})
 	if err != nil {
@@ -156,6 +160,45 @@ func (s *Store) SeedSalesPreview(ctx context.Context) error {
 	}
 	_, err = s.ConfirmShipment(ctx, "org_preview", shipment.ID, "usr_admin")
 	return err
+}
+
+func (s *Store) migratePreviewSalesToUSD(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT l.id,l.unit_price_minor
+		FROM sales_lines l
+		JOIN sales_slips s ON s.id=l.sales_slip_id
+		WHERE s.organization_id='org_preview' AND l.sale_currency='JPY'`)
+	if err != nil {
+		return err
+	}
+	type legacySaleLine struct {
+		id    string
+		price int64
+	}
+	var legacy []legacySaleLine
+	for rows.Next() {
+		var line legacySaleLine
+		if err := rows.Scan(&line.id, &line.price); err != nil {
+			rows.Close()
+			return err
+		}
+		legacy = append(legacy, line)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, line := range legacy {
+		usd := (line.price + previewSalePriceJPYPerUSD/2) / previewSalePriceJPYPerUSD
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE sales_lines SET unit_price_minor=?,sale_currency='USD'
+			WHERE id=?`, usd, line.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) CreateSaleDraft(ctx context.Context, input CreateSaleInput) (SalesSlip, error) {
@@ -590,7 +633,8 @@ func (s *Store) CancelShipment(ctx context.Context, organizationID, shipmentID, 
 func (s *Store) Sales(ctx context.Context, organizationID string) ([]SalesSlip, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT s.id,s.organization_id,s.slip_number,s.sales_date,s.customer_name,s.status,s.notes,s.created_at,s.confirmed_at,
-		       COALESCE(SUM(l.converted_total_jpy),0)
+		       COALESCE(SUM(l.converted_total_jpy),0),
+		       COALESCE(SUM(CASE WHEN l.sale_currency='USD' THEN l.unit_price_minor*l.quantity ELSE 0 END),0)
 		FROM sales_slips s LEFT JOIN sales_lines l ON l.sales_slip_id=s.id
 		WHERE s.organization_id=? GROUP BY s.id ORDER BY s.sales_date DESC,s.created_at DESC`, organizationID)
 	if err != nil {
@@ -627,7 +671,8 @@ func (s *Store) Sales(ctx context.Context, organizationID string) ([]SalesSlip, 
 func (s *Store) Sale(ctx context.Context, organizationID, saleID string) (SalesSlip, error) {
 	sale, err := scanSaleHeader(s.db.QueryRowContext(ctx, `
 		SELECT s.id,s.organization_id,s.slip_number,s.sales_date,s.customer_name,s.status,s.notes,s.created_at,s.confirmed_at,
-		       COALESCE(SUM(l.converted_total_jpy),0)
+		       COALESCE(SUM(l.converted_total_jpy),0),
+		       COALESCE(SUM(CASE WHEN l.sale_currency='USD' THEN l.unit_price_minor*l.quantity ELSE 0 END),0)
 		FROM sales_slips s LEFT JOIN sales_lines l ON l.sales_slip_id=s.id
 		WHERE s.organization_id=? AND s.id=? GROUP BY s.id`, organizationID, saleID))
 	if err != nil {
@@ -830,7 +875,7 @@ func scanSaleHeader(row rowScanner) (SalesSlip, error) {
 	var created string
 	var confirmed sql.NullString
 	err := row.Scan(&sale.ID, &sale.OrganizationID, &sale.SlipNumber, &sale.SalesDate, &sale.CustomerName,
-		&sale.Status, &sale.Notes, &created, &confirmed, &sale.TotalJPY)
+		&sale.Status, &sale.Notes, &created, &confirmed, &sale.TotalJPY, &sale.TotalUSD)
 	if err != nil {
 		return SalesSlip{}, err
 	}

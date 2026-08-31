@@ -61,6 +61,9 @@ func TestSaleCanConfirmBeforeShipmentAndLocksRateSnapshot(t *testing.T) {
 	if confirmed.Status != "confirmed" || confirmed.ShipmentStatus != "unshipped" || confirmed.Warning == "" {
 		t.Fatalf("unexpected sale state: %+v", confirmed)
 	}
+	if confirmed.TotalUSD != 1000 {
+		t.Fatalf("USD sale total=%d want 1000", confirmed.TotalUSD)
+	}
 	line := confirmed.Lines[0]
 	if line.ExchangeRateSnapshotID != firstRate.ID || line.ConvertedTotalJPY != 150000 {
 		t.Fatalf("rate snapshot not fixed: %+v", line)

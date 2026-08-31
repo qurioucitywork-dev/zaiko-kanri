@@ -11,24 +11,24 @@
   <a class="skip-link" href="#main-content">本文へ移動</a>
   {{if .User.ID}}
   <aside class="sidebar">
-    <a class="brand" href="/" aria-label="ダッシュボード">
+    <a class="brand" href="/app/" aria-label="ダッシュボード">
       <span class="brand-mark">庫</span>
       <span><strong>在庫管理ツール</strong><small>Inventory Management</small></span>
     </a>
     <nav aria-label="メインメニュー">
       <p class="nav-label">メイン</p>
-      <a class="{{if eq .Active "dashboard"}}active{{end}}" href="/"><span>⌂</span>ダッシュボード</a>
+      <a class="{{if eq .Active "dashboard"}}active{{end}}" href="/app/"><span>⌂</span>ダッシュボード</a>
       <a class="{{if eq .Active "products"}}active{{end}}" href="/products"><span>▣</span>在庫一覧</a>
       <p class="nav-label">登録・取引</p>
       <a class="{{if eq .Active "purchases"}}active{{end}}" href="/purchases"><span>▤</span>仕入管理</a>
       <a class="{{if eq .Active "product-new"}}active{{end}}" href="/products/new"><span>＋</span>商品単品登録</a>
-      <a class="{{if eq .Active "market"}}active{{end}}" href="/market-prices"><span>⌁</span>相場・為替</a>
-      <a class="{{if eq .Active "sales"}}active{{end}}" href="/sales"><span>¥</span>売上管理</a>
+      <a class="{{if eq .Active "market"}}active{{end}}" href="/market-prices"><span>⌁</span>相場表</a>
+      <a class="{{if eq .Active "sales"}}active{{end}}" href="/sales"><span>$</span>売上管理</a>
       <a class="{{if eq .Active "shipments"}}active{{end}}" href="/shipments"><span>▰</span>出荷管理</a>
       <a class="{{if eq .Active "requests"}}active{{end}}" href="/purchase-requests"><span>♡</span>購入依頼・取置</a>
-      <a class="{{if eq .Active "approvals"}}active{{end}}" href="/approvals"><span>✓</span>承認管理</a>
       {{if eq .User.Role "admin"}}
       <p class="nav-label">管理</p>
+      <a class="{{if eq .Active "approvals"}}active{{end}}" href="/approvals"><span>✓</span>承認管理</a>
       <a class="{{if eq .Active "users"}}active{{end}}" href="/users"><span>♙</span>利用者・権限</a>
       <a class="{{if eq .Active "settings"}}active{{end}}" href="/settings"><span>⚙</span>組織設定</a>
       <a class="{{if eq .Active "audit"}}active{{end}}" href="/audit"><span>≡</span>監査ログ</a>

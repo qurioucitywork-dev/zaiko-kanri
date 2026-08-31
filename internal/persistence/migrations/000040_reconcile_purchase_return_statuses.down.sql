@@ -1,0 +1,3 @@
+-- The previous status cannot be reconstructed safely after purchase-return
+-- workflow has continued.  This data-correction migration is intentionally
+-- irreversible.
