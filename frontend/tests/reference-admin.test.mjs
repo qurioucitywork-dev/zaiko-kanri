@@ -3636,8 +3636,8 @@ assert.deepEqual(
   `inline handlers reference missing functions: ${[...missingHandlerFunctions].sort().join(", ")}`,
 );
 
-assert.equal(document.querySelectorAll(".page-panel").length, 22);
-assert.equal(document.querySelectorAll(".nav-item").length, 21);
+assert.equal(document.querySelectorAll(".page-panel").length, 24);
+assert.equal(document.querySelectorAll(".nav-item").length, 24);
 assert.equal(document.querySelectorAll(".modal-overlay").length, 50);
 const desktopSidebar = document.getElementById("appSidebar");
 const desktopSidebarToggle = document.getElementById("sidebarVisibilityToggle");
@@ -3846,10 +3846,36 @@ assert.equal(window.eval("_costAdjustmentMove({ source: 'slot', index: 0 }, 'slo
   "confirmed breakdown boxes must reject drag movement");
 assert.equal(sidebarGroups[1].querySelector(".nav-group-label").textContent.trim(), "経理・会計");
 assert.deepEqual(
-  [...sidebarGroups[1].querySelectorAll(".nav-item")].map((item) => item.dataset.page),
-  ["sales-list", "deleted-slips", "sales", "shipping", "consignment"],
+  [...sidebarGroups[1].querySelectorAll(".nav-item[data-page]")].map((item) => item.dataset.page),
+  ["sales-list", "deleted-slips", "sales", "shipping", "consignment", "sales-adjustment-entry", "purchase-adjustment-entry"],
   "accounting navigation must start with the document list",
 );
+const adjustmentEntryNavGroup = document.getElementById("adjustmentEntryNavGroup");
+const adjustmentEntryNavToggle = document.getElementById("adjustmentEntryNavToggle");
+const adjustmentEntryNavSubmenu = document.getElementById("adjustmentEntryNavSubmenu");
+assert.ok(adjustmentEntryNavGroup, "adjustment registration links must be grouped below consignment registration");
+assert.match(adjustmentEntryNavToggle.textContent, /調整登録/u);
+assert.deepEqual(
+  [...adjustmentEntryNavSubmenu.querySelectorAll(".nav-item[data-page]")].map((item) => item.dataset.page),
+  ["sales-adjustment-entry", "purchase-adjustment-entry"],
+  "adjustment registration must list sales adjustment before purchase adjustment",
+);
+window.navigateTo("consignment");
+assert.equal(adjustmentEntryNavToggle.getAttribute("aria-expanded"), "false");
+assert.equal(adjustmentEntryNavSubmenu.hidden, true, "adjustment registration children must be collapsed outside adjustment pages");
+adjustmentEntryNavToggle.click();
+await Promise.resolve();
+assert.equal(adjustmentEntryNavToggle.getAttribute("aria-expanded"), "true");
+assert.equal(adjustmentEntryNavSubmenu.hidden, false, "clicking adjustment registration must reveal both child links");
+window.navigateTo("sales-adjustment-entry");
+assert.equal(document.getElementById("page-sales-adjustment-entry").classList.contains("hidden"), false);
+assert.equal(adjustmentEntryNavGroup.classList.contains("has-active"), true);
+assert.equal(adjustmentEntryNavToggle.getAttribute("aria-expanded"), "true");
+assert.equal(document.getElementById("pageTitle").textContent, "売上調整登録");
+window.navigateTo("purchase-adjustment-entry");
+assert.equal(document.getElementById("page-purchase-adjustment-entry").classList.contains("hidden"), false);
+assert.equal(adjustmentEntryNavGroup.classList.contains("has-active"), true);
+assert.equal(document.getElementById("pageTitle").textContent, "仕入調整登録");
 assert.ok(document.getElementById("page-deleted-slips"), "deleted document archive page must be present");
 assert.ok(document.getElementById("deletedSlipListBody"), "deleted document archive table must be present");
 assert.ok(document.getElementById("page-consignment"), "consignment registration page must be present");

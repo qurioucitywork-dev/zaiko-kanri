@@ -1940,6 +1940,22 @@
         <a class="nav-item" data-page="consignment" onclick="navigateTo('consignment')">
           <span class="nav-icon"><i class="fa-solid fa-handshake"></i></span> 委託登録
         </a>
+        <div class="nav-folder" id="adjustmentEntryNavGroup">
+          <button class="nav-item nav-folder-toggle" id="adjustmentEntryNavToggle" type="button"
+            aria-expanded="false" aria-controls="adjustmentEntryNavSubmenu" onclick="toggleAdjustmentEntryNavGroup()">
+            <span class="nav-icon"><i class="fa-solid fa-file-circle-plus"></i></span>
+            <span>調整登録</span>
+            <span class="nav-folder-chevron" aria-hidden="true"><i class="fa-solid fa-chevron-down"></i></span>
+          </button>
+          <div class="nav-submenu" id="adjustmentEntryNavSubmenu" aria-label="調整登録メニュー" hidden>
+            <a class="nav-item nav-subitem" data-page="sales-adjustment-entry" onclick="navigateTo('sales-adjustment-entry')">
+              <span class="nav-icon"><i class="fa-solid fa-yen-sign"></i></span> 売上調整登録
+            </a>
+            <a class="nav-item nav-subitem" data-page="purchase-adjustment-entry" onclick="navigateTo('purchase-adjustment-entry')">
+              <span class="nav-icon"><i class="fa-solid fa-file-import"></i></span> 仕入調整登録
+            </a>
+          </div>
+        </div>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">管理</div>
@@ -4463,6 +4479,38 @@
   </div>
 </div>
 
+    <!-- ===== 売上調整登録 ===== -->
+    <div class="page-panel page-content hidden" id="page-sales-adjustment-entry">
+      <div class="card">
+        <div class="card-header">
+          <h3><i class="fa-solid fa-yen-sign"></i> 売上調整登録</h3>
+        </div>
+        <div class="card-body">
+          <div style="padding:64px 24px;text-align:center;color:var(--text-muted);">
+            <i class="fa-solid fa-file-circle-plus" style="display:block;font-size:42px;opacity:.35;margin-bottom:14px;"></i>
+            <strong style="display:block;color:var(--text);font-size:16px;margin-bottom:8px;">売上調整登録</strong>
+            登録内容は今後の定義に合わせて追加します。
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 仕入調整登録 ===== -->
+    <div class="page-panel page-content hidden" id="page-purchase-adjustment-entry">
+      <div class="card">
+        <div class="card-header">
+          <h3><i class="fa-solid fa-file-import"></i> 仕入調整登録</h3>
+        </div>
+        <div class="card-body">
+          <div style="padding:64px 24px;text-align:center;color:var(--text-muted);">
+            <i class="fa-solid fa-file-circle-plus" style="display:block;font-size:42px;opacity:.35;margin-bottom:14px;"></i>
+            <strong style="display:block;color:var(--text);font-size:16px;margin-bottom:8px;">仕入調整登録</strong>
+            登録内容は今後の定義に合わせて追加します。
+          </div>
+        </div>
+      </div>
+    </div>
+
 <!-- ===== マスタ登録 ===== -->
     <div class="page-panel page-content hidden" id="page-master">
       <div class="card" style="overflow:hidden;">
@@ -6024,14 +6072,14 @@
 <script src="js/data.js?v=20260831-combined-parts-v1"></script>
 <script src="js/guest_shared.js?v=20260803-workflow-consistency"></script>
 <script src="js/login_info.js?v=20260818-dropdown-name-only-v1"></script>
-<script src="js/auth.js?v=20260829-sensitive-approval-v1"></script>
+<script src="js/auth.js?v=20260831-adjustment-entry-nav-v1"></script>
 <script src="js/api_bridge.js?v=20260831-combined-parts-v1"></script>
 <script src="js/approval.js?v=20260817-today-audit-v2"></script>
 <script src="js/notify.js?v=20260817-approval-notification-link"></script>
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
 <script src="js/market_table.js?v=20260831-market-manual-register-fix-v1"></script>
 <script src="js/qr_inventory.js?v=20260818-product-tag-v1"></script>
-<script src="js/app.js?v=20260831-adjustment-slip-tabs-v1"></script>
+<script src="js/app.js?v=20260831-adjustment-entry-nav-v1"></script>
 <script src="js/consignment.js?v=20260831-consignment-label-v1"></script>
 <script src="js/stocktake.js?v=20260817-today-audit-v2"></script>
 <script src="js/purchase_entry.js?v=20260831-purchase-payment-status-v1"></script>

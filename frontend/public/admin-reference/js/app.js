@@ -18583,6 +18583,23 @@ function toggleInventoryNavGroup() {
   return setInventoryNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
 }
 
+function setAdjustmentEntryNavGroupExpanded(expanded) {
+  const group = document.getElementById('adjustmentEntryNavGroup');
+  const toggle = document.getElementById('adjustmentEntryNavToggle');
+  const submenu = document.getElementById('adjustmentEntryNavSubmenu');
+  if (!group || !toggle || !submenu) return false;
+  const shouldExpand = Boolean(expanded);
+  group.classList.toggle('expanded', shouldExpand);
+  toggle.setAttribute('aria-expanded', String(shouldExpand));
+  submenu.hidden = !shouldExpand;
+  return shouldExpand;
+}
+
+function toggleAdjustmentEntryNavGroup() {
+  const toggle = document.getElementById('adjustmentEntryNavToggle');
+  return setAdjustmentEntryNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
+}
+
 // =====================================================
 // 原価調整ワークスペース
 // =====================================================
@@ -19758,6 +19775,13 @@ function syncInventoryNavGroup(page) {
   setInventoryNavGroupExpanded(isInventoryPage);
 }
 
+function syncAdjustmentEntryNavGroup(page) {
+  const group = document.getElementById('adjustmentEntryNavGroup');
+  const isAdjustmentEntryPage = page === 'sales-adjustment-entry' || page === 'purchase-adjustment-entry';
+  group?.classList.toggle('has-active', isAdjustmentEntryPage);
+  setAdjustmentEntryNavGroupExpanded(isAdjustmentEntryPage);
+}
+
 const _navOrig = navigateTo;
 window.navigateTo = function(page) {
   // ── 権限ガード ──
@@ -19794,6 +19818,7 @@ window.navigateTo = function(page) {
   });
   syncMarketNavGroup(page);
   syncInventoryNavGroup(page);
+  syncAdjustmentEntryNavGroup(page);
   document.querySelectorAll('.page-panel').forEach(el => {
     el.classList.add('hidden');
   });
@@ -19825,6 +19850,8 @@ window.navigateTo = function(page) {
       'consignment': () => {
         if (typeof init_consignment === 'function') init_consignment();
       },
+      'sales-adjustment-entry': () => {},
+      'purchase-adjustment-entry': () => {},
       'master': init_master,
       'performance': init_performance,
       'purchase-list': () => {
@@ -19880,6 +19907,8 @@ window.navigateTo = function(page) {
     'sales': '売上登録',
     'shipping': '出荷登録',
     'consignment': '委託登録',
+    'sales-adjustment-entry': '売上調整登録',
+    'purchase-adjustment-entry': '仕入調整登録',
     'master': 'マスタ登録',
     'performance': '実績管理',
     'inventory': '商品管理',
