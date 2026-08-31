@@ -2650,6 +2650,11 @@ assert.equal(
   sourceSaleLine.salePrice + Math.floor(sourceSaleLine.salePrice * 0.1),
   "taxable sales returns must reproduce the original tax-inclusive sales total",
 );
+window.openSalesReturnDetail(salesReturn.id);
+assert.equal(document.getElementById("salesReturnDetailModal").classList.contains("hidden"), false,
+  "sales return detail must open from the document list");
+assert.match(document.getElementById("srDetailModalTitle").textContent, new RegExp(salesReturn.id));
+window.closeSalesReturnDetailModal();
 window.eval(`_currentSrRetId = ${JSON.stringify(salesReturn.id)}`);
 window.openSalesReturnInvoice();
 const salesReturnInvoiceHtml = document.getElementById("srInvoicePrintArea").innerHTML;

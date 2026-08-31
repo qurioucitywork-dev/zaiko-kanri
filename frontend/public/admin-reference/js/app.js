@@ -7093,7 +7093,7 @@ function _slipBulkAction(action) {
   }
   const win = window.open('', '_blank');
   if (!win) return showToast('error', 'プレビューエラー', 'プレビュー画面を開けませんでした');
-  win.document.write(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head><body>${html}</body></html>`);
+  win.document.write(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>${_escHtml(title)}</title></head><body>${html}</body></html>`);
   win.document.close();
 }
 
@@ -10793,7 +10793,7 @@ function openSalesReturnDetail(retId) {
     <div class="form-group mb-20">
       <label>追跡番号（確定後のみ処理済）</label>
       <div style="display:flex;gap:8px;align-items:center;">
-        <input id="sr-tracking-input" class="form-control" value="${escapeHtml(trackingNumber)}"
+        <input id="sr-tracking-input" class="form-control" value="${_escHtml(trackingNumber)}"
           ${trackingConfirmed ? 'disabled' : ''} placeholder="追跡番号を入力">
         <button class="btn ${trackingConfirmed ? 'btn-outline' : 'btn-primary'}" onclick="srConfirmTrackingFromDetail()">
           <i class="fa-solid ${trackingConfirmed ? 'fa-pen' : 'fa-check'}"></i> ${trackingConfirmed ? '編集' : '確定'}
