@@ -811,6 +811,7 @@ function normalizeInventoryStatusLabel(status) {
   const value = String(status || '').trim();
   if (['cost_adjustment', '原価調整中'].includes(value)) return '原価調整中';
   if (['broken_down', '崩し済み'].includes(value)) return '崩し済み';
+  if (['combined', '結合済み'].includes(value)) return '結合済み';
   if (['return_pending', '仕入返品', '仕入返品中', '仕入返品処理中'].includes(value)) return '仕入返品処理中';
   if (['cancelled', '取消', '取消済', '取り消し', '仕入返品済', '仕入返品処理済'].includes(value)) return '仕入返品処理済';
   if (['sales_return_pending', '売上返品中', '売上返品処理中'].includes(value)) return '売上返品処理中';
@@ -2668,6 +2669,7 @@ function _partInventoryStatusLabel(status) {
   const value = String(status || '').trim();
   if (['in_stock', '在庫中'].includes(value)) return '在庫中';
   if (['cost_adjustment', '原価調整中'].includes(value)) return '原価調整中';
+  if (['combined', '結合済み'].includes(value)) return '結合済み';
   if (['invalid', '無効'].includes(value)) return '無効';
   return normalizeInventoryStatusLabel(value) || '—';
 }
@@ -2988,8 +2990,8 @@ function openPartDetailEditor(partCode) {
   setValue('part-edit-id', part.id || part._id || '');
   setValue('part-edit-code', part.partCode || part.code || '');
   setValue('part-edit-date', part.purchaseDate || '');
-  setValue('part-edit-status', ['in_stock', 'cost_adjustment', 'invalid'].includes(part.status) ? part.status
-    : ({ '在庫中': 'in_stock', '原価調整中': 'cost_adjustment', '無効': 'invalid' }[part.status] || 'in_stock'));
+  setValue('part-edit-status', ['in_stock', 'cost_adjustment', 'combined', 'invalid'].includes(part.status) ? part.status
+    : ({ '在庫中': 'in_stock', '原価調整中': 'cost_adjustment', '結合済み': 'combined', '無効': 'invalid' }[part.status] || 'in_stock'));
   setValue('part-edit-sku', part.sku || '');
   setValue('part-edit-purchase-type', part.purchaseTaxMode || 'domestic');
   setValue('part-edit-tax', part.taxCategory || 'consumption_tax');
@@ -3005,10 +3007,13 @@ function openPartDetailEditor(partCode) {
   const caption = document.getElementById('part-edit-caption');
   if (caption) caption.textContent = `${part.partCode || part.code || '—'} / ${part.partName || 'パーツ'}`;
   const locked = Boolean(part.costAdjustmentId);
+  const combined = ['combined', '結合済み'].includes(part.status);
   const cost = document.getElementById('part-edit-cost');
   const currency = document.getElementById('part-edit-cost-currency');
+  const status = document.getElementById('part-edit-status');
   if (cost) cost.disabled = locked;
   if (currency) currency.disabled = locked;
+  if (status) status.disabled = combined;
   document.getElementById('part-edit-cost-lock-note')?.classList.toggle('hidden', !locked);
   const error = document.getElementById('part-edit-error');
   if (error) error.textContent = '';

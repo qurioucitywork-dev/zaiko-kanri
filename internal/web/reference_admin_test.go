@@ -12,18 +12,18 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":               "b37cb373a694fd719674892ce5c31615dae592227459e85bd4f06a46ad034b8e",
+		"app.html":               "b19dfe1664052b83fa3d0a0aa1e3c9130982a24bbc257f45d90ae8290e482736",
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
 		"css/market-table.css":   "1fbd958c84da4b6cff7c648fb67166f158c6bcfe0f2f587e84860ba7d72b94d5",
 		"css/style.css":          "4b3d382d9893ba60cf59f944f9882dbfb682a91ddca3d8578d1ff1609ff7fc9c",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
-		"js/api_bridge.js":       "90c106f3473a39ff9904eed2919be7944006e3dbcf225b20f339fced75dce0f7",
-		"js/app.js":              "066146c252c992e607db143920ffb131e43d49095aa2584de10d652c0e46f7f9",
+		"js/api_bridge.js":       "82f698a9f47853f77746484f5c5795c6012e4f471c6c8e3cd8cfd99b3034c98a",
+		"js/app.js":              "6ceabb0802565cf2a6633035ce5ce7762888e7ac27b63c85a672b3f18d4edbcc",
 		"js/approval.js":         "43de68681b060a67bf00af6eb2a993e01d4acbcff55a1928c795cb4f0f031c1d",
 		"js/auth.js":             "8a37d5385ade35fba91ccd0fb2fa9acc45b5828b1b3af4c86f9d0406758ee694",
 		"js/box.js":              "4ae711817115c0d62cdaa99e11920acc5ec67a0fa4d2e1879488368235840575",
-		"js/data.js":             "45810abd6220cd6fe0ef15cd4265d5504a5d454825c13c941dfd20a7bf0e63a2",
+		"js/data.js":             "48546c83100a61f98635e99c1f3fbabdf67ac1c3e2a5166074666a89399b2953",
 		"js/guest.js":            "174dc03d5c978e514e5a674b9967ecf6b2d0caf2d0cc8b8fdbd7305687aa2401",
 		"js/guest_shared.js":     "da6589099b995f457d44e2b6eeb05ac07d8ad1c7bef937f4230dd8afd2ca38e4",
 		"js/login_info.js":       "3331838630b5a5f539de8a1e842d8bd75a0202692a865e3aa5cdf04bc8b0a77f",
@@ -168,6 +168,7 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 		`原価が完全一致しました`,
 		`崩し済み`,
 		`原価調整中`,
+		`['combined', '結合済み']`,
 	} {
 		if !strings.Contains(appJS, marker) {
 			t.Errorf("inventory status label contract is missing %q", marker)

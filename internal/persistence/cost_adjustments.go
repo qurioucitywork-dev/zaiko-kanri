@@ -102,6 +102,7 @@ type costAdjustmentCombinePart struct {
 	DetailMasterCode   string
 	BraceletQuantity   *int
 	Notes              string
+	InternalComment    string
 	Status             string
 	PurchaseSlipLineID string
 }
@@ -113,6 +114,30 @@ func costAdjustmentInternalComment(sourceCode, value string) string {
 		return prefix
 	}
 	return prefix + "\n" + extra
+}
+
+func combinedPartInternalComment(existing, targetProductCode string) string {
+	line := "結合先商品管理番号: " + strings.TrimSpace(targetProductCode)
+	current := strings.TrimSpace(existing)
+	if current == "" {
+		return line
+	}
+	if strings.Contains(current, line) {
+		return current
+	}
+	return current + "\n" + line
+}
+
+func combinedPartUpdates(part costAdjustmentCombinePart, adjustmentID, targetProductCode, actorUserID string, now time.Time) map[string]any {
+	return map[string]any{
+		"status":               "combined",
+		"cost_amount_minor":    int64(0),
+		"fixed_cost_jpy_minor": int64(0),
+		"internal_comment":     combinedPartInternalComment(part.InternalComment, targetProductCode),
+		"cost_adjustment_id":   adjustmentID,
+		"updated_by":           actorUserID,
+		"updated_at":           now,
+	}
 }
 
 // ConfirmCostAdjustmentBreakdown atomically redistributes the original JPY
@@ -247,7 +272,9 @@ func (r *Repository) ConfirmCostAdjustmentBreakdown(ctx context.Context, input C
 // ConfirmCostAdjustmentCombine consumes the selected parts into the existing
 // product. The purchase-slip price columns remain untouched as immutable
 // purchase snapshots; only the inventory product receives the combined JPY
-// cost and a management number based on the confirmation date.
+// cost and a management number based on the confirmation date. Consumed parts
+// remain auditable at zero inventory cost with a combined status and a link to
+// the target product's new management number.
 func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input CostAdjustmentConfirmInput) (CostAdjustmentConfirmResult, error) {
 	if strings.TrimSpace(input.Mode) != "combine" || len(input.PartIDs) == 0 || len(input.PartIDs) > 20 {
 		return CostAdjustmentConfirmResult{}, ErrCostAdjustmentState
@@ -297,7 +324,7 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 
 		var parts []costAdjustmentCombinePart
 		partsQuery := tx.Raw(`SELECT p.id,p.part_code,p.fixed_cost_jpy_minor,p.part_name_text AS part_name,
-			p.detail_text,p.detail_master_type,p.detail_master_code,p.bracelet_quantity,p.notes,p.status,
+			p.detail_text,p.detail_master_type,p.detail_master_code,p.bracelet_quantity,p.notes,p.internal_comment,p.status,
 			COALESCE(p.purchase_slip_line_id,'') AS purchase_slip_line_id
 			FROM parts p WHERE p.organization_id=? AND p.id IN ? FOR UPDATE`, input.OrganizationID, partIDs).Scan(&parts)
 		if partsQuery.Error != nil {
@@ -463,11 +490,11 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 				return err
 			}
 		}
-		if err := tx.Table("parts").Where("organization_id=? AND id IN ?", input.OrganizationID, partIDs).Updates(map[string]any{
-			"status": "invalid", "cost_amount_minor": 0, "fixed_cost_jpy_minor": 0,
-			"cost_adjustment_id": adjustmentID, "updated_by": input.ActorUserID, "updated_at": now,
-		}).Error; err != nil {
-			return err
+		for _, part := range parts {
+			if err := tx.Table("parts").Where("organization_id=? AND id=?", input.OrganizationID, part.ID).
+				Updates(combinedPartUpdates(part, adjustmentID, newCode, input.ActorUserID, now)).Error; err != nil {
+				return err
+			}
 		}
 		itemID, _ := database.NewID("cai")
 		if err := tx.Exec(`INSERT INTO cost_adjustment_items(

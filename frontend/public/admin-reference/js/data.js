@@ -1592,6 +1592,7 @@ function getStatusBadge(status) {
     '在庫中': '<span class="badge badge-stock">● 在庫中</span>',
     '原価調整中': '<span class="badge badge-cost-adjustment">● 原価調整中</span>',
     '崩し済み': '<span class="badge badge-secondary">● 崩し済み</span>',
+    '結合済み': '<span class="badge badge-secondary">● 結合済み</span>',
     '取置中': '<span class="badge badge-pending">● 取置中</span>',
     '売上済': '<span class="badge badge-sold">● 売上済</span>',
     '出荷済': '<span class="badge badge-shipped">● 出荷済</span>',

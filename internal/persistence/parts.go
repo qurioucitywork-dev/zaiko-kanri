@@ -241,7 +241,7 @@ func (r *Repository) UpdatePart(ctx context.Context, input PartUpdateInput) (Par
 	if status == "" {
 		status = "in_stock"
 	}
-	if status != "in_stock" && status != "cost_adjustment" && status != "invalid" {
+	if status != "in_stock" && status != "cost_adjustment" && status != "combined" && status != "invalid" {
 		return Part{}, ErrPartStatus
 	}
 
@@ -253,15 +253,19 @@ func (r *Repository) UpdatePart(ctx context.Context, input PartUpdateInput) (Par
 			CostAmountMinor    int64
 			CostCurrency       string
 			FixedCostJPYMinor  int64
+			Status             string
 		}
 		result := tx.Raw(`SELECT id,COALESCE(purchase_slip_line_id,'') AS purchase_slip_line_id,
-			COALESCE(cost_adjustment_id,'') AS cost_adjustment_id,cost_amount_minor,cost_currency,fixed_cost_jpy_minor
+			COALESCE(cost_adjustment_id,'') AS cost_adjustment_id,cost_amount_minor,cost_currency,fixed_cost_jpy_minor,status
 			FROM parts WHERE organization_id=? AND id=? FOR UPDATE`, input.OrganizationID, input.PartID).Scan(&current)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected == 0 || current.ID == "" {
 			return gorm.ErrRecordNotFound
+		}
+		if current.Status == "combined" && status != "combined" {
+			return ErrPartStatus
 		}
 
 		var supplierRoleID string

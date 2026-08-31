@@ -3740,6 +3740,10 @@ assert.equal(
   "the combined inventory cost must add the part's fixed JPY cost",
 );
 assert.match(window.eval("_costAdjustmentState.combineDraft.preview.comment"), new RegExp(combinePartCode));
+assert.equal(window.eval("_partInventoryStatusLabel('combined')"), "結合済み",
+  "a consumed combine part must be presented as combined in the parts inventory");
+assert.match(window.getStatusBadge("結合済み"), /結合済み/u,
+  "the combined part status must render as a Japanese status badge");
 assert.match(document.getElementById("ca-combine-diff").textContent, /以前の対象商品情報\s*→\s*変更後/u);
 assert.equal(document.getElementById("ca-finalize-button").disabled, false,
   "combine confirmation must unlock after every loaded part is applied");

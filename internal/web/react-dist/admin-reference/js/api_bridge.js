@@ -12,7 +12,7 @@
   let hydrateRetryStep = 0;
   let syncSuccessTimer = null;
   const statusLabel = {
-    purchasing: '仕入中', in_stock: '在庫中', cost_adjustment: '原価調整中', broken_down: '崩し済み', reserved: '取置中', return_pending: '仕入返品処理中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '仕入返品処理済',
+    purchasing: '仕入中', in_stock: '在庫中', cost_adjustment: '原価調整中', broken_down: '崩し済み', combined: '結合済み', reserved: '取置中', return_pending: '仕入返品処理中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '仕入返品処理済',
     draft: '未処理', confirmed: '処理済', pending: '未対応', approved: '承認済', rejected: '却下', returned: '差戻し',
   };
   const approvalActionLabel = value => ({

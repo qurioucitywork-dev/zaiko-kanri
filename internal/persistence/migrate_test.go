@@ -708,3 +708,25 @@ func TestCostAdjustmentCombineInputsMigration(t *testing.T) {
 		}
 	}
 }
+
+func TestCombinedPartStatusMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000065_combined_part_status" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("combined part status migration 000065 is missing")
+	}
+	for _, fragment := range []string{"parts_status_check", "combined"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("combined part status migration is missing %q", fragment)
+		}
+	}
+}
