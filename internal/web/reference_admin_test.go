@@ -12,14 +12,14 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":               "4e2e0cb3ceed3b7872cb9761f2ef2f9839d834a37130b8fac297f154b69172db",
+		"app.html":               "05207f24927bdf94e0b978ecad8f77b4d19ceecad96fc0f2d86b10ead050eb6f",
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
 		"css/market-table.css":   "1fbd958c84da4b6cff7c648fb67166f158c6bcfe0f2f587e84860ba7d72b94d5",
 		"css/style.css":          "4b3d382d9893ba60cf59f944f9882dbfb682a91ddca3d8578d1ff1609ff7fc9c",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
 		"js/api_bridge.js":       "82f698a9f47853f77746484f5c5795c6012e4f471c6c8e3cd8cfd99b3034c98a",
-		"js/app.js":              "3cb132ba8966859fe1deb11e8baaf6aa8de4f2c160a8f70094a30802363c6c3d",
+		"js/app.js":              "c887696729fb2358ac0e5360ec5ad6a849eda4e30cef707c2ab802833894ce2e",
 		"js/approval.js":         "43de68681b060a67bf00af6eb2a993e01d4acbcff55a1928c795cb4f0f031c1d",
 		"js/auth.js":             "8a37d5385ade35fba91ccd0fb2fa9acc45b5828b1b3af4c86f9d0406758ee694",
 		"js/box.js":              "4ae711817115c0d62cdaa99e11920acc5ec67a0fa4d2e1879488368235840575",
@@ -122,6 +122,9 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 	if strings.Contains(html, `data-ca-mode="swap"`) || strings.Contains(html, `> 入替`) {
 		t.Error("reference admin still contains the removed cost-adjustment swap mode")
 	}
+	if strings.Contains(html, `id="slipBulkControls"`) {
+		t.Error("reference admin still contains the undefined slip bulk download and print controls")
+	}
 
 	purchaseContent, err := reactAssets.ReadFile("react-dist/admin-reference/js/purchase_entry.js")
 	if err != nil {
@@ -143,12 +146,14 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 			t.Errorf("purchase CSV contract is missing %q", marker)
 		}
 	}
-
 	appContent, err := reactAssets.ReadFile("react-dist/admin-reference/js/app.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	appJS := string(appContent)
+	if strings.Contains(appJS, `_prInjectInvoiceBtn`) || strings.Contains(appJS, `slip-generic-select`) {
+		t.Error("reference admin still injects removed slip bulk-selection controls")
+	}
 	for _, marker := range []string{
 		`['return_pending', '仕入返品', '仕入返品中', '仕入返品処理中']`,
 		`['cancelled', '取消', '取消済', '取り消し', '仕入返品済', '仕入返品処理済']`,

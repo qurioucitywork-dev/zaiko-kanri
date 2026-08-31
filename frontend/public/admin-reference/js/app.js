@@ -6259,6 +6259,8 @@ function configureSlipStatusOptions(type, selectedValue = 'processing') {
 // ── タブ切替 ──
 function switchSlipTab(type) {
   currentSlipTab = type;
+  // 旧一括発行ボタンが残っている画面から切り替えた場合も確実に撤去する。
+  document.getElementById('prBulkInvoiceBtn')?.remove();
   ['purchase','shipping','consignment','sales','salesreturn','purchasereturn'].forEach(t => {
     document.getElementById('sltab-' + t)?.classList.toggle('active', t === type);
   });
@@ -6283,6 +6285,7 @@ function switchSlipTab(type) {
 // ① カウントと絞り込みは完全に同じ filter 条件を使用する
 function switchSlipTabPending(type) {
   currentSlipTab = type;
+  document.getElementById('prBulkInvoiceBtn')?.remove();
   ['purchase','shipping','consignment','sales','salesreturn','purchasereturn'].forEach(t => {
     document.getElementById('sltab-' + t)?.classList.toggle('active', t === type);
   });
@@ -6713,8 +6716,6 @@ function renderSlipList(data) {
     if (summaryEl) summaryEl.style.display = 'none';
     const promptEl = document.getElementById('slipSearchPrompt');
     if (promptEl) promptEl.style.display = '';
-    _slipVisibleRows = [];
-    _slipUpdateBulkControls();
     return;
   }
 
@@ -6796,8 +6797,6 @@ function renderSlipList(data) {
         noData.textContent = '該当データなし';
       }
     }
-    _slipVisibleRows = [];
-    _slipUpdateBulkControls();
     return;
   }
   noData?.classList.add('hidden');
@@ -6818,11 +6817,6 @@ function renderSlipList(data) {
     </tr>`;
   } else if (currentSlipTab === 'shipping') {
     head.innerHTML = `<tr>
-      <th style="width:36px;text-align:center;padding:6px 4px;">
-        <input type="checkbox" id="shSelectAll" title="全選択"
-          onchange="shToggleSelectAll(this.checked)"
-          style="cursor:pointer;width:15px;height:15px;">
-      </th>
       <th>伝票番号</th><th>出荷日</th><th>出荷先</th>
       <th style="text-align:center;">点数</th><th style="text-align:right;">合計金額</th>
       <th>備考</th><th>ステータス</th><th style="width:60px;text-align:center;">修正</th>
@@ -6855,11 +6849,6 @@ function renderSlipList(data) {
     </tr>`;
   } else if (currentSlipTab === 'purchasereturn') {
     head.innerHTML = `<tr>
-      <th class="pr-list-select-cell">
-        <input type="checkbox" id="prSelectAll" title="全選択"
-          onchange="prToggleSelectAll(this.checked)"
-          class="pr-list-checkbox">
-      </th>
       <th class="pr-list-number">仕入返品伝票番号</th><th class="pr-list-date">返品日</th>
       <th class="pr-sort-th pr-list-supplier" onclick="prToggleSort()">
         仕入先 <span id="prSortIcon" class="pr-sort-icon"></span>
@@ -6871,15 +6860,8 @@ function renderSlipList(data) {
       <th class="pr-list-tracking">配送番号</th>
       <th class="pr-list-actions">操作</th>
     </tr>`;
-    // 請求書発行ボタンを集計バーの右に注入
-    _prInjectInvoiceBtn();
   } else if (currentSlipTab === 'sales') {
     head.innerHTML = `<tr>
-      <th style="width:36px;text-align:center;padding:6px 4px;">
-        <input type="checkbox" id="slSelectAll" title="全選択"
-          onchange="slToggleSelectAll(this.checked)"
-          style="cursor:pointer;width:15px;height:15px;">
-      </th>
       <th>伝票番号</th><th>売上日</th><th>販売先</th>
       <th style="text-align:center;">点数</th><th style="text-align:right;">合計金額</th>
       <th>備考</th><th>ステータス</th><th style="width:60px;text-align:center;">修正</th>
@@ -6941,75 +6923,15 @@ function renderSlipList(data) {
       });
 
   tbody.innerHTML = sorted.map(row => buildSlipRow(row)).join('');
-  _slipVisibleRows = sorted;
   _slipDecorateRenderedTable(sorted);
 }
-
-const _slipSelections = {
-  purchase: new Set(), shipping: new Set(), consignment: new Set(),
-  sales: new Set(), salesreturn: new Set(), purchasereturn: new Set(),
-};
-let _slipVisibleRows = [];
 
 function _slipRecordId(row) {
   return String(row?.id || row?.code || row?.number || '');
 }
 
 function _slipResetAllSelections() {
-  Object.values(_slipSelections).forEach(set => set.clear());
-  _slipVisibleRows = [];
-  _slipUpdateBulkControls();
-}
-
-function _slipToggleRow(type, id, checked) {
-  const set = _slipSelections[type];
-  if (!set || !id) return;
-  checked ? set.add(String(id)) : set.delete(String(id));
-  _slipUpdateBulkControls();
-}
-
-function _slipToggleSelectAll(type, checked) {
-  const set = _slipSelections[type];
-  if (!set) return;
-  _slipVisibleRows.forEach(row => {
-    const id = _slipRecordId(row);
-    if (!id) return;
-    checked ? set.add(id) : set.delete(id);
-  });
-  document.querySelectorAll('#slipListBody .slip-generic-select').forEach(input => { input.checked = checked; });
-  _slipUpdateBulkControls();
-}
-
-function _slipUpdateBulkControls() {
-  const set = _slipSelections[currentSlipTab] || new Set();
-  const controls = document.getElementById('slipBulkControls');
-  const badge = document.getElementById('slipSelectCountBadge');
-  const actionLabels = {
-    purchase: '仕入伝票', shipping: '出荷伝票', consignment: '委託伝票',
-    sales: '請求書', purchasereturn: '仕入返品伝票', salesreturn: '売上返品伝票',
-  };
-  const documentLabel = actionLabels[currentSlipTab] || '伝票';
-  if (controls) controls.style.display = 'flex';
-  if (badge) {
-    badge.textContent = `${set.size}件選択`;
-    badge.style.display = set.size ? 'inline-flex' : 'none';
-  }
-  [
-    ['slipBulkDownloadBtn', 'fa-download', `${documentLabel}ダウンロード`],
-    ['slipBulkPrintBtn', 'fa-print', `${documentLabel}印刷`],
-  ].forEach(([id, icon, label]) => {
-    const button = document.getElementById(id);
-    if (!button) return;
-    button.disabled = set.size === 0;
-    button.innerHTML = `<i class="fa-solid ${icon}"></i> ${label}`;
-  });
-  const all = document.getElementById('slipGenericSelectAll');
-  if (all) {
-    const visibleIds = _slipVisibleRows.map(_slipRecordId).filter(Boolean);
-    const selectedVisible = visibleIds.filter(id => set.has(id)).length;
-    all.checked = visibleIds.length > 0 && selectedVisible === visibleIds.length;
-    all.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length;
-  }
+  document.getElementById('prBulkInvoiceBtn')?.remove();
 }
 
 function _slipOpenDetail(type, id) {
@@ -7021,15 +6943,9 @@ function _slipOpenDetail(type, id) {
 function _slipDecorateRenderedTable(rows) {
   const headRow = document.querySelector('#slipTableHead tr');
   const bodyRows = [...document.querySelectorAll('#slipListBody tr')];
-  if (!headRow || !bodyRows.length) return _slipUpdateBulkControls();
+  if (!headRow || !bodyRows.length) return;
   const oldHeadCheckbox = headRow.querySelector('th input[type="checkbox"]');
   oldHeadCheckbox?.closest('th')?.remove();
-  const selectHead = document.createElement('th');
-  selectHead.style.cssText = 'width:44px;text-align:center;';
-  selectHead.innerHTML = '<input id="slipGenericSelectAll" type="checkbox" aria-label="表示中の伝票をすべて選択">';
-  headRow.prepend(selectHead);
-  selectHead.addEventListener('click', event => event.stopPropagation());
-  selectHead.querySelector('input').addEventListener('change', event => _slipToggleSelectAll(currentSlipTab, event.target.checked));
   const hasOperation = [...headRow.cells].some(cell => cell.textContent.trim() === '操作');
   if (!hasOperation) {
     const th = document.createElement('th');
@@ -7042,17 +6958,6 @@ function _slipDecorateRenderedTable(rows) {
     if (!row) return;
     tr.querySelector('td input[type="checkbox"]')?.closest('td')?.remove();
     const id = _slipRecordId(row);
-    const td = document.createElement('td');
-    td.style.textAlign = 'center';
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.className = 'slip-generic-select';
-    input.checked = (_slipSelections[currentSlipTab] || new Set()).has(id);
-    input.setAttribute('aria-label', `${row.number || id}を選択`);
-    input.addEventListener('click', event => event.stopPropagation());
-    input.addEventListener('change', event => _slipToggleRow(currentSlipTab, id, event.target.checked));
-    td.append(input);
-    tr.prepend(td);
     if (!hasOperation) {
       const actionTd = document.createElement('td');
       actionTd.style.textAlign = 'center';
@@ -7066,35 +6971,6 @@ function _slipDecorateRenderedTable(rows) {
       tr.append(actionTd);
     }
   });
-  _slipUpdateBulkControls();
-}
-
-function _slipBuildDocument(type, row) {
-  if (type === 'purchase') return buildPurchaseRecordTemplateHTML(row);
-  if (type === 'shipping') return buildShipmentRecordTemplateHTML(row);
-  if (type === 'consignment') return buildConsignmentRecordTemplateHTML(row);
-  if (type === 'sales') return buildSalesRecordTemplateHTML(row);
-  if (type === 'purchasereturn') return buildPurchaseReturnRecordTemplateHTML(row);
-  if (type === 'salesreturn') return buildSalesReturnRecordTemplateHTML(row);
-  return '';
-}
-
-function _slipBulkAction(action) {
-  const set = _slipSelections[currentSlipTab] || new Set();
-  const selected = getCurrentSlipSource(currentSlipTab).filter(row => set.has(_slipRecordId(row)));
-  if (!selected.length) return showToast('warning', '伝票が選択されていません', '対象の伝票を1件以上選択してください');
-  const labels = { purchase:'仕入伝票', shipping:'出荷伝票', consignment:'委託伝票', sales:'売上伝票', purchasereturn:'仕入返品伝票', salesreturn:'売上返品伝票' };
-  const title = `${labels[currentSlipTab] || '伝票'}（選択${selected.length}件）`;
-  const html = selected.map(row => _slipBuildDocument(currentSlipTab, row)).join('<div style="break-after:page"></div>');
-  if (action === 'print') return _openTemplatePrintWindow(title, html);
-  if (action === 'download') {
-    const date = new Date().toISOString().slice(0, 10).replaceAll('-', '');
-    return _downloadTemplateDocument(title, `${labels[currentSlipTab] || '伝票'}_${date}_${selected.length}件.html`, html);
-  }
-  const win = window.open('', '_blank');
-  if (!win) return showToast('error', 'プレビューエラー', 'プレビュー画面を開けませんでした');
-  win.document.write(`<!doctype html><html lang="ja"><head><meta charset="utf-8"><title>${_escHtml(title)}</title></head><body>${html}</body></html>`);
-  win.document.close();
 }
 
 function buildSlipRow(row) {
@@ -7172,15 +7048,8 @@ function buildSlipRow(row) {
   } else if (currentSlipTab === 'shipping') {
     const shipmentStatus = getShipmentProcessingStatus(row);
     const stBadge = _slipStatusBadge(shipmentStatus, row.id, 'shipping');
-    const isChecked = _shSelectedIds.has(row.id);
     // ⑧ 出荷伝票の伝票番号横に aprBadge を表示しない（誤表示削除）
-    return `<tr id="sh-row-${row.id}" class="slip-list-row${pendingApr ? ' slip-row-pending' : ''}${isChecked ? ' sh-row-selected' : ''}" onclick="openSlipDetail('shipping','${row.id}')">
-      <td style="text-align:center;padding:8px 4px;" onclick="event.stopPropagation()">
-        <input type="checkbox" class="sh-row-chk" data-id="${row.id}"
-          ${isChecked ? 'checked' : ''}
-          onchange="shToggleRow('${row.id}', this.checked)"
-          style="cursor:pointer;width:15px;height:15px;">
-      </td>
+    return `<tr id="sh-row-${row.id}" class="slip-list-row${pendingApr ? ' slip-row-pending' : ''}" onclick="openSlipDetail('shipping','${row.id}')">
       <td><code style="font-size:12px;font-weight:bold;">${row.id}</code>${revBadge}</td>
       <td style="white-space:nowrap;">${row.date||'—'}</td>
       <td>${getBuyerName(row.destination)}</td>
@@ -7252,7 +7121,6 @@ function buildSlipRow(row) {
   } else if (currentSlipTab === 'purchasereturn') {
     const processingStatus = getPurchaseReturnProcessingStatus(row);
     const stBadge = _slipStatusBadge(processingStatus, row.id, 'purchasereturn');
-    const isChecked = _prSelectedIds.has(row.id);
     const retTotal = getPurchaseReturnOriginalAmountInfo(row).subtotal;
 
     // 配送番号は入力だけでは保存せず、「確定」を押した時点で保存する。
@@ -7271,12 +7139,7 @@ function buildSlipRow(row) {
         ${canSaveTracking ? '' : 'disabled'}>確定</button>
     </div>`;
 
-    return `<tr class="slip-list-row${isChecked ? ' pr-row-selected' : ''}" id="pr-row-${row.id}" onclick="openPurchaseReturnDetail('${row.id}')">
-      <td class="pr-list-select-cell" onclick="event.stopPropagation()">
-        <input type="checkbox" class="pr-row-chk pr-list-checkbox" data-id="${row.id}"
-          ${isChecked ? 'checked' : ''}
-          onchange="prToggleRow('${row.id}',this.checked)">
-      </td>
+    return `<tr class="slip-list-row" id="pr-row-${row.id}" onclick="openPurchaseReturnDetail('${row.id}')">
       <td class="pr-list-number"><code>${row.id}</code></td>
       <td class="pr-list-date">${row.date||'—'}</td>
       <td class="pr-list-supplier" title="${_escHtml(getSupplierName(row.supplier))}">${getSupplierName(row.supplier)}</td>
@@ -7304,17 +7167,10 @@ function buildSlipRow(row) {
   } else {
     const paymentStatus = row.paidAt ? '処理済' : '処理中';
     const stBadge = _slipStatusBadge(paymentStatus, row.id, 'sales');
-    const isChecked = _slSelectedIds.has(row.id);
     const canIssue = canIssueSaleSlip();
     const issueLabel = row.issuedAt ? '再発行' : '発行';
     // ⑧ 売上伝票の伝票番号横に aprBadge を表示しない（誤表示削除）
-    return `<tr id="sl-row-${row.id}" class="slip-list-row${pendingApr ? ' slip-row-pending' : ''}${isChecked ? ' sl-row-selected' : ''}" onclick="openSlipDetail('sales','${row.id}')">
-      <td style="text-align:center;padding:8px 4px;" onclick="event.stopPropagation()">
-        <input type="checkbox" class="sl-row-chk" data-id="${row.id}"
-          ${isChecked ? 'checked' : ''}
-          onchange="slToggleRow('${row.id}', this.checked)"
-          style="cursor:pointer;width:15px;height:15px;">
-      </td>
+    return `<tr id="sl-row-${row.id}" class="slip-list-row${pendingApr ? ' slip-row-pending' : ''}" onclick="openSlipDetail('sales','${row.id}')">
       <td><code style="font-size:12px;font-weight:bold;">${row.id}</code>${revBadge}</td>
       <td style="white-space:nowrap;">${row.date||'—'}</td>
       <td>${getBuyerName(row.buyer)}</td>
@@ -7544,7 +7400,6 @@ function prToggleSelectAll(checked) {
     const tr = document.getElementById('pr-row-' + chk.dataset.id);
     if (tr) tr.classList.toggle('pr-row-selected', checked);
   });
-  _prUpdateInvoiceBtn();
 }
 
 // ── 行選択トグル ──
@@ -7564,7 +7419,6 @@ function prToggleRow(id, checked) {
     allChk.checked       = _prSelectedIds.size === total && total > 0;
     allChk.indeterminate = _prSelectedIds.size > 0 && _prSelectedIds.size < total;
   }
-  _prUpdateInvoiceBtn();
 }
 
 // ── 仕入先ソートトグル ──
@@ -7594,32 +7448,6 @@ function _prSortedData(data) {
     const nb = getSupplierName(b.supplier) || '';
     return _prSortDir * na.localeCompare(nb, 'ja');
   });
-}
-
-// ── 仕入返品伝票ボタン注入（集計バーの右端） ──
-function _prInjectInvoiceBtn() {
-  // 既存ボタンがあれば削除
-  const old = document.getElementById('prBulkInvoiceBtn');
-  if (old) old.remove();
-
-  const bar = document.getElementById('slipSummaryBar');
-  if (!bar) return;
-
-  const btn = document.createElement('button');
-  btn.id        = 'prBulkInvoiceBtn';
-  btn.className = 'btn btn-primary btn-sm pr-bulk-invoice-btn';
-  btn.innerHTML = '<i class="fa-solid fa-file-invoice"></i> 仕入返品伝票発行';
-  btn.onclick   = prOpenBulkInvoiceModal;
-  bar.appendChild(btn);
-}
-
-// ── ボタン活性制御 ──
-function _prUpdateInvoiceBtn() {
-  const btn = document.getElementById('prBulkInvoiceBtn');
-  if (!btn) return;
-  const hasSelection = _prSelectedIds.size > 0;
-  btn.disabled = !hasSelection;
-  btn.style.opacity = hasSelection ? '1' : '0.45';
 }
 
 // ── 仕入返品伝票発行確認モーダルを開く ──

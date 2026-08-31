@@ -4144,16 +4144,6 @@
             <span class="s-label">修正あり</span>
             <span class="s-val" id="slipSummaryRevised" style="color:#e07b39;">0件</span>
           </div>
-          <!-- 6種類の伝票で共通: 選択件数 + 選択伝票のダウンロード・印刷 -->
-          <div class="sales-summary-item slip-bulk-controls" id="slipBulkControls" style="display:none;margin-left:auto;gap:6px;align-items:center;">
-            <span id="slipSelectCountBadge" style="display:none;background:#e0edff;color:#1a56db;font-size:12px;font-weight:600;padding:3px 10px;border-radius:20px;white-space:nowrap;"></span>
-            <button class="btn btn-outline btn-sm" id="slipBulkDownloadBtn" onclick="_slipBulkAction('download')" disabled style="white-space:nowrap;">
-              <i class="fa-solid fa-download"></i> ダウンロード
-            </button>
-            <button class="btn btn-primary btn-sm" id="slipBulkPrintBtn" onclick="_slipBulkAction('print')" disabled style="white-space:nowrap;">
-              <i class="fa-solid fa-print"></i> 印刷
-            </button>
-          </div>
         </div>
 
         <!-- 検索前プレースホルダー -->
@@ -6033,7 +6023,7 @@
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
 <script src="js/market_table.js?v=20260831-market-manual-register-fix-v1"></script>
 <script src="js/qr_inventory.js?v=20260818-product-tag-v1"></script>
-<script src="js/app.js?v=20260831-sales-return-detail-modal-fix-v1"></script>
+<script src="js/app.js?v=20260831-slip-bulk-controls-removed-v1"></script>
 <script src="js/consignment.js?v=20260831-consignment-label-v1"></script>
 <script src="js/stocktake.js?v=20260817-today-audit-v2"></script>
 <script src="js/purchase_entry.js?v=20260831-purchase-payment-status-v1"></script>

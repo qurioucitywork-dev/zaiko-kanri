@@ -62,19 +62,12 @@ assert.match(purchaseEntrySource, /_peClearCSVImportErrors/u,
   "purchase CSV import errors must provide an explicit close action");
 assert.match(purchaseEntrySource, /window\.__purchaseEntryLastCSVErrors/u,
   "purchase CSV import errors must remain visible until replaced or closed");
-assert.match(staticAppSource, /const _slipSelections = \{/u,
-  "all slip tabs must share the multi-selection state manager");
-for (const slipType of ["purchase", "shipping", "consignment", "sales", "salesreturn", "purchasereturn"]) {
-  assert.match(staticAppSource, new RegExp(`${slipType}: new Set\\(\\)`),
-    `${slipType} slips must support independent multi-selection`);
-}
-for (const label of ["請求書発行", "仕入返品伝票発行"]) {
-  assert.ok(staticAppSource.includes(label), `${label} must be available only through the matching tab operation`);
-}
+assert.equal(staticAppSource.includes("_prInjectInvoiceBtn"), false,
+  "purchase-return bulk issue controls must not be injected into the slip summary");
+assert.equal(staticAppSource.includes("slip-generic-select"), false,
+  "slip rows must not restore the undefined bulk-selection UI");
 assert.equal(staticAppSource.includes("slipBulkPreviewBtn"), false,
   "the slip list must not restore the removed statement-issue button");
-assert.match(staticAppSource, /対象の伝票を1件以上選択してください/u,
-  "bulk slip operations must reject an empty selection");
 assert.match(staticAppSource, /originalCode:\s*String\(item\.code/u,
   "product editing must retain the original code for self-excluding duplicate validation");
 assert.match(apiBridgeSource, /productCode: values\.code \|\| item\.code/u,
@@ -246,6 +239,8 @@ assert.match(staticAppSource, /button\.textContent = record\.label/u,
 let html = await readFile(path.join(referenceRoot, "app.html"), "utf8");
 assert.doesNotMatch(html, /id="slipBulkPreviewBtn"/u,
   "the slip list must omit the statement-issue button from its toolbar");
+assert.doesNotMatch(html, /id="slipBulkControls"/u,
+  "the slip summary must omit bulk download and print controls");
 assert.match(html, /\.cd-items-table tbody td\s*\{[\s\S]*?border: 1px solid #9eabb8;[\s\S]*?overflow-wrap: anywhere;/u,
   "customs preview rows must visibly separate and wrap every field");
 html = html.replace(/<link\b[^>]*>/gi, "");
@@ -1866,6 +1861,16 @@ assert.notEqual(document.getElementById("inv-result-area").style.display, "none"
 assert.match(document.getElementById("inventoryTableBody").textContent, new RegExp(singlePurchaseCode),
   "inventory Enter search must render the matching inventory record");
 window.navigateTo("sales-list");
+assert.equal(document.getElementById("slipBulkControls"), null,
+  "the shared bulk download and print controls must not exist");
+for (const slipType of ["purchase", "shipping", "consignment", "sales", "salesreturn", "purchasereturn"]) {
+  window.switchSlipTab(slipType);
+  window.showAllSlipList();
+  assert.equal(document.querySelectorAll("#slipTableHead input[type='checkbox'], #slipListBody input[type='checkbox']").length, 0,
+    `${slipType} slips must not expose bulk-selection checkboxes`);
+  assert.equal(document.getElementById("prBulkInvoiceBtn"), null,
+    `${slipType} slips must not retain the legacy purchase-return issue button`);
+}
 window.switchSlipTab("purchase");
 assert.equal(document.getElementById("slip-filter-status").value, "processing", "document status search must default to processing");
 assert.deepEqual([...document.querySelectorAll("#slip-filter-status option")].map(option => option.textContent),
