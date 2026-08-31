@@ -1863,7 +1863,7 @@ assert.match(document.getElementById("inventoryTableBody").textContent, new RegE
 window.navigateTo("sales-list");
 assert.equal(document.getElementById("slipBulkControls"), null,
   "the shared bulk download and print controls must not exist");
-for (const slipType of ["purchase", "shipping", "consignment", "sales", "salesreturn", "purchasereturn"]) {
+for (const slipType of ["purchase", "purchaseadjustment", "shipping", "consignment", "sales", "salesadjustment", "salesreturn", "purchasereturn"]) {
   window.switchSlipTab(slipType);
   window.showAllSlipList();
   assert.equal(document.querySelectorAll("#slipTableHead input[type='checkbox'], #slipListBody input[type='checkbox']").length, 0,
@@ -1871,6 +1871,23 @@ for (const slipType of ["purchase", "shipping", "consignment", "sales", "salesre
   assert.equal(document.getElementById("prBulkInvoiceBtn"), null,
     `${slipType} slips must not retain the legacy purchase-return issue button`);
 }
+const slipTabOrder = [...document.querySelectorAll(".slip-type-tabs > .slip-type-tab")].map(tab => tab.id);
+assert.equal(slipTabOrder.indexOf("sltab-purchaseadjustment"), slipTabOrder.indexOf("sltab-purchase") + 1,
+  "purchase adjustment slips must appear immediately after purchase slips");
+assert.equal(slipTabOrder.indexOf("sltab-salesadjustment"), slipTabOrder.indexOf("sltab-sales") + 1,
+  "sales adjustment slips must appear immediately after sales slips");
+window.switchSlipTab("purchaseadjustment");
+window.showAllSlipList();
+assert.match(document.getElementById("sltab-purchaseadjustment").textContent, /仕入調整伝票/u);
+assert.match(document.getElementById("slipFilterPartyLabel").textContent, /仕入先/u);
+assert.equal(window.getFilteredSlipData().length, 0,
+  "purchase adjustment slips must begin with an independent empty data source");
+window.switchSlipTab("salesadjustment");
+window.showAllSlipList();
+assert.match(document.getElementById("sltab-salesadjustment").textContent, /売上調整伝票/u);
+assert.match(document.getElementById("slipFilterPartyLabel").textContent, /取引先/u);
+assert.equal(window.getFilteredSlipData().length, 0,
+  "sales adjustment slips must not reuse ordinary sales-slip data");
 window.switchSlipTab("purchase");
 assert.equal(document.getElementById("slip-filter-status").value, "processing", "document status search must default to processing");
 assert.deepEqual([...document.querySelectorAll("#slip-filter-status option")].map(option => option.textContent),
@@ -3846,6 +3863,8 @@ assert.match(staticAppSource, /'consignment': '委託登録'/u,
 assert.equal(staticAppSource.includes("委託伝票登録"), false,
   "the former consignment registration page label must not remain");
 assert.ok(document.getElementById("sltab-consignment"), "document list must include the consignment tab");
+assert.ok(document.getElementById("sltab-purchaseadjustment"), "document list must include the purchase adjustment tab");
+assert.ok(document.getElementById("sltab-salesadjustment"), "document list must include the sales adjustment tab");
 const shipmentDetailTable = window.buildItemsTable(
   [{ code: "0408260004", brand: "グランドセイコー", model: "Heritage Collection", salePrice: 5975 }],
   "shipping",

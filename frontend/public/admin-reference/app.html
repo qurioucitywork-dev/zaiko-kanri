@@ -4056,6 +4056,10 @@
             <span class="slip-tab-count" id="sltab-count-purchase" style="display:none;"
               onclick="event.stopPropagation();switchSlipTabPending('purchase')" title="承認タスクのある伝票を表示">0</span>
           </button>
+          <button class="slip-type-tab" id="sltab-purchaseadjustment" onclick="switchSlipTab('purchaseadjustment')">
+            <i class="fa-solid fa-file-pen"></i> 仕入調整伝票
+            <span class="slip-tab-count" id="sltab-count-purchaseadjustment" style="display:none;">0</span>
+          </button>
           <button class="slip-type-tab" id="sltab-shipping" onclick="switchSlipTab('shipping')">
             <i class="fa-solid fa-truck"></i> 出荷伝票
             <span class="slip-tab-count" id="sltab-count-shipping" style="display:none;"
@@ -4069,6 +4073,10 @@
             <i class="fa-solid fa-yen-sign"></i> 売上伝票
             <span class="slip-tab-count" id="sltab-count-sales" style="display:none;"
               onclick="event.stopPropagation();switchSlipTabPending('sales')" title="承認タスクのある伝票を表示">0</span>
+          </button>
+          <button class="slip-type-tab" id="sltab-salesadjustment" onclick="switchSlipTab('salesadjustment')">
+            <i class="fa-solid fa-file-pen"></i> 売上調整伝票
+            <span class="slip-tab-count" id="sltab-count-salesadjustment" style="display:none;">0</span>
           </button>
           <button class="slip-type-tab" id="sltab-salesreturn" onclick="switchSlipTab('salesreturn')">
             <i class="fa-solid fa-rotate-left"></i> 売上返品伝票
@@ -6023,7 +6031,7 @@
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
 <script src="js/market_table.js?v=20260831-market-manual-register-fix-v1"></script>
 <script src="js/qr_inventory.js?v=20260818-product-tag-v1"></script>
-<script src="js/app.js?v=20260831-slip-bulk-controls-removed-v1"></script>
+<script src="js/app.js?v=20260831-adjustment-slip-tabs-v1"></script>
 <script src="js/consignment.js?v=20260831-consignment-label-v1"></script>
 <script src="js/stocktake.js?v=20260817-today-audit-v2"></script>
 <script src="js/purchase_entry.js?v=20260831-purchase-payment-status-v1"></script>

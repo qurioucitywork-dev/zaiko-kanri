@@ -6206,6 +6206,10 @@ function init_sales() {
 // 伝票一覧（仕入 / 出荷 / 売上 タブ切替）
 // =====================================================
 let currentSlipTab = 'purchase'; // 現在のタブ
+const SLIP_TAB_TYPES = [
+  'purchase', 'purchaseadjustment', 'shipping', 'consignment',
+  'sales', 'salesadjustment', 'salesreturn', 'purchasereturn',
+];
 
 // =====================================================
 // ① タスク判定関数（カウント・絞り込み・再計算の共通ロジック）
@@ -6224,9 +6228,11 @@ function _refreshTaskCounts() {
   const _count = (list) => (list || []).filter(_isTaskItem).length;
   const counts = {
     purchase:       _count(APP_DATA.purchaseSlips),
+    purchaseadjustment: _count(APP_DATA.purchaseAdjustments),
     shipping:       _count(APP_DATA.shipments),
     consignment:    _count(APP_DATA.consignments),
     sales:          _count(APP_DATA.sales),
+    salesadjustment: _count(APP_DATA.salesAdjustments),
     salesreturn:    _count(APP_DATA.salesReturns),
     purchasereturn: _count(APP_DATA.purchaseReturns),
   };
@@ -6261,7 +6267,7 @@ function switchSlipTab(type) {
   currentSlipTab = type;
   // 旧一括発行ボタンが残っている画面から切り替えた場合も確実に撤去する。
   document.getElementById('prBulkInvoiceBtn')?.remove();
-  ['purchase','shipping','consignment','sales','salesreturn','purchasereturn'].forEach(t => {
+  SLIP_TAB_TYPES.forEach(t => {
     document.getElementById('sltab-' + t)?.classList.toggle('active', t === type);
   });
   // 取引先セレクト更新
@@ -6286,7 +6292,7 @@ function switchSlipTab(type) {
 function switchSlipTabPending(type) {
   currentSlipTab = type;
   document.getElementById('prBulkInvoiceBtn')?.remove();
-  ['purchase','shipping','consignment','sales','salesreturn','purchasereturn'].forEach(t => {
+  SLIP_TAB_TYPES.forEach(t => {
     document.getElementById('sltab-' + t)?.classList.toggle('active', t === type);
   });
   rebuildSlipPartySelect(type);
@@ -6303,6 +6309,8 @@ function switchSlipTabPending(type) {
   let data = [];
   if (type === 'purchase') {
     data = (APP_DATA.purchaseSlips || []).filter(_isTaskItem);
+  } else if (type === 'purchaseadjustment' || type === 'salesadjustment') {
+    data = getCurrentSlipSource(type).filter(_isTaskItem);
   } else if (type === 'shipping') {
     data = (APP_DATA.shipments || []).filter(_isTaskItem);
   } else if (type === 'consignment') {
@@ -6362,7 +6370,7 @@ function rebuildSlipPartySelect(type) {
   const label = document.getElementById('slipFilterPartyLabel');
   if (!sel) return;
   sel.innerHTML = '<option value="">すべて</option>';
-  if (type === 'purchase') {
+  if (type === 'purchase' || type === 'purchaseadjustment') {
     if (label) label.innerHTML = '<i class="fa-solid fa-industry"></i> 仕入先';
     APP_DATA.suppliers.forEach(s => { sel.innerHTML += `<option value="${s.code}">${s.name}</option>`; });
   } else if (type === 'purchasereturn') {
@@ -6535,9 +6543,11 @@ function matchesSlipStatusFilter(record, statusFilter, tabType = currentSlipTab)
 function getCurrentSlipSource(tabType = currentSlipTab) {
   const sources = {
     purchase: APP_DATA.purchaseSlips,
+    purchaseadjustment: APP_DATA.purchaseAdjustments,
     shipping: APP_DATA.shipments,
     consignment: APP_DATA.consignments,
     sales: APP_DATA.sales,
+    salesadjustment: APP_DATA.salesAdjustments,
     salesreturn: APP_DATA.salesReturns,
     purchasereturn: APP_DATA.purchaseReturns,
   };
@@ -6575,6 +6585,23 @@ function filterSlipList() {
         const h = [slip.id, slip.date, getSupplierName(slip.supplier),
                    slip.staff || '', lineText].join(' ').toLowerCase();
         if (!h.includes(keyword)) return false;
+      }
+      return true;
+    });
+  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
+    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+    data = getCurrentSlipSource(currentSlipTab).filter(record => {
+      if (!matchesSlipStatusFilter(record, status, currentSlipTab)) return false;
+      if (from && record.date < from) return false;
+      if (to && record.date > to) return false;
+      const partyCode = isPurchaseAdjustment ? record.supplier : record.buyer;
+      if (party && partyCode !== party) return false;
+      if (keyword) {
+        const partyName = isPurchaseAdjustment ? getSupplierName(record.supplier) : getBuyerName(record.buyer);
+        const haystack = [record.id, partyName, record.note || '',
+          ...(record.items || record.lines || []).flatMap(item => [item.code, item.brand, item.model])]
+          .join(' ').toLowerCase();
+        if (!haystack.includes(keyword)) return false;
       }
       return true;
     });
@@ -6687,23 +6714,29 @@ function renderSlipList(data) {
   // グローバルの _isTaskItem() を使用する（カウントと絞り込みで同一関数を共有）
   const _taskCountLocal = (list) => (list || []).filter(_isTaskItem).length;
   const countPurch   = _taskCountLocal(APP_DATA.purchaseSlips    || []);
+  const countPurchAdjustment = _taskCountLocal(APP_DATA.purchaseAdjustments || []);
   const countShip    = _taskCountLocal(APP_DATA.shipments        || []);
   const countConsign = _taskCountLocal(APP_DATA.consignments     || []);
   const countSales   = _taskCountLocal(APP_DATA.sales            || []);
+  const countSalesAdjustment = _taskCountLocal(APP_DATA.salesAdjustments || []);
   const countSRet    = _taskCountLocal(APP_DATA.salesReturns     || []);
   const countPRet    = _taskCountLocal(APP_DATA.purchaseReturns  || []);
 
   const elPurchase       = document.getElementById('sltab-count-purchase');
+  const elPurchaseAdjustment = document.getElementById('sltab-count-purchaseadjustment');
   const elShipping       = document.getElementById('sltab-count-shipping');
   const elConsignment    = document.getElementById('sltab-count-consignment');
   const elSales          = document.getElementById('sltab-count-sales');
+  const elSalesAdjustment = document.getElementById('sltab-count-salesadjustment');
   const elSalesReturn    = document.getElementById('sltab-count-salesreturn');
   const elPurchaseReturn = document.getElementById('sltab-count-purchasereturn');
 
   if (elPurchase)       { elPurchase.textContent       = countPurch; elPurchase.style.display       = countPurch > 0 ? '' : 'none'; }
+  if (elPurchaseAdjustment) { elPurchaseAdjustment.textContent = countPurchAdjustment; elPurchaseAdjustment.style.display = countPurchAdjustment > 0 ? '' : 'none'; }
   if (elShipping)       { elShipping.textContent       = countShip;  elShipping.style.display       = countShip  > 0 ? '' : 'none'; }
   if (elConsignment)    { elConsignment.textContent    = countConsign; elConsignment.style.display  = countConsign > 0 ? '' : 'none'; }
   if (elSales)          { elSales.textContent          = countSales; elSales.style.display          = countSales > 0 ? '' : 'none'; }
+  if (elSalesAdjustment) { elSalesAdjustment.textContent = countSalesAdjustment; elSalesAdjustment.style.display = countSalesAdjustment > 0 ? '' : 'none'; }
   if (elSalesReturn)    { elSalesReturn.textContent    = countSRet;  elSalesReturn.style.display    = countSRet  > 0 ? '' : 'none'; }
   if (elPurchaseReturn) { elPurchaseReturn.textContent = countPRet;  elPurchaseReturn.style.display = countPRet  > 0 ? '' : 'none'; }
 
@@ -6732,6 +6765,12 @@ function renderSlipList(data) {
     data.forEach(slip => {
       purchaseTotalJPY += getPurchaseSlipGrandTotalJPY(slip);
       totalItems += (slip.lines || []).length;
+    });
+  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
+    data.forEach(record => {
+      totalAmt += Number(record.adjustmentAmount ?? record.total ?? 0);
+      totalItems += (record.items || record.lines || []).length;
+      if ((record.revisions || []).length) revisedCount++;
     });
   } else if (currentSlipTab === 'purchasereturn') {
     data.forEach(r => {
@@ -6768,12 +6807,14 @@ function renderSlipList(data) {
       : (statusValue === 'unpaid' ? '未払いの表示件数 / DB全件数'
         : (statusValue === 'completed' ? '処理済の表示件数 / DB全件数' : '表示件数 / DB全件数'));
   }
-  const summaryUsesUSD = ['shipping', 'sales', 'salesreturn'].includes(currentSlipTab);
+  const summaryUsesUSD = ['shipping', 'sales', 'salesadjustment', 'salesreturn'].includes(currentSlipTab);
   const summaryTotalLabel = document.getElementById('slipSummaryTotalLabel');
   if (summaryTotalLabel) {
     summaryTotalLabel.textContent = currentSlipTab === 'purchase'
       ? '合計金額（仕入登録時レート換算・JPY）'
-      : (currentSlipTab === 'consignment' ? '合計金額（委託登録時固定・JPY）' : '合計金額');
+      : (currentSlipTab === 'purchaseadjustment' ? '合計調整額（JPY）'
+        : (currentSlipTab === 'salesadjustment' ? '合計調整額'
+          : (currentSlipTab === 'consignment' ? '合計金額（委託登録時固定・JPY）' : '合計金額')));
     summaryTotalLabel.title = currentSlipTab === 'purchase'
       ? '海外仕入は仕入登録時に固定保存したUSD/JPYレートで円換算します。発行・再発行では変更されません。'
       : '';
@@ -6814,6 +6855,14 @@ function renderSlipList(data) {
       <th style="width:105px;text-align:center;">支払確認</th>
       <th style="width:120px;text-align:center;">支払日付</th>
       <th style="width:92px;text-align:center;">操作</th>
+    </tr>`;
+  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
+    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+    head.innerHTML = `<tr>
+      <th>${isPurchaseAdjustment ? '仕入調整伝票番号' : '売上調整伝票番号'}</th>
+      <th>調整日</th><th>${isPurchaseAdjustment ? '仕入先' : '販売先'}</th>
+      <th style="text-align:center;">点数</th><th style="text-align:right;">調整額</th>
+      <th>備考</th><th>ステータス</th><th style="width:72px;text-align:center;">操作</th>
     </tr>`;
   } else if (currentSlipTab === 'shipping') {
     head.innerHTML = `<tr>
@@ -7040,6 +7089,26 @@ function buildSlipRow(row) {
           <i class="fa-solid fa-trash"></i> 削除
         </button>
       </td>
+    </tr>`;
+
+  // ──────────────────────────────────────
+  // 仕入調整伝票 / 売上調整伝票
+  // ──────────────────────────────────────
+  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
+    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+    const adjustmentLines = row.items || row.lines || [];
+    const adjustmentAmount = Number(row.adjustmentAmount ?? row.total ?? 0);
+    const partyName = isPurchaseAdjustment ? getSupplierName(row.supplier) : getBuyerName(row.buyer);
+    const status = String(row.status || '処理中');
+    return `<tr class="slip-list-row">
+      <td><code style="font-size:12px;font-weight:bold;">${_escHtml(row.id || '—')}</code></td>
+      <td style="white-space:nowrap;">${_escHtml(row.date || '—')}</td>
+      <td>${_escHtml(partyName || '—')}</td>
+      <td style="text-align:center;">${adjustmentLines.length}点</td>
+      <td style="text-align:right;font-weight:bold;">${isPurchaseAdjustment ? formatPrice(adjustmentAmount) : formatSalePrice(adjustmentAmount)}</td>
+      <td>${_escHtml(row.note || '—')}</td>
+      <td>${_slipStatusBadge(status, row.id, currentSlipTab)}</td>
+      <td style="text-align:center;color:var(--text-muted);">—</td>
     </tr>`;
 
   // ──────────────────────────────────────
@@ -8741,6 +8810,17 @@ function exportSlipCSV() {
     rows = [['管理番号','仕入日','ブランド','モデル','仕入先','バイヤー','原価','ステータス','修正回数']];
     data.forEach(item => rows.push([item.code, item.purchaseDate, item.brand, item.model,
       item.supplierName || getSupplierName(item.supplier), item.staff||'', item.purchasePrice, normalizeInventoryStatusLabel(item.status), (item.revisions||[]).length]));
+  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
+    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+    rows = [[isPurchaseAdjustment ? '仕入調整伝票番号' : '売上調整伝票番号', '調整日',
+      isPurchaseAdjustment ? '仕入先' : '販売先', '点数', '調整額', '備考', 'ステータス']];
+    data.forEach(record => rows.push([
+      record.id, record.date,
+      isPurchaseAdjustment ? getSupplierName(record.supplier) : getBuyerName(record.buyer),
+      (record.items || record.lines || []).length,
+      record.adjustmentAmount ?? record.total ?? 0,
+      record.note || '', record.status || '処理中',
+    ]));
   } else if (currentSlipTab === 'shipping') {
     // 選択中の伝票があればその伝票のみ、なければ全件
     const exportData = _shSelectedIds.size > 0
@@ -8814,6 +8894,23 @@ function getFilteredSlipData() {
         }).join(' ');
         const h = [slip.id, slip.date, getSupplierName(slip.supplier), slip.staff || '', lineText].join(' ').toLowerCase();
         if (!h.includes(keyword)) return false;
+      }
+      return true;
+    });
+  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
+    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+    return getCurrentSlipSource(currentSlipTab).filter(record => {
+      if (!matchesSlipStatusFilter(record, status, currentSlipTab)) return false;
+      if (from && record.date < from) return false;
+      if (to && record.date > to) return false;
+      const partyCode = isPurchaseAdjustment ? record.supplier : record.buyer;
+      if (party && partyCode !== party) return false;
+      if (keyword) {
+        const partyName = isPurchaseAdjustment ? getSupplierName(record.supplier) : getBuyerName(record.buyer);
+        const haystack = [record.id, partyName, record.note || '',
+          ...(record.items || record.lines || []).flatMap(item => [item.code, item.brand, item.model])]
+          .join(' ').toLowerCase();
+        if (!haystack.includes(keyword)) return false;
       }
       return true;
     });
