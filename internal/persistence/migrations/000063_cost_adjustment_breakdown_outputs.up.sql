@@ -111,6 +111,7 @@ BEGIN
     END IF;
 END;
 $$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION enforce_product_purchase_date_consistency()
 RETURNS TRIGGER AS $$
 DECLARE
@@ -143,3 +144,4 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+

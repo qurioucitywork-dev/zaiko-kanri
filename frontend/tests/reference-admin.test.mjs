@@ -1911,6 +1911,24 @@ assert.equal(document.getElementById("slipDetailOverlay").classList.contains("hi
   "the purchase slip must remain behind product detail so closing returns to the slip");
 document.getElementById("itemDetailModal").classList.add("hidden");
 window.closeSlipDetail();
+savedSinglePurchaseSlip.arrivalStatus = "processing";
+savedSinglePurchaseSlip.pendingArrivalCount = 0;
+savedSinglePurchaseSlip.lines[0].currentStatus = "原価調整中";
+savedSingleInventory.status = "原価調整中";
+assert.equal(window.getPurchaseArrivalStatus(savedSinglePurchaseSlip), "処理中",
+  "a cost-adjusting product must keep its purchase slip processing until it is scanned");
+const costAdjustmentPartLine = {
+  lineNo: 99, code: "P3108269999", lineItemKind: "part", currentStatus: "原価調整中",
+  purchasePrice: 0, purchaseCurrency: "JPY", convertedPurchasePriceJpy: 0,
+};
+savedSinglePurchaseSlip.lines[0].currentStatus = "在庫中";
+savedSingleInventory.status = "在庫中";
+savedSinglePurchaseSlip.lines.push(costAdjustmentPartLine);
+assert.equal(window.getPurchaseArrivalStatus(savedSinglePurchaseSlip), "処理中",
+  "a cost-adjusting part must keep its purchase slip processing");
+assert.deepEqual(Array.from(window.getPurchaseSlipStatusKeys(savedSinglePurchaseSlip)), ["processing", "unpaid"],
+  "a cost-adjusting part on an unpaid slip must expose both processing and unpaid statuses");
+savedSinglePurchaseSlip.lines.pop();
 savedSinglePurchaseSlip.arrivalStatus = "completed";
 savedSinglePurchaseSlip.pendingArrivalCount = 0;
 savedSinglePurchaseSlip.lines[0].currentStatus = "在庫中";

@@ -10,3 +10,4 @@ CREATE TABLE IF NOT EXISTS cost_adjustment_input_parts (
 
 CREATE INDEX IF NOT EXISTS idx_cost_adjustment_input_parts_adjustment
     ON cost_adjustment_input_parts(cost_adjustment_id);
+

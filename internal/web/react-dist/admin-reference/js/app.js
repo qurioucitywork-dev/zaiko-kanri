@@ -6459,13 +6459,18 @@ function getSlipSearchStatus(record, tabType = currentSlipTab) {
   return 'processing';
 }
 
-/** 仕入伝票は、未入荷（仕入中）の商品が1点でもある場合だけ処理中。 */
+function isPendingPurchaseArrivalStatus(value) {
+  const status = normalizeInventoryStatusLabel(value);
+  return status === '仕入中' || status === '原価調整中';
+}
+
+/** 仕入中または原価調整中の商品・パーツが1点でもある仕入伝票は処理中。 */
 function getPurchaseArrivalStatus(record) {
-  const hasPurchasingItem = (record?.lines || []).some(line => {
+  const hasPendingItem = (record?.lines || []).some(line => {
     const inventoryItem = (APP_DATA.inventory || []).find(item => item.code === line.code);
-    return normalizeInventoryStatusLabel(inventoryItem?.status || line.currentStatus || '') === '仕入中';
+    return isPendingPurchaseArrivalStatus(inventoryItem?.status || line.currentStatus || '');
   });
-  if (hasPurchasingItem || Number(record?.pendingArrivalCount) > 0) return '処理中';
+  if (hasPendingItem || Number(record?.pendingArrivalCount) > 0) return '処理中';
   return '処理済';
 }
 
@@ -6483,7 +6488,7 @@ function renderPurchaseSlipStatusBadges(record, { showPendingCount = false } = {
   const statuses = getPurchaseSlipStatusKeys(record);
   const badges = statuses.map(status => _slipStatusBadge(labels[status], record?.id, 'purchase')).join('');
   const pendingCount = Number(record?.pendingArrivalCount)
-    || (record?.lines || []).filter(line => normalizeInventoryStatusLabel(line.currentStatus) === '仕入中').length;
+    || (record?.lines || []).filter(line => isPendingPurchaseArrivalStatus(line.currentStatus)).length;
   const count = showPendingCount && statuses.includes('processing')
     ? `<small class="purchase-arrival-count">入荷待ち ${pendingCount}点</small>` : '';
   return `<span class="purchase-slip-status-stack">${badges}</span>${count}`;

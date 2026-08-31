@@ -10,7 +10,26 @@ import (
 
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+const purchaseArrivalSummaryJoin = `LEFT JOIN (
+	SELECT entities.purchase_slip_id,
+		COUNT(*) FILTER (WHERE entities.is_pending) AS pending_count,
+		COUNT(*) FILTER (WHERE NOT entities.is_pending) AS arrived_count
+	FROM (
+		SELECT line.purchase_slip_id,product.id AS entity_id,
+			product.inventory_status IN ('purchasing','cost_adjustment') AS is_pending
+		FROM purchase_slip_lines line
+		JOIN products product ON product.purchase_slip_line_id=line.id AND product.deleted_at IS NULL
+		UNION ALL
+		SELECT line.purchase_slip_id,part.id AS entity_id,
+			part.status='cost_adjustment' AS is_pending
+		FROM purchase_slip_lines line
+		JOIN parts part ON part.purchase_slip_line_id=line.id
+	) entities
+	GROUP BY entities.purchase_slip_id
+) arrivals ON arrivals.purchase_slip_id=p.id`
 
 var (
 	ErrPurchaseNotFound        = errors.New("purchase slip not found")
@@ -247,14 +266,7 @@ func (r *Repository) PurchaseSlipsPage(ctx context.Context, organizationID strin
 		Joins("LEFT JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
 		Joins("LEFT JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
-		Joins(`LEFT JOIN (
-			SELECT line.purchase_slip_id,
-				COUNT(product.id) FILTER (WHERE product.inventory_status='purchasing') AS pending_count,
-				COUNT(product.id) FILTER (WHERE product.inventory_status<>'purchasing') AS arrived_count
-			FROM purchase_slip_lines line
-			LEFT JOIN products product ON product.purchase_slip_line_id=line.id AND product.deleted_at IS NULL
-			GROUP BY line.purchase_slip_id
-		) arrivals ON arrivals.purchase_slip_id=p.id`).
+		Joins(purchaseArrivalSummaryJoin).
 		Where("p.organization_id=? AND p.status<>'cancelled'", organizationID).
 		Order("p.purchase_date DESC,p.slip_number DESC").
 		Offset((page - 1) * pageSize).Limit(pageSize).Scan(&records).Error
@@ -306,14 +318,7 @@ func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseI
 		Joins("LEFT JOIN partner_roles pr ON pr.id=p.supplier_role_id AND pr.organization_id=p.organization_id").
 		Joins("LEFT JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
-		Joins(`LEFT JOIN (
-			SELECT line.purchase_slip_id,
-				COUNT(product.id) FILTER (WHERE product.inventory_status='purchasing') AS pending_count,
-				COUNT(product.id) FILTER (WHERE product.inventory_status<>'purchasing') AS arrived_count
-			FROM purchase_slip_lines line
-			LEFT JOIN products product ON product.purchase_slip_line_id=line.id AND product.deleted_at IS NULL
-			GROUP BY line.purchase_slip_id
-		) arrivals ON arrivals.purchase_slip_id=p.id`).
+		Joins(purchaseArrivalSummaryJoin).
 		Where("p.organization_id=? AND p.id=? AND p.status<>'cancelled'", organizationID, purchaseID).Take(&record)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return PurchaseSlipRecord{}, ErrPurchaseNotFound
@@ -682,27 +687,28 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 	return record, nil
 }
 
-// ReceivePurchaseProduct records physical arrival of one product. Accounting
-// confirmation creates the managed product first in purchasing state; scanning
-// its management number is the only transition from purchasing to in_stock.
+// ReceivePurchaseProduct records physical arrival of one product. In addition
+// to the initial purchasing state, a cost-adjustment output remains pending
+// until its new management number has been physically scanned.
 func (r *Repository) ReceivePurchaseProduct(ctx context.Context, organizationID, purchaseID, productCode, actorUserID string) (PurchaseArrivalResult, error) {
 	result := PurchaseArrivalResult{ProductCode: strings.TrimSpace(productCode)}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var product struct {
-			ID              string
-			InventoryStatus string
+			ID               string
+			InventoryStatus  string
+			CostAdjustmentID string
 		}
-		query := tx.Raw(`SELECT product.id,product.inventory_status
-			FROM products product
-			JOIN purchase_slip_lines line ON line.id=product.purchase_slip_line_id
-			JOIN purchase_slips slip ON slip.id=line.purchase_slip_id
-			WHERE slip.organization_id=? AND slip.id=? AND product.product_code=?
-			  AND product.deleted_at IS NULL AND slip.status='confirmed'
-			FOR UPDATE`, organizationID, purchaseID, result.ProductCode).Scan(&product)
-		if query.Error != nil {
+		query := tx.Table("products AS product").
+			Select("product.id,product.inventory_status,COALESCE(product.cost_adjustment_id,'') AS cost_adjustment_id").
+			Joins("JOIN purchase_slip_lines line ON line.id=product.purchase_slip_line_id").
+			Joins("JOIN purchase_slips slip ON slip.id=line.purchase_slip_id").
+			Where(`slip.organization_id=? AND slip.id=? AND product.product_code=?
+				AND product.deleted_at IS NULL AND slip.status='confirmed'`, organizationID, purchaseID, result.ProductCode).
+			Clauses(clause.Locking{Strength: "UPDATE"}).Take(&product)
+		if query.Error != nil && !errors.Is(query.Error, gorm.ErrRecordNotFound) {
 			return query.Error
 		}
-		if query.RowsAffected == 0 || product.ID == "" {
+		if errors.Is(query.Error, gorm.ErrRecordNotFound) || product.ID == "" {
 			return ErrPurchaseProductNotFound
 		}
 		if product.InventoryStatus == "in_stock" {
@@ -710,13 +716,21 @@ func (r *Repository) ReceivePurchaseProduct(ctx context.Context, organizationID,
 			result.InventoryStatus = "in_stock"
 			return nil
 		}
-		if product.InventoryStatus != "purchasing" {
+		if product.InventoryStatus != "purchasing" && product.InventoryStatus != "cost_adjustment" {
 			return ErrPurchaseArrivalState
 		}
+		fromStatus := product.InventoryStatus
 		now := time.Now().UTC()
 		if err := tx.Exec(`UPDATE products SET inventory_status='in_stock',updated_at=?
-			WHERE organization_id=? AND id=? AND inventory_status='purchasing'`, now, organizationID, product.ID).Error; err != nil {
+			WHERE organization_id=? AND id=? AND inventory_status=?`, now, organizationID, product.ID, fromStatus).Error; err != nil {
 			return err
+		}
+		if fromStatus == "cost_adjustment" && product.CostAdjustmentID != "" {
+			if err := tx.Table("cost_adjustment_items").Where(
+				"cost_adjustment_id=? AND output_product_id=?", product.CostAdjustmentID, product.ID,
+			).Update("status", "completed").Error; err != nil {
+				return err
+			}
 		}
 		eventID, err := database.NewID("ive")
 		if err != nil {
@@ -724,8 +738,8 @@ func (r *Repository) ReceivePurchaseProduct(ctx context.Context, organizationID,
 		}
 		if err := tx.Exec(`INSERT INTO inventory_events(
 			id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
-		) VALUES(?,?,?,'purchase_arrival_scan','purchasing','in_stock','仕入伝票の入荷スキャン',?,?)`,
-			eventID, organizationID, product.ID, actorUserID, now).Error; err != nil {
+		) VALUES(?,?,?,'purchase_arrival_scan',?,'in_stock','仕入伝票の入荷スキャン',?,?)`,
+			eventID, organizationID, product.ID, fromStatus, actorUserID, now).Error; err != nil {
 			return err
 		}
 		result.Result = "received"
