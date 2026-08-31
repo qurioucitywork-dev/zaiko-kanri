@@ -675,7 +675,7 @@ function clearPurchaseCarryover() {
 // =====================================================
 const BUSINESS_WORKFLOW_STORAGE_KEY = 'inv_business_workflow_v1';
 const BUSINESS_WORKFLOW_COLLECTIONS = [
-  'inventory', 'purchaseSlips', 'shipments', 'consignments', 'sales', 'salesReturns', 'purchaseReturns',
+  'inventory', 'purchaseSlips', 'shipments', 'consignments', 'sales', 'salesAdjustments', 'salesReturns', 'purchaseReturns',
 ];
 
 function hydrateBusinessWorkflowState() {
@@ -944,6 +944,335 @@ document.addEventListener('zaiko:data-hydrated', event => {
   if (!page || typeof window.navigateTo !== 'function') return;
   window.setTimeout(() => window.navigateTo(page), 0);
 });
+
+// =====================================================
+// 売上調整登録
+// =====================================================
+let _salesAdjustmentEntryState = { target: null, targetType: '', source: null, baseSalePrice: 0 };
+
+function _salesAdjustmentEmptyTargetMarkup() {
+  return `<div class="sae-empty-state">
+    <i class="fa-solid fa-box-open"></i>
+    <strong>対象商品はまだ読み込まれていません</strong>
+    <span>読み込み後、商品情報がここに表示されます。</span>
+  </div>`;
+}
+
+function _salesAdjustmentEmptySlipMarkup() {
+  return `<i class="fa-solid fa-file-circle-question"></i>
+    <span>対象商品を読み込むと、売上伝票または委託伝票を表示します。</span>`;
+}
+
+function _salesAdjustmentTargetCode(target, targetType) {
+  return String(targetType === 'part' ? (target?.partCode || target?.code || '') : (target?.code || '')).trim();
+}
+
+function _salesAdjustmentDisplayStatus(target, targetType) {
+  const raw = String(target?.status || '').trim();
+  if (['sold', '売上済'].includes(raw)) return '売上済';
+  if (['consigned', '委託済'].includes(raw)) return '委託済';
+  if (raw === '委託中') return '委託中';
+  return targetType === 'part' ? _partInventoryStatusLabel(raw) : normalizeInventoryStatusLabel(raw);
+}
+
+function _salesAdjustmentEligibleStatus(target, targetType) {
+  return ['売上済', '委託済', '委託中'].includes(_salesAdjustmentDisplayStatus(target, targetType));
+}
+
+function _findSalesAdjustmentTarget(code, preferredType = '') {
+  const normalized = String(code || '').trim().toUpperCase();
+  if (!normalized) return null;
+  const findProduct = () => (APP_DATA.inventory || []).find(item => String(item?.code || '').trim().toUpperCase() === normalized);
+  const findPart = () => (APP_DATA.parts || []).find(item =>
+    String(item?.partCode || item?.code || '').trim().toUpperCase() === normalized);
+  if (preferredType === 'part') {
+    const target = findPart();
+    return target ? { target, targetType: 'part' } : null;
+  }
+  if (preferredType === 'product') {
+    const target = findProduct();
+    return target ? { target, targetType: 'product' } : null;
+  }
+  const product = findProduct();
+  if (product) return { target: product, targetType: 'product' };
+  const part = findPart();
+  return part ? { target: part, targetType: 'part' } : null;
+}
+
+function _findSalesAdjustmentSource(code, status = '') {
+  const normalized = String(code || '').trim().toUpperCase();
+  const findLatest = records => [...(records || [])]
+    .filter(record => (record.items || []).some(item => String(item?.code || '').trim().toUpperCase() === normalized))
+    .sort((left, right) => String(right.date || '').localeCompare(String(left.date || '')))[0] || null;
+  const sale = findLatest(APP_DATA.sales);
+  const consignment = findLatest(APP_DATA.consignments);
+  const preferConsignment = ['委託済', '委託中'].includes(status);
+  const record = preferConsignment ? (consignment || sale) : (sale || consignment);
+  if (!record) return null;
+  const type = record === consignment ? 'consignment' : 'sales';
+  const line = (record.items || []).find(item => String(item?.code || '').trim().toUpperCase() === normalized) || null;
+  return { type, record, line };
+}
+
+function _salesAdjustmentBaseSalePrice(target, source) {
+  const candidates = [source?.line?.salePriceUsd, source?.line?.salePrice, target?.salePriceUsd, target?.salePrice];
+  for (const value of candidates) {
+    const number = Number(value);
+    if (Number.isFinite(number) && number >= 0) return number;
+  }
+  return 0;
+}
+
+function _invalidateSalesAdjustmentTarget() {
+  _salesAdjustmentEntryState = { target: null, targetType: '', source: null, baseSalePrice: 0 };
+  const result = document.getElementById('sae-target-result');
+  const linked = document.getElementById('sae-linked-slip');
+  if (result) result.innerHTML = _salesAdjustmentEmptyTargetMarkup();
+  if (linked) {
+    linked.classList.remove('is-loaded');
+    linked.innerHTML = _salesAdjustmentEmptySlipMarkup();
+  }
+  updateSalesAdjustmentEntryState();
+}
+
+function salesAdjustmentHandleCodeInput(targetType) {
+  const selected = document.getElementById(targetType === 'part' ? 'sae-part-code' : 'sae-product-code');
+  const other = document.getElementById(targetType === 'part' ? 'sae-product-code' : 'sae-part-code');
+  if (String(selected?.value || '').trim() && other) other.value = '';
+  _invalidateSalesAdjustmentTarget();
+}
+
+function _renderSalesAdjustmentTarget() {
+  const { target, targetType, source, baseSalePrice } = _salesAdjustmentEntryState;
+  const result = document.getElementById('sae-target-result');
+  const linked = document.getElementById('sae-linked-slip');
+  if (!target || !source || !result || !linked) return;
+
+  const code = _salesAdjustmentTargetCode(target, targetType);
+  const status = _salesAdjustmentDisplayStatus(target, targetType);
+  const isPart = targetType === 'part';
+  const brand = isPart ? _partInventoryBrandName(target) : (target.brand || '—');
+  const model = isPart ? (target.modelName || target.model || '—') : (target.model || '—');
+  const reference = isPart
+    ? (target.referenceNumber || target.ref || _partInventoryDetail(target))
+    : (target.ref || '—');
+  const itemLabel = isPart ? (target.partName || target.name || 'パーツ') : '商品';
+  const secondaryLabel = isPart ? 'パーツ名' : 'SKU';
+  const secondaryValue = isPart ? itemLabel : (target.sku || '—');
+  result.innerHTML = `<article class="sae-target-card">
+    <div class="sae-target-card-title">
+      <i class="fa-solid fa-${isPart ? 'puzzle-piece' : 'box'}"></i>
+      <div><strong>${isPart ? '対象パーツ' : '対象商品'}</strong><code>${_escHtml(code)}</code></div>
+      <div class="sae-target-status">${getStatusBadge(status)}</div>
+    </div>
+    <div class="sae-target-details">
+      <div class="sae-target-detail"><span>${secondaryLabel}</span><strong>${_escHtml(secondaryValue)}</strong></div>
+      <div class="sae-target-detail"><span>ブランド</span><strong>${_escHtml(brand)}</strong></div>
+      <div class="sae-target-detail"><span>モデル</span><strong>${_escHtml(model)}</strong></div>
+      <div class="sae-target-detail"><span>型番／詳細</span><strong>${_escHtml(reference || '—')}</strong></div>
+      <div class="sae-target-detail"><span>現在ステータス</span><strong>${_escHtml(status)}</strong></div>
+      <div class="sae-target-detail sae-target-price"><span>元伝票の売価（USD）</span><strong>${formatSalePrice(baseSalePrice)}</strong></div>
+    </div>
+  </article>`;
+
+  const sourceRecord = source.record;
+  const isSale = source.type === 'sales';
+  const partyCode = isSale ? sourceRecord.buyer : (sourceRecord.destination || sourceRecord.consignee || '');
+  linked.classList.add('is-loaded');
+  linked.innerHTML = `<i class="fa-solid fa-file-circle-check"></i>
+    <div class="sae-linked-slip-content">
+      <strong><span class="sae-slip-type">${isSale ? '売上伝票' : '委託伝票'}</span>${_escHtml(sourceRecord.id || '—')}</strong>
+      <span>${_escHtml(sourceRecord.date || '—')} ／ ${_escHtml(getBuyerName(partyCode) || '—')}</span>
+    </div>`;
+}
+
+function loadSalesAdjustmentTarget() {
+  const partCode = String(document.getElementById('sae-part-code')?.value || '').trim();
+  const productCode = String(document.getElementById('sae-product-code')?.value || '').trim();
+  if (partCode && productCode) {
+    _invalidateSalesAdjustmentTarget();
+    showToast('error', '対象を選択できません', 'パーツ管理番号または管理番号のどちらか一方だけを入力してください。');
+    return false;
+  }
+  const code = partCode || productCode;
+  const preferredType = partCode ? 'part' : 'product';
+  if (!code) {
+    _invalidateSalesAdjustmentTarget();
+    showToast('warning', '管理番号を入力してください', 'パーツ管理番号または管理番号を入力するか、QR・タグを読み取ってください。');
+    return false;
+  }
+  const found = _findSalesAdjustmentTarget(code, preferredType);
+  if (!found) {
+    _invalidateSalesAdjustmentTarget();
+    showToast('error', '対象が見つかりません', `管理番号「${code}」は登録されていません。`);
+    return false;
+  }
+  const status = _salesAdjustmentDisplayStatus(found.target, found.targetType);
+  if (!_salesAdjustmentEligibleStatus(found.target, found.targetType)) {
+    _invalidateSalesAdjustmentTarget();
+    showToast('warning', '売上調整の対象外です', `現在のステータスは「${status || '未設定'}」です。売上済または委託済の対象だけ読み込めます。`);
+    return false;
+  }
+  const targetCode = _salesAdjustmentTargetCode(found.target, found.targetType);
+  const source = _findSalesAdjustmentSource(targetCode, status);
+  if (!source) {
+    _invalidateSalesAdjustmentTarget();
+    showToast('error', '元伝票が見つかりません', `${targetCode} に紐づく売上伝票または委託伝票を確認できません。`);
+    return false;
+  }
+  _salesAdjustmentEntryState = {
+    ...found,
+    source,
+    baseSalePrice: _salesAdjustmentBaseSalePrice(found.target, source),
+  };
+  _renderSalesAdjustmentTarget();
+  updateSalesAdjustmentEntryState();
+  showToast('success', '対象商品を読み込みました', `${targetCode} と ${source.record.id} を紐づけました。`);
+  return true;
+}
+
+function applySalesAdjustmentScannedCode(rawCode) {
+  const found = _findSalesAdjustmentTarget(rawCode);
+  if (!found) return { ok: false, message: `「${String(rawCode || '').trim()}」は商品・パーツ一覧に登録されていません。` };
+  const status = _salesAdjustmentDisplayStatus(found.target, found.targetType);
+  if (!_salesAdjustmentEligibleStatus(found.target, found.targetType)) {
+    return { ok: false, message: `「${_salesAdjustmentTargetCode(found.target, found.targetType)}」は${status || 'ステータス未設定'}のため対象外です。` };
+  }
+  const code = _salesAdjustmentTargetCode(found.target, found.targetType);
+  const input = document.getElementById(found.targetType === 'part' ? 'sae-part-code' : 'sae-product-code');
+  const other = document.getElementById(found.targetType === 'part' ? 'sae-product-code' : 'sae-part-code');
+  if (input) input.value = code;
+  if (other) other.value = '';
+  _invalidateSalesAdjustmentTarget();
+  return { ok: true, code, targetType: found.targetType, target: found.target };
+}
+
+function updateSalesAdjustmentEntryState() {
+  const type = document.querySelector('input[name="sae-adjustment-type"]:checked')?.value || 'discount';
+  const amount = getDecimalPriceValue(document.getElementById('sae-amount'));
+  const reason = String(document.getElementById('sae-reason')?.value || '').trim();
+  const base = Number(_salesAdjustmentEntryState.baseSalePrice) || 0;
+  const adjusted = type === 'discount' ? base - amount : base + amount;
+  const hasTarget = Boolean(_salesAdjustmentEntryState.target && _salesAdjustmentEntryState.source);
+  const validAmount = amount > 0 && Number.isFinite(amount) && !(type === 'discount' && amount > base);
+  const registerButton = document.getElementById('sae-register-button');
+  if (registerButton) {
+    registerButton.disabled = !(hasTarget && reason && validAmount);
+    registerButton.title = type === 'discount' && amount > base ? '値引き額は元の売価以下で入力してください' : '';
+  }
+  const preview = document.getElementById('sae-amount-preview');
+  if (preview) {
+    const sign = type === 'discount' ? '−' : '＋';
+    preview.innerHTML = `<div><span>元の売価</span><strong>${hasTarget ? formatSalePrice(base) : '—'}</strong></div>
+      <div><span>調整額</span><strong>${amount > 0 ? `${sign}${formatSalePrice(amount)}` : '—'}</strong></div>
+      <div class="sae-adjusted-price"><span>調整後売価</span><strong>${hasTarget && validAmount ? formatSalePrice(adjusted) : '—'}</strong></div>`;
+  }
+  return hasTarget && Boolean(reason) && validAmount;
+}
+
+function _nextSalesAdjustmentNumber(date = getLocalDateISO()) {
+  const year = String(date || '').slice(0, 4) || String(new Date().getFullYear());
+  const pattern = new RegExp(`^SA-${year}-(\\d{4})$`, 'i');
+  const maxSequence = (APP_DATA.salesAdjustments || []).reduce((max, record) => {
+    const match = String(record?.id || '').match(pattern);
+    return match ? Math.max(max, Number(match[1]) || 0) : max;
+  }, 0);
+  return `SA-${year}-${String(maxSequence + 1).padStart(4, '0')}`;
+}
+
+function registerSalesAdjustment() {
+  if (!updateSalesAdjustmentEntryState()) {
+    const amount = getDecimalPriceValue(document.getElementById('sae-amount'));
+    const type = document.querySelector('input[name="sae-adjustment-type"]:checked')?.value || 'discount';
+    const base = Number(_salesAdjustmentEntryState.baseSalePrice) || 0;
+    const message = type === 'discount' && amount > base
+      ? '値引き額は元の売価以下で入力してください。'
+      : '対象商品、必須の理由、調整区分、調整金額を確認してください。';
+    showToast('error', '登録内容を確認してください', message);
+    return false;
+  }
+  if (!requireAdminForSensitiveOperation('売上調整伝票の登録')) return false;
+
+  const { target, targetType, source, baseSalePrice } = _salesAdjustmentEntryState;
+  const code = _salesAdjustmentTargetCode(target, targetType);
+  const liveSource = _findSalesAdjustmentSource(code, _salesAdjustmentDisplayStatus(target, targetType));
+  if (!_salesAdjustmentEligibleStatus(target, targetType)
+      || !liveSource
+      || String(liveSource.record?.id || '') !== String(source.record?.id || '')) {
+    showToast('error', '対象の状態が変更されました', '対象商品と元伝票を再度読み込んでください。');
+    _invalidateSalesAdjustmentTarget();
+    return false;
+  }
+  const type = document.querySelector('input[name="sae-adjustment-type"]:checked')?.value || 'discount';
+  const amount = getDecimalPriceValue(document.getElementById('sae-amount'));
+  const reason = String(document.getElementById('sae-reason')?.value || '').trim();
+  const signedAmount = type === 'discount' ? -amount : amount;
+  const adjustedSalePrice = Number(baseSalePrice) + signedAmount;
+  const sourceRecord = source.record;
+  const isPart = targetType === 'part';
+  const date = getLocalDateISO();
+  const record = {
+    id: _nextSalesAdjustmentNumber(date),
+    date,
+    buyer: sourceRecord.buyer || sourceRecord.destination || sourceRecord.consignee || '',
+    targetType,
+    targetCode: code,
+    sourceType: source.type,
+    sourceSlipId: sourceRecord.id,
+    adjustmentType: type,
+    adjustmentAmount: signedAmount,
+    amount,
+    originalSalePrice: Number(baseSalePrice) || 0,
+    adjustedSalePrice,
+    reason,
+    note: `${reason}（${type === 'discount' ? '値引き' : '値上げ'} ${formatSalePrice(amount)}／元伝票 ${sourceRecord.id}）`,
+    status: '処理済',
+    items: [{
+      code,
+      targetType,
+      brand: isPart ? _partInventoryBrandName(target) : (target.brand || ''),
+      model: isPart ? (target.modelName || target.model || target.partName || '') : (target.model || ''),
+      salePrice: Number(baseSalePrice) || 0,
+      adjustedSalePrice,
+      status: _salesAdjustmentDisplayStatus(target, targetType),
+    }],
+    registeredAt: new Date().toISOString(),
+    revisions: [],
+  };
+  if (!Array.isArray(APP_DATA.salesAdjustments)) APP_DATA.salesAdjustments = [];
+  APP_DATA.salesAdjustments.push(record);
+  refreshLinkedBusinessViews({ source: 'sales-adjustment-register' });
+  resetSalesAdjustmentEntry(false);
+  showToast('success', '売上調整伝票を登録しました', `${record.id} を ${sourceRecord.id} に紐づけて作成しました。`);
+  return record;
+}
+
+function resetSalesAdjustmentEntry(notify = false) {
+  ['sae-part-code', 'sae-product-code', 'sae-reason', 'sae-amount'].forEach(id => {
+    const input = document.getElementById(id);
+    if (input) {
+      input.value = '';
+      if (id === 'sae-amount') delete input.dataset.rawValue;
+    }
+  });
+  const discount = document.querySelector('input[name="sae-adjustment-type"][value="discount"]');
+  if (discount) discount.checked = true;
+  _invalidateSalesAdjustmentTarget();
+  if (notify) showToast('info', '入力内容をリセットしました', '対象商品と調整内容をクリアしました。');
+}
+
+function init_sales_adjustment_entry() {
+  resetSalesAdjustmentEntry(false);
+  document.getElementById('sae-product-code')?.focus();
+}
+
+window.init_sales_adjustment_entry = init_sales_adjustment_entry;
+window.salesAdjustmentHandleCodeInput = salesAdjustmentHandleCodeInput;
+window.loadSalesAdjustmentTarget = loadSalesAdjustmentTarget;
+window.applySalesAdjustmentScannedCode = applySalesAdjustmentScannedCode;
+window.updateSalesAdjustmentEntryState = updateSalesAdjustmentEntryState;
+window.registerSalesAdjustment = registerSalesAdjustment;
+window.resetSalesAdjustmentEntry = resetSalesAdjustmentEntry;
 
 // =====================================================
 // 初期化
@@ -11430,7 +11759,7 @@ function exportSalesCSV()      { exportSlipCSV(); }
 // QRコード / バーコードスキャン機能 (jsQR + getUserMedia)
 // USB/Bluetoothスキャナーは Enter 確定で同一ロジック処理
 // =====================================================
-let _barcodeMode     = null;  // 'pr' | 'sr' | 'shipping' | 'purchase-arrival' | 'shipment-return' | 'consignment-return' | 'stocktake' | 'inventory-search' | 'product-registration' | 'cost-adjustment'
+let _barcodeMode     = null;  // 'pr' | 'sr' | 'shipping' | 'purchase-arrival' | 'shipment-return' | 'consignment-return' | 'stocktake' | 'inventory-search' | 'product-registration' | 'cost-adjustment' | 'sales-adjustment'
 let _purchaseArrivalSlipId = null;
 let _shipmentReturnSlipId = null;
 let _consignmentReturnSlipId = null;
@@ -11446,7 +11775,7 @@ let _purchaseArrivalScanPending = false;
 /**
  * スキャナーモーダルを開く
  * mode: 'pr' = 仕入返品、'sr' = 売上返品、'shipping' = 出荷登録、'consignment' = 委託登録、'stocktake' = 棚卸、
- *       'inventory-search' = 在庫一覧、'product-registration' = 商品登録、'cost-adjustment' = 原価調整
+ *       'inventory-search' = 在庫一覧、'product-registration' = 商品登録、'cost-adjustment' = 原価調整、'sales-adjustment' = 売上調整登録
  */
 function openBarcodeScanner(mode) {
   _barcodeMode      = mode;
@@ -11470,6 +11799,7 @@ function openBarcodeScanner(mode) {
     'inventory-search': '在庫一覧の管理番号をQRコードから読み取る',
     'product-registration': '商品登録の管理番号をQRコードから読み取る',
     'cost-adjustment': '原価調整の商品管理番号をタグ・QRコードから読み取る',
+    'sales-adjustment': '売上調整の商品・パーツ管理番号をタグ・QRコードから読み取る',
   };
   title.textContent = titleMap[mode] || 'QRコード / バーコードスキャン';
   document.getElementById('barcodeScanCount').textContent = '0';
@@ -11609,6 +11939,34 @@ function _onBarcodeDetected(rawCode) {
   }
   if (_barcodeMode === 'consignment-return') {
     _handleConsignmentReturnScan(code, { status, lastEl, codeEl, countEl });
+    return;
+  }
+
+  if (_barcodeMode === 'sales-adjustment') {
+    const scanned = applySalesAdjustmentScannedCode(code);
+    if (!scanned.ok) {
+      if (status) {
+        status.textContent = scanned.message;
+        status.style.color = '#f59e0b';
+      }
+      setTimeout(() => {
+        if (_barcodeLastCode === rawCode) _barcodeLastCode = '';
+      }, 1200);
+      return;
+    }
+    _barcodeScanCount = 1;
+    if (countEl) countEl.textContent = '1';
+    if (codeEl) codeEl.textContent = scanned.code;
+    if (lastEl) lastEl.style.display = '';
+    if (status) {
+      status.textContent = `✓ 読み取り成功: ${scanned.code}`;
+      status.style.color = '#16a34a';
+    }
+    setTimeout(() => {
+      closeBarcodeScanner();
+      document.getElementById('sae-load-button')?.focus();
+      showToast('success', '売上調整の対象を読み取りました', `${scanned.code} を入力欄へ反映しました。`);
+    }, 450);
     return;
   }
 
@@ -19850,7 +20208,7 @@ window.navigateTo = function(page) {
       'consignment': () => {
         if (typeof init_consignment === 'function') init_consignment();
       },
-      'sales-adjustment-entry': () => {},
+      'sales-adjustment-entry': init_sales_adjustment_entry,
       'purchase-adjustment-entry': () => {},
       'master': init_master,
       'performance': init_performance,

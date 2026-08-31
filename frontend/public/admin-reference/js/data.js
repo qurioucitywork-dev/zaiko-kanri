@@ -413,6 +413,9 @@ const APP_DATA = {
   // 委託伝票（API接続時はDBデータで置き換える）
   consignments: [],
 
+  // 売上調整伝票（売上調整登録から作成）
+  salesAdjustments: [],
+
   // 購入リクエスト（ゲスト）
   purchaseRequests: [
     {
@@ -1597,6 +1600,7 @@ function getStatusBadge(status) {
     '売上済': '<span class="badge badge-sold">● 売上済</span>',
     '出荷済': '<span class="badge badge-shipped">● 出荷済</span>',
     '委託中': '<span class="badge badge-consigned">● 委託中</span>',
+    '委託済': '<span class="badge badge-consigned">● 委託済</span>',
     '保留': '<span class="badge badge-pending">● 保留</span>',
   };
   return map[status] || `<span class="badge">${status}</span>`;

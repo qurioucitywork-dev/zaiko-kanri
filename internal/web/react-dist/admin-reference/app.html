@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>在庫管理ツール — 管理画面</title>
-  <link rel="stylesheet" href="css/style.css?v=20260831-cost-adjustment-combine-v1">
+  <link rel="stylesheet" href="css/style.css?v=20260831-sales-adjustment-entry-v1">
 <link rel="stylesheet" href="css/market-table.css?v=20260831-market-modal-currency-spacing-v1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -4481,17 +4481,119 @@
 
     <!-- ===== 売上調整登録 ===== -->
     <div class="page-panel page-content hidden" id="page-sales-adjustment-entry">
-      <div class="card">
-        <div class="card-header">
-          <h3><i class="fa-solid fa-yen-sign"></i> 売上調整登録</h3>
+      <div class="sales-adjustment-entry-heading">
+        <div class="sales-adjustment-entry-heading-icon"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+        <div>
+          <h2>売上調整登録</h2>
+          <p>売上済・委託済の商品またはパーツを読み込み、元伝票に紐づく調整伝票を作成します</p>
         </div>
-        <div class="card-body">
-          <div style="padding:64px 24px;text-align:center;color:var(--text-muted);">
-            <i class="fa-solid fa-file-circle-plus" style="display:block;font-size:42px;opacity:.35;margin-bottom:14px;"></i>
-            <strong style="display:block;color:var(--text);font-size:16px;margin-bottom:8px;">売上調整登録</strong>
-            登録内容は今後の定義に合わせて追加します。
+      </div>
+
+      <div class="sales-adjustment-entry-layout">
+        <section class="card sales-adjustment-entry-card" aria-labelledby="sae-target-heading">
+          <div class="card-header sales-adjustment-entry-card-header">
+            <div class="sales-adjustment-entry-step">1</div>
+            <div>
+              <h3 id="sae-target-heading">対象商品</h3>
+              <p>管理番号を入力するかQR・タグを読み取ってください</p>
+            </div>
           </div>
-        </div>
+          <div class="card-body sales-adjustment-entry-card-body">
+            <div class="sae-input-grid">
+              <div class="form-group">
+                <label class="form-label" for="sae-part-code"><i class="fa-solid fa-puzzle-piece"></i> パーツ管理番号</label>
+                <input class="form-control" id="sae-part-code" type="text" autocomplete="off" placeholder="例：P2908260001"
+                  oninput="salesAdjustmentHandleCodeInput('part')">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="sae-product-code"><i class="fa-solid fa-barcode"></i> 管理番号</label>
+                <input class="form-control" id="sae-product-code" type="text" autocomplete="off" placeholder="例：0503260001"
+                  oninput="salesAdjustmentHandleCodeInput('product')">
+              </div>
+              <button type="button" class="btn btn-outline sae-scan-button" onclick="openBarcodeScanner('sales-adjustment')"
+                aria-label="QRコードまたはタグを読み取る">
+                <i class="fa-solid fa-qrcode"></i><span>QR・タグ読取</span>
+              </button>
+            </div>
+            <button type="button" class="btn btn-primary sae-load-button" id="sae-load-button" onclick="loadSalesAdjustmentTarget()">
+              <i class="fa-solid fa-magnifying-glass"></i> 対象商品を読み込む
+            </button>
+            <div class="sae-eligibility-note">
+              <i class="fa-solid fa-circle-info"></i>
+              ステータスが「売上済」または「委託済（委託中）」の対象だけ読み込めます。
+            </div>
+
+            <div id="sae-target-result" class="sae-target-result" aria-live="polite">
+              <div class="sae-empty-state">
+                <i class="fa-solid fa-box-open"></i>
+                <strong>対象商品はまだ読み込まれていません</strong>
+                <span>読み込み後、商品情報がここに表示されます。</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="card sales-adjustment-entry-card" aria-labelledby="sae-adjustment-heading">
+          <div class="card-header sales-adjustment-entry-card-header">
+            <div class="sales-adjustment-entry-step">2</div>
+            <div>
+              <h3 id="sae-adjustment-heading">調整内容</h3>
+              <p>元伝票と調整理由・金額を確認して登録します</p>
+            </div>
+          </div>
+          <div class="card-body sales-adjustment-entry-card-body">
+            <div class="sae-section-label"><i class="fa-solid fa-link"></i> 紐づく元伝票</div>
+            <div id="sae-linked-slip" class="sae-linked-slip" aria-live="polite">
+              <i class="fa-solid fa-file-circle-question"></i>
+              <span>対象商品を読み込むと、売上伝票または委託伝票を表示します。</span>
+            </div>
+
+            <div class="form-group sae-reason-group">
+              <label class="form-label" for="sae-reason">理由 <span class="required">*</span></label>
+              <textarea class="form-control" id="sae-reason" rows="4" maxlength="500" required
+                placeholder="調整理由を入力してください" oninput="updateSalesAdjustmentEntryState()"></textarea>
+            </div>
+
+            <fieldset class="sae-adjustment-fieldset">
+              <legend>調整区分 <span class="required">*</span></legend>
+              <div class="sae-adjustment-choice">
+                <label class="sae-adjustment-option">
+                  <input type="radio" name="sae-adjustment-type" value="discount" checked onchange="updateSalesAdjustmentEntryState()">
+                  <span><i class="fa-solid fa-arrow-trend-down"></i> 値引き</span>
+                </label>
+                <label class="sae-adjustment-option">
+                  <input type="radio" name="sae-adjustment-type" value="markup" onchange="updateSalesAdjustmentEntryState()">
+                  <span><i class="fa-solid fa-arrow-trend-up"></i> 値上げ</span>
+                </label>
+              </div>
+            </fieldset>
+
+            <div class="form-group">
+              <label class="form-label" for="sae-amount">調整金額（USD） <span class="required">*</span></label>
+              <div class="sae-amount-input">
+                <span>$</span>
+                <input class="form-control" id="sae-amount" type="text" inputmode="decimal" data-decimal-scale="2"
+                  autocomplete="off" placeholder="0.00"
+                  oninput="decimalPriceFormatHandler(this);updateSalesAdjustmentEntryState()">
+              </div>
+            </div>
+
+            <div id="sae-amount-preview" class="sae-amount-preview" aria-live="polite">
+              <div><span>元の売価</span><strong>—</strong></div>
+              <div><span>調整額</span><strong>—</strong></div>
+              <div class="sae-adjusted-price"><span>調整後売価</span><strong>—</strong></div>
+            </div>
+
+            <div class="sae-form-actions">
+              <button type="button" class="btn btn-outline" onclick="resetSalesAdjustmentEntry(true)">
+                <i class="fa-solid fa-rotate-left"></i> リセット
+              </button>
+              <button type="button" class="btn btn-primary" id="sae-register-button" disabled onclick="registerSalesAdjustment()">
+                <i class="fa-solid fa-floppy-disk"></i> 売上調整伝票を登録
+              </button>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
 
@@ -6069,7 +6171,7 @@
 
 <script src="js/qrcode-generator.js?v=1.4.4"></script>
 <script src="js/jsQR.js?v=1.4.0"></script>
-<script src="js/data.js?v=20260831-combined-parts-v1"></script>
+<script src="js/data.js?v=20260831-sales-adjustment-entry-v1"></script>
 <script src="js/guest_shared.js?v=20260803-workflow-consistency"></script>
 <script src="js/login_info.js?v=20260818-dropdown-name-only-v1"></script>
 <script src="js/auth.js?v=20260831-adjustment-entry-nav-v1"></script>
@@ -6079,7 +6181,7 @@
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
 <script src="js/market_table.js?v=20260831-market-manual-register-fix-v1"></script>
 <script src="js/qr_inventory.js?v=20260818-product-tag-v1"></script>
-<script src="js/app.js?v=20260831-adjustment-entry-nav-v1"></script>
+<script src="js/app.js?v=20260831-sales-adjustment-entry-v1"></script>
 <script src="js/consignment.js?v=20260831-consignment-label-v1"></script>
 <script src="js/stocktake.js?v=20260817-today-audit-v2"></script>
 <script src="js/purchase_entry.js?v=20260831-purchase-payment-status-v1"></script>

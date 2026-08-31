@@ -3872,6 +3872,77 @@ assert.equal(document.getElementById("page-sales-adjustment-entry").classList.co
 assert.equal(adjustmentEntryNavGroup.classList.contains("has-active"), true);
 assert.equal(adjustmentEntryNavToggle.getAttribute("aria-expanded"), "true");
 assert.equal(document.getElementById("pageTitle").textContent, "売上調整登録");
+for (const controlId of [
+  "sae-part-code", "sae-product-code", "sae-load-button", "sae-target-result", "sae-linked-slip",
+  "sae-reason", "sae-amount", "sae-amount-preview", "sae-register-button",
+]) {
+  assert.ok(document.getElementById(controlId), `sales adjustment entry must include ${controlId}`);
+}
+assert.equal(typeof window.loadSalesAdjustmentTarget, "function");
+assert.equal(typeof window.applySalesAdjustmentScannedCode, "function");
+assert.equal(typeof window.registerSalesAdjustment, "function");
+const salesAdjustmentCountBefore = window.eval("APP_DATA.salesAdjustments.length");
+document.getElementById("sae-product-code").value = "0503260001";
+window.salesAdjustmentHandleCodeInput("product");
+assert.equal(window.loadSalesAdjustmentTarget(), true,
+  "a sold product must load into sales adjustment entry");
+assert.match(document.getElementById("sae-target-result").textContent, /0503260001/u);
+assert.match(document.getElementById("sae-target-result").textContent, /売上済/u);
+assert.match(document.getElementById("sae-linked-slip").textContent, /売上伝票/u);
+assert.match(document.getElementById("sae-linked-slip").textContent, /SL-2026-0001/u,
+  "the loaded target must resolve its originating sales slip");
+document.getElementById("sae-reason").value = "成約後の価格調整";
+document.getElementById("sae-amount").value = "100";
+window.updateSalesAdjustmentEntryState();
+assert.equal(document.getElementById("sae-register-button").disabled, false,
+  "a loaded target, required reason, adjustment type and amount must enable registration");
+assert.match(document.getElementById("sae-amount-preview").textContent, /調整後売価/u);
+const registeredSalesAdjustment = window.registerSalesAdjustment();
+assert.ok(registeredSalesAdjustment, "registration must create a sales adjustment slip");
+assert.match(registeredSalesAdjustment.id, /^SA-2026-\d{4}$/u);
+assert.equal(registeredSalesAdjustment.sourceSlipId, "SL-2026-0001");
+assert.equal(registeredSalesAdjustment.targetCode, "0503260001");
+assert.equal(registeredSalesAdjustment.adjustmentType, "discount");
+assert.equal(registeredSalesAdjustment.adjustmentAmount, -100);
+assert.equal(registeredSalesAdjustment.reason, "成約後の価格調整");
+assert.equal(window.eval("APP_DATA.salesAdjustments.length"), salesAdjustmentCountBefore + 1);
+const persistedBusinessState = JSON.parse(window.localStorage.getItem("inv_business_workflow_v1"));
+assert.equal(persistedBusinessState.salesAdjustments.at(-1).id, registeredSalesAdjustment.id,
+  "created adjustment slips must survive page reload through business workflow persistence");
+window.navigateTo("sales-list");
+window.switchSlipTab("salesadjustment");
+window.showAllSlipList();
+assert.match(document.getElementById("slipListBody").textContent, new RegExp(registeredSalesAdjustment.id),
+  "the created sales adjustment slip must appear in the sales-adjustment document tab");
+
+window.navigateTo("sales-adjustment-entry");
+window.eval(`APP_DATA.inventory.push({
+  code: "SAE-INELIGIBLE-001", brand: "テスト", model: "対象外", status: "在庫中", salePrice: 1000
+})`);
+document.getElementById("sae-product-code").value = "SAE-INELIGIBLE-001";
+window.salesAdjustmentHandleCodeInput("product");
+assert.equal(window.loadSalesAdjustmentTarget(), false,
+  "an in-stock product must not be displayed in sales adjustment entry");
+assert.match(document.getElementById("sae-target-result").textContent, /まだ読み込まれていません/u);
+window.eval("APP_DATA.inventory.pop()");
+
+window.eval(`APP_DATA.parts.push({
+  partCode: "P-SAE-0001", partName: "BOX", brandName: "ロレックス", modelName: "Submariner",
+  status: "consigned", salePriceUsdMinor: 250
+}); APP_DATA.consignments.push({
+  id: "CO-SAE-0001", date: "2026-08-31", destination: "B001", status: "処理済",
+  items: [{ code: "P-SAE-0001", brand: "ロレックス", model: "Submariner", salePrice: 250 }]
+})`);
+const scannedSalesAdjustmentPart = window.applySalesAdjustmentScannedCode("P-SAE-0001");
+assert.equal(scannedSalesAdjustmentPart.ok, true,
+  "sales adjustment QR input must recognize an eligible part management number");
+assert.equal(document.getElementById("sae-part-code").value, "P-SAE-0001");
+assert.equal(document.getElementById("sae-product-code").value, "");
+assert.equal(window.loadSalesAdjustmentTarget(), true,
+  "an eligible consigned part must load from the part management number field");
+assert.match(document.getElementById("sae-linked-slip").textContent, /委託伝票/u);
+assert.match(document.getElementById("sae-linked-slip").textContent, /CO-SAE-0001/u);
+window.eval("APP_DATA.parts.pop(); APP_DATA.consignments.pop()");
 window.navigateTo("purchase-adjustment-entry");
 assert.equal(document.getElementById("page-purchase-adjustment-entry").classList.contains("hidden"), false);
 assert.equal(adjustmentEntryNavGroup.classList.contains("has-active"), true);
