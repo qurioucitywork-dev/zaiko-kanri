@@ -12,14 +12,14 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":               "b19dfe1664052b83fa3d0a0aa1e3c9130982a24bbc257f45d90ae8290e482736",
+		"app.html":               "fe63f5a67c8758f3dcf2b67329979479ba21f5f0f700bae209310a5458ca4e95",
 		"guest.html":             "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
 		"css/guest.css":          "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
 		"css/market-table.css":   "1fbd958c84da4b6cff7c648fb67166f158c6bcfe0f2f587e84860ba7d72b94d5",
 		"css/style.css":          "4b3d382d9893ba60cf59f944f9882dbfb682a91ddca3d8578d1ff1609ff7fc9c",
 		"index.html":             "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
 		"js/api_bridge.js":       "82f698a9f47853f77746484f5c5795c6012e4f471c6c8e3cd8cfd99b3034c98a",
-		"js/app.js":              "6ceabb0802565cf2a6633035ce5ce7762888e7ac27b63c85a672b3f18d4edbcc",
+		"js/app.js":              "c8e7bea5724793eefd42ce5ab357c9d81feab6011af4c1df16966c23e2aa7a11",
 		"js/approval.js":         "43de68681b060a67bf00af6eb2a993e01d4acbcff55a1928c795cb4f0f031c1d",
 		"js/auth.js":             "8a37d5385ade35fba91ccd0fb2fa9acc45b5828b1b3af4c86f9d0406758ee694",
 		"js/box.js":              "4ae711817115c0d62cdaa99e11920acc5ec67a0fa4d2e1879488368235840575",
@@ -31,7 +31,7 @@ func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 		"js/notify.js":           "edae1bc1187f3f29f87086018425aec3f628c5d342a0d8a3d22f854948cb6321",
 		"js/purchase_entry.js":   "440de10980b48d6f35df976036a5b6705d2483cf1f6f11e5a8ed143f39e9627c",
 		"js/stocktake.js":        "fd7b6cf4ae52ba64ed5c08839098551e191737a93a1c7be1681fc366142ee8d1",
-		"js/consignment.js":      "e449946cfc6010e45a939a6af45603c7cff8f1e1557abc6ca2059228996931e8",
+		"js/consignment.js":      "6b8da797cba3fdf6a593cf9e26835576407fc5c8c1b2db553fd721776843bee4",
 		"js/qrcode-generator.js": "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
 		"js/jsQR.js":             "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
 		"js/qr_inventory.js":     "e9c87a9ab707bfa793a3c1907e34c2296f60fcf68713f06ce7cdbd5ed867bae0",
@@ -113,6 +113,12 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 			t.Errorf("reference admin is missing inventory rate-comparison marker %q", marker)
 		}
 	}
+	if !strings.Contains(html, `data-page="consignment"`) || !strings.Contains(html, `</span> 委託登録`) {
+		t.Error("reference admin is missing the shortened consignment registration label")
+	}
+	if strings.Contains(html, "委託伝票登録") {
+		t.Error("reference admin still contains the former consignment registration label")
+	}
 
 	purchaseContent, err := reactAssets.ReadFile("react-dist/admin-reference/js/purchase_entry.js")
 	if err != nil {
@@ -169,6 +175,7 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 		`崩し済み`,
 		`原価調整中`,
 		`['combined', '結合済み']`,
+		`'consignment': '委託登録'`,
 	} {
 		if !strings.Contains(appJS, marker) {
 			t.Errorf("inventory status label contract is missing %q", marker)

@@ -19959,7 +19959,7 @@ window.navigateTo = function(page) {
     'purchase-entry': '仕入登録',
     'sales': '売上登録',
     'shipping': '出荷登録',
-    'consignment': '委託伝票登録',
+    'consignment': '委託登録',
     'master': 'マスタ登録',
     'performance': '実績管理',
     'inventory': '商品管理',

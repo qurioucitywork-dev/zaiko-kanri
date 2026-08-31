@@ -3824,6 +3824,15 @@ assert.deepEqual(
 assert.ok(document.getElementById("page-deleted-slips"), "deleted document archive page must be present");
 assert.ok(document.getElementById("deletedSlipListBody"), "deleted document archive table must be present");
 assert.ok(document.getElementById("page-consignment"), "consignment registration page must be present");
+assert.equal(
+  document.querySelector('.nav-item[data-page="consignment"]').textContent.trim(),
+  "委託登録",
+  "consignment navigation must use the shortened label",
+);
+assert.match(staticAppSource, /'consignment': '委託登録'/u,
+  "consignment page title must use the shortened label");
+assert.equal(staticAppSource.includes("委託伝票登録"), false,
+  "the former consignment registration page label must not remain");
 assert.ok(document.getElementById("sltab-consignment"), "document list must include the consignment tab");
 const shipmentDetailTable = window.buildItemsTable(
   [{ code: "0408260004", brand: "グランドセイコー", model: "Heritage Collection", salePrice: 5975 }],

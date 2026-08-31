@@ -1,5 +1,5 @@
 /**
- * consignment.js — 委託伝票登録
+ * consignment.js — 委託登録
  * 委託登録と同時に商品を「委託中」へ移し、在庫一覧・棚卸・伝票一覧へ反映する。
  */
 'use strict';

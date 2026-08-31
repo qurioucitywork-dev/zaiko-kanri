@@ -197,7 +197,7 @@ func (r *Repository) CreateConsignment(ctx context.Context, input ConsignmentCre
 			}
 			if err := tx.Exec(`INSERT INTO inventory_events(
 				id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
-			) VALUES(?,?,?,'consignment_registered','in_stock','consigned','委託伝票登録',?,?)`,
+			) VALUES(?,?,?,'consignment_registered','in_stock','consigned','委託登録',?,?)`,
 				eventID, input.OrganizationID, product.ID, input.ActorUserID, now).Error; err != nil {
 				return err
 			}
