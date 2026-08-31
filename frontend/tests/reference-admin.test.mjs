@@ -3659,9 +3659,11 @@ assert.deepEqual(
 assert.ok(document.getElementById("page-cost-adjustment"), "cost adjustment must have its own page");
 assert.deepEqual(
   [...document.querySelectorAll("[data-ca-mode]")].map((button) => button.textContent.trim()),
-  ["崩し", "結合", "入替"],
-  "the cost adjustment toolbar must expose the three available modes",
+  ["崩し", "結合"],
+  "the cost adjustment toolbar must expose only breakdown and combine",
 );
+assert.equal(document.querySelector('[data-ca-mode="swap"]'), null,
+  "the removed swap mode must not remain in the cost adjustment toolbar");
 assert.equal(typeof window.init_cost_adjustment, "function");
 assert.equal(typeof window.costAdjustmentLoadProduct, "function");
 assert.equal(typeof window.costAdjustmentAddPart, "function");
@@ -3756,8 +3758,8 @@ window.eval("APP_DATA.parts = window.__originalCostAdjustmentParts");
 delete window.__originalCostAdjustmentParts;
 window.costAdjustmentSetMode("breakdown");
 window.costAdjustmentRenderProduct(window.eval("_costAdjustmentState.product"));
-window.costAdjustmentSetMode("swap");
-assert.equal(document.querySelector('[data-ca-mode="swap"]').getAttribute("aria-checked"), "true");
+assert.equal(window.costAdjustmentSetMode("swap"), "breakdown",
+  "a stale swap-mode request must safely fall back to breakdown");
 window.costAdjustmentSetMode("breakdown");
 assert.equal(await window.costAdjustmentStart(), true,
   "breakdown must start once the management number resolves to a product");

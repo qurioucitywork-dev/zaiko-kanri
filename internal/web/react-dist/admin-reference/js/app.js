@@ -18664,7 +18664,6 @@ function toggleInventoryNavGroup() {
 const COST_ADJUSTMENT_MODES = {
   breakdown: '崩し',
   combine: '結合',
-  swap: '入替',
 };
 
 let _costAdjustmentState = {
@@ -19768,10 +19767,6 @@ function costAdjustmentClearStage() {
 async function costAdjustmentStart() {
   if (!_costAdjustmentState.product) {
     if (typeof showToast === 'function') showToast('error', '対象商品が未選択です', '商品管理番号またはタグから商品を読み込んでください');
-    return false;
-  }
-  if (_costAdjustmentState.mode === 'swap') {
-    if (typeof showToast === 'function') showToast('info', `${COST_ADJUSTMENT_MODES[_costAdjustmentState.mode]}は準備中です`, '現在は崩し作業の開始に対応しています');
     return false;
   }
   const combineParts = _costAdjustmentState.mode === 'combine'
