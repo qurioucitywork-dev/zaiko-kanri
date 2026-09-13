@@ -21,59 +21,74 @@ type Repository struct {
 }
 
 type Product struct {
-	ID                 string     `gorm:"column:id;primaryKey" json:"id"`
-	OrganizationID     string     `gorm:"column:organization_id;index" json:"-"`
-	ProductCode        string     `gorm:"column:product_code" json:"productCode"`
-	SKU                string     `gorm:"column:sku" json:"sku"`
-	Brand              string     `gorm:"column:brand" json:"brand"`
-	ModelNumber        string     `gorm:"column:model_number" json:"modelNumber"`
-	ReferenceNumber    string     `gorm:"column:reference_number" json:"referenceNumber"`
-	SerialNumber       string     `gorm:"column:serial_number" json:"serialNumber"`
-	ProductType        string     `gorm:"column:product_type" json:"productType"`
-	ShapeID            string     `gorm:"column:shape_id" json:"shapeId"`
-	MarkingID          string     `gorm:"column:marking_id" json:"markingId"`
-	SupplierID         string     `gorm:"column:supplier_id" json:"-"`
-	BrandID            string     `gorm:"column:brand_id" json:"brandId"`
-	MaterialID         string     `gorm:"column:material_id" json:"materialId"`
-	MovementID         string     `gorm:"column:movement_id" json:"movementId"`
-	ConditionID        string     `gorm:"column:condition_id" json:"conditionId"`
-	SupplierRoleID     string     `gorm:"column:supplier_role_id" json:"supplierRoleId"`
-	PurchaseStaffID    string     `gorm:"column:purchase_staff_profile_id" json:"purchaseStaffProfileId"`
-	PurchaseSlipLineID string     `gorm:"column:purchase_slip_line_id" json:"purchaseSlipLineId"`
-	PurchaseDate       DateString `gorm:"column:purchase_date;type:date" json:"purchaseDate"`
-	CostAmountMinor    int64      `gorm:"column:cost_amount_minor" json:"costAmountMinor"`
-	CostCurrency       string     `gorm:"column:cost_currency" json:"costCurrency"`
-	BaseSalePriceMinor int64      `gorm:"column:base_sale_price_minor" json:"baseSalePriceMinor"`
-	BaseSaleCurrency   string     `gorm:"column:base_sale_currency" json:"baseSaleCurrency"`
-	InventoryStatus    string     `gorm:"column:inventory_status" json:"inventoryStatus"`
-	PublicationStatus  string     `gorm:"column:publication_status" json:"publicationStatus"`
-	Condition          string     `gorm:"column:condition_text" json:"condition"`
-	Accessories        string     `gorm:"column:accessories" json:"accessories"`
-	BeltText           string     `gorm:"column:belt_text" json:"beltText"`
-	DialText           string     `gorm:"column:dial_text" json:"dialText"`
-	BraceletQuantity   *int       `gorm:"column:bracelet_quantity" json:"braceletQuantity,omitempty"`
-	Notes              string     `gorm:"column:notes" json:"notes"`
-	InternalComment    string     `gorm:"column:internal_comment" json:"internalComment"`
-	CostAdjustmentID   string     `gorm:"column:cost_adjustment_id" json:"costAdjustmentId,omitempty"`
-	DeletedAt          *time.Time `gorm:"column:deleted_at" json:"-"`
-	CreatedAt          time.Time  `gorm:"column:created_at" json:"createdAt"`
-	UpdatedAt          time.Time  `gorm:"column:updated_at" json:"updatedAt"`
+	ID                                string     `gorm:"column:id;primaryKey" json:"id"`
+	OrganizationID                    string     `gorm:"column:organization_id;index" json:"-"`
+	ProductCode                       string     `gorm:"column:product_code" json:"productCode"`
+	SKU                               string     `gorm:"column:sku" json:"sku"`
+	Brand                             string     `gorm:"column:brand" json:"brand"`
+	ModelNumber                       string     `gorm:"column:model_number" json:"modelNumber"`
+	ReferenceNumber                   string     `gorm:"column:reference_number" json:"referenceNumber"`
+	SerialNumber                      string     `gorm:"column:serial_number" json:"serialNumber"`
+	ProductType                       string     `gorm:"column:product_type" json:"productType"`
+	ShapeID                           string     `gorm:"column:shape_id" json:"shapeId"`
+	MarkingID                         string     `gorm:"column:marking_id" json:"markingId"`
+	SupplierID                        string     `gorm:"column:supplier_id" json:"-"`
+	BrandID                           string     `gorm:"column:brand_id" json:"brandId"`
+	MaterialID                        string     `gorm:"column:material_id" json:"materialId"`
+	MovementID                        string     `gorm:"column:movement_id" json:"movementId"`
+	ConditionID                       string     `gorm:"column:condition_id" json:"conditionId"`
+	SupplierRoleID                    string     `gorm:"column:supplier_role_id" json:"supplierRoleId"`
+	PurchaseStaffID                   string     `gorm:"column:purchase_staff_profile_id" json:"purchaseStaffProfileId"`
+	PurchaseSlipLineID                string     `gorm:"column:purchase_slip_line_id" json:"purchaseSlipLineId"`
+	PurchaseDate                      DateString `gorm:"column:purchase_date;type:date" json:"purchaseDate"`
+	CostAmountMinor                   int64      `gorm:"column:cost_amount_minor" json:"costAmountMinor"`
+	CostCurrency                      string     `gorm:"column:cost_currency" json:"costCurrency"`
+	BaseSalePriceMinor                int64      `gorm:"column:base_sale_price_minor" json:"baseSalePriceMinor"`
+	BaseSaleCurrency                  string     `gorm:"column:base_sale_currency" json:"baseSaleCurrency"`
+	InventoryStatus                   string     `gorm:"column:inventory_status" json:"inventoryStatus"`
+	PublicationStatus                 string     `gorm:"column:publication_status" json:"publicationStatus"`
+	Condition                         string     `gorm:"column:condition_text" json:"condition"`
+	Accessories                       string     `gorm:"column:accessories" json:"accessories"`
+	BeltText                          string     `gorm:"column:belt_text" json:"beltText"`
+	DialText                          string     `gorm:"column:dial_text" json:"dialText"`
+	BraceletQuantity                  *int       `gorm:"column:bracelet_quantity" json:"braceletQuantity,omitempty"`
+	Notes                             string     `gorm:"column:notes" json:"notes"`
+	InternalComment                   string     `gorm:"column:internal_comment" json:"internalComment"`
+	CostAdjustmentID                  string     `gorm:"column:cost_adjustment_id" json:"costAdjustmentId,omitempty"`
+	CostAdjustmentStartedAt           *time.Time `gorm:"column:cost_adjustment_started_at" json:"costAdjustmentStartedAt,omitempty"`
+	InventoryValuationExcluded        bool       `gorm:"column:inventory_valuation_excluded;not null;default:false" json:"inventoryValuationExcluded"`
+	InventoryValuationExclusionReason string     `gorm:"column:inventory_valuation_exclusion_reason;not null;default:''" json:"inventoryValuationExclusionReason,omitempty"`
+	InventoryValuationExcludedAt      *time.Time `gorm:"column:inventory_valuation_excluded_at" json:"inventoryValuationExcludedAt,omitempty"`
+	DeletedAt                         *time.Time `gorm:"column:deleted_at" json:"-"`
+	CreatedAt                         time.Time  `gorm:"column:created_at" json:"createdAt"`
+	UpdatedAt                         time.Time  `gorm:"column:updated_at" json:"updatedAt"`
 }
 
 func (Product) TableName() string { return "products" }
 
 type productRow struct {
 	Product
-	PurchaseTaxMode           string     `gorm:"column:purchase_tax_mode" json:"purchaseTaxMode"`
-	SupplierName              string     `gorm:"column:supplier_name" json:"supplierName"`
-	ImageCount                int        `gorm:"column:image_count" json:"imageCount"`
-	FixedPurchaseCostJPYMinor int64      `gorm:"column:fixed_purchase_cost_jpy_minor" json:"fixedPurchaseCostJpyMinor"`
-	PurchaseSourceAmountMinor int64      `gorm:"column:purchase_source_amount_minor" json:"purchaseSourceAmountMinor"`
-	PurchaseSourceCurrency    string     `gorm:"column:purchase_source_currency" json:"purchaseSourceCurrency"`
-	PurchaseFXRateSnapshotID  string     `gorm:"column:purchase_fx_rate_snapshot_id" json:"purchaseFxRateSnapshotId"`
-	PurchaseFXRateScaled      int64      `gorm:"column:purchase_fx_rate_scaled" json:"purchaseFxRateScaled"`
-	PurchaseFXScale           int64      `gorm:"column:purchase_fx_scale" json:"purchaseFxScale"`
-	PurchaseFXRateObservedAt  *time.Time `gorm:"column:purchase_fx_rate_observed_at" json:"purchaseFxRateObservedAt,omitempty"`
+	PurchaseTaxMode              string     `gorm:"column:purchase_tax_mode" json:"purchaseTaxMode"`
+	SupplierName                 string     `gorm:"column:supplier_name" json:"supplierName"`
+	ImageCount                   int        `gorm:"column:image_count" json:"imageCount"`
+	FixedPurchaseCostJPYMinor    int64      `gorm:"column:fixed_purchase_cost_jpy_minor" json:"fixedPurchaseCostJpyMinor"`
+	InventoryCostJPYMinor        int64      `gorm:"column:inventory_cost_jpy_minor" json:"inventoryCostJpyMinor"`
+	PurchaseSourceAmountMinor    int64      `gorm:"column:purchase_source_amount_minor" json:"purchaseSourceAmountMinor"`
+	PurchaseSourceCurrency       string     `gorm:"column:purchase_source_currency" json:"purchaseSourceCurrency"`
+	PurchaseFXRateSnapshotID     string     `gorm:"column:purchase_fx_rate_snapshot_id" json:"purchaseFxRateSnapshotId"`
+	PurchaseFXRateScaled         int64      `gorm:"column:purchase_fx_rate_scaled" json:"purchaseFxRateScaled"`
+	PurchaseFXScale              int64      `gorm:"column:purchase_fx_scale" json:"purchaseFxScale"`
+	PurchaseFXRateObservedAt     *time.Time `gorm:"column:purchase_fx_rate_observed_at" json:"purchaseFxRateObservedAt,omitempty"`
+	HistoricalSourceCostJPYMinor int64      `gorm:"column:historical_source_cost_jpy_minor" json:"-"`
+	HistoricalBreakdownSource    bool       `gorm:"column:historical_breakdown_source" json:"-"`
+	SaleDate                     *time.Time `gorm:"column:sale_date" json:"saleDate,omitempty"`
+	SaleCurrency                 string     `gorm:"column:sale_currency" json:"saleCurrency,omitempty"`
+	SaleUnitPriceMinor           int64      `gorm:"column:sale_unit_price_minor" json:"saleUnitPriceMinor,omitempty"`
+	SaleAdjustedPriceMinor       int64      `gorm:"column:sale_adjusted_price_minor" json:"saleAdjustedPriceMinor,omitempty"`
+	SalePriceJPYMinor            int64      `gorm:"column:sale_price_jpy_minor" json:"salePriceJpyMinor,omitempty"`
+	SaleFXRateScaled             int64      `gorm:"column:sale_fx_rate_scaled" json:"saleFxRateScaled,omitempty"`
+	SaleFXScale                  int64      `gorm:"column:sale_fx_scale" json:"saleFxScale,omitempty"`
+	SaleFXRateObservedAt         *time.Time `gorm:"column:sale_fx_rate_observed_at" json:"saleFxRateObservedAt,omitempty"`
 }
 
 type Dashboard struct {
@@ -197,6 +212,11 @@ func (r *Repository) Dashboard(ctx context.Context, organizationID string, month
 	var result Dashboard
 	base := r.db.WithContext(ctx).Model(&Product{}).
 		Where("organization_id = ? AND deleted_at IS NULL", organizationID)
+	// Legacy SQLite preview databases predate the PostgreSQL valuation split.
+	// Their behavior is unchanged until the compatibility schema gains the flag.
+	if r.db.Migrator().HasColumn(&Product{}, "inventory_valuation_excluded") {
+		base = base.Where("inventory_valuation_excluded = ?", false)
+	}
 	if err := base.Count(&result.TotalProducts).Error; err != nil {
 		return result, err
 	}
@@ -240,19 +260,24 @@ func (r *Repository) dashboardPostgres(ctx context.Context, organizationID strin
 	var result Dashboard
 	db := r.db.WithContext(ctx)
 	active := db.Table("products").Where(
-		"organization_id=? AND deleted_at IS NULL AND inventory_status IN ('purchasing','in_stock','reserved','return_pending')", organizationID)
+		`organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE
+		 AND inventory_status IN ('purchasing','in_stock','reserved','return_pending')
+		 AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID)
 	if err := active.Count(&result.TotalProducts).Error; err != nil {
 		return result, err
 	}
-	if err := db.Table("products").Where("organization_id=? AND deleted_at IS NULL AND inventory_status='purchasing'", organizationID).
+	if err := db.Table("products").Where(`organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE AND inventory_status='purchasing'
+		AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID).
 		Count(&result.PurchasingProducts).Error; err != nil {
 		return result, err
 	}
-	if err := db.Table("products").Where("organization_id=? AND deleted_at IS NULL AND inventory_status='in_stock'", organizationID).
+	if err := db.Table("products").Where(`organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE AND inventory_status='in_stock'
+		AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID).
 		Count(&result.InStockProducts).Error; err != nil {
 		return result, err
 	}
-	if err := db.Table("products").Where("organization_id=? AND deleted_at IS NULL AND inventory_status='reserved'", organizationID).
+	if err := db.Table("products").Where(`organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE AND inventory_status='reserved'
+		AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID).
 		Count(&result.ReservedProducts).Error; err != nil {
 		return result, err
 	}
@@ -433,21 +458,41 @@ func (r *Repository) Products(ctx context.Context, organizationID string, filter
 		query = query.
 			Select(`p.*, COALESCE(NULLIF(ps.supplier_name_text,''),bp.legal_name,'') AS supplier_name,
 				COALESCE(ps.purchase_tax_mode,'domestic') AS purchase_tax_mode,
-				CASE WHEN ca.adjustment_type='combine' THEN p.cost_amount_minor ELSE COALESCE(psl.converted_total_jpy,
+				CASE WHEN ca.adjustment_type='breakdown' AND ca.source_product_id=p.id AND ca.status='confirmed' THEN ca.source_cost_jpy_minor
+				     ELSE COALESCE(psl.converted_total_jpy,
 					CASE WHEN p.cost_currency='JPY' THEN p.cost_amount_minor ELSE 0 END) END AS fixed_purchase_cost_jpy_minor,
+				CASE WHEN p.cost_currency='JPY' THEN p.cost_amount_minor
+				     ELSE COALESCE(psl.converted_total_jpy,0) END AS inventory_cost_jpy_minor,
+				COALESCE(ca.source_cost_jpy_minor,0) AS historical_source_cost_jpy_minor,
+				CASE WHEN ca.adjustment_type='breakdown' AND ca.source_product_id=p.id AND ca.status='confirmed' THEN TRUE ELSE FALSE END AS historical_breakdown_source,
 				COALESCE(psl.unit_cost_minor,p.cost_amount_minor) AS purchase_source_amount_minor,
 				COALESCE(psl.cost_currency,p.cost_currency) AS purchase_source_currency,
 				COALESCE(psl.fx_rate_snapshot_id,'') AS purchase_fx_rate_snapshot_id,
 				COALESCE(psl.fx_rate_scaled,0) AS purchase_fx_rate_scaled,
 				COALESCE(psl.fx_scale,0) AS purchase_fx_scale,
 				fx.observed_at AS purchase_fx_rate_observed_at,
+				sale.sale_date,sale.sale_currency,sale.unit_price_minor AS sale_unit_price_minor,
+				GREATEST(0,sale.unit_price_minor + COALESCE(sadj.amount_minor,0)) AS sale_adjusted_price_minor,
+				GREATEST(0,CASE WHEN sale.sale_currency='JPY' THEN sale.unit_price_minor ELSE ROUND(sale.unit_price_minor*sale.fx_rate_scaled::numeric/sale.fx_scale)::bigint END + COALESCE(sadj.amount_jpy,0)) AS sale_price_jpy_minor,
+				COALESCE(sale.fx_rate_scaled,0) AS sale_fx_rate_scaled,COALESCE(sale.fx_scale,0) AS sale_fx_scale,
+				sale.fx_rate_observed_at AS sale_fx_rate_observed_at,
 				(SELECT COUNT(*) FROM product_files i WHERE i.organization_id = p.organization_id AND i.product_id = p.id) AS image_count`).
 			Joins("LEFT JOIN partner_roles pr ON pr.id = p.supplier_role_id AND pr.organization_id = p.organization_id").
 			Joins("LEFT JOIN business_partners bp ON bp.id = pr.partner_id AND bp.organization_id = p.organization_id").
 			Joins("LEFT JOIN purchase_slip_lines psl ON psl.id = p.purchase_slip_line_id").
 			Joins("LEFT JOIN purchase_slips ps ON ps.id = psl.purchase_slip_id AND ps.organization_id = p.organization_id").
 			Joins("LEFT JOIN cost_adjustments ca ON ca.id = p.cost_adjustment_id AND ca.organization_id = p.organization_id").
-			Joins("LEFT JOIN exchange_rate_snapshots fx ON fx.id = psl.fx_rate_snapshot_id")
+			Joins("LEFT JOIN exchange_rate_snapshots fx ON fx.id = psl.fx_rate_snapshot_id").
+			Joins(`LEFT JOIN LATERAL (SELECT s.sale_date,l.id AS sale_line_id,l.unit_price_minor,l.sale_currency,l.fx_rate_scaled,l.fx_scale,sfx.observed_at AS fx_rate_observed_at
+				FROM sales_lines l JOIN sales_slips s ON s.id=l.sales_slip_id
+				LEFT JOIN exchange_rate_snapshots sfx ON sfx.id=l.fx_rate_snapshot_id
+				WHERE l.product_id=p.id AND s.organization_id=p.organization_id AND s.status='confirmed'
+				ORDER BY s.confirmed_at DESC NULLS LAST,s.created_at DESC LIMIT 1) sale ON TRUE`).
+			Joins(`LEFT JOIN LATERAL (SELECT
+				COALESCE(SUM(CASE WHEN COALESCE(NULLIF(al.direction,''),a.direction)='decrease' THEN -al.adjustment_amount_minor ELSE al.adjustment_amount_minor END),0) AS amount_minor,
+				COALESCE(SUM(CASE WHEN COALESCE(NULLIF(al.direction,''),a.direction)='decrease' THEN -al.converted_adjustment_jpy ELSE al.converted_adjustment_jpy END),0) AS amount_jpy
+				FROM sales_adjustment_lines al JOIN sales_adjustment_slips a ON a.id=al.sales_adjustment_slip_id
+				WHERE al.source_sales_line_id=sale.sale_line_id AND a.status='confirmed') sadj ON TRUE`)
 	} else {
 		query = query.
 			Select(`p.*, s.name AS supplier_name,
@@ -463,8 +508,20 @@ func (r *Repository) Products(ctx context.Context, organizationID string, filter
 		return ProductPage{}, err
 	}
 	for index := range items {
-		if items[index].FixedPurchaseCostJPYMinor == 0 && items[index].CostCurrency == "JPY" {
+		if items[index].HistoricalBreakdownSource {
+			items[index].InventoryValuationExcluded = true
+			if items[index].InventoryValuationExclusionReason == "" {
+				items[index].InventoryValuationExclusionReason = "cost_split_source"
+			}
+			if items[index].FixedPurchaseCostJPYMinor == 0 {
+				items[index].FixedPurchaseCostJPYMinor = items[index].HistoricalSourceCostJPYMinor
+			}
+		}
+		if items[index].FixedPurchaseCostJPYMinor == 0 && items[index].PurchaseSlipLineID == "" && items[index].CostCurrency == "JPY" {
 			items[index].FixedPurchaseCostJPYMinor = items[index].CostAmountMinor
+		}
+		if items[index].InventoryCostJPYMinor == 0 && items[index].CostAmountMinor > 0 {
+			items[index].InventoryCostJPYMinor = items[index].FixedPurchaseCostJPYMinor
 		}
 		if items[index].PurchaseSourceCurrency == "" {
 			items[index].PurchaseSourceCurrency = items[index].CostCurrency

@@ -82,8 +82,10 @@ assert.match(apiBridgeSource, /fetchAllPages\('\/products\?includeCancelled=true
   "admin hydration must merge all inventory pages instead of stopping at 100 products");
 assert.match(apiBridgeSource, /fetchAllPages\('\/purchases'\)/u,
   "admin hydration must merge every purchase page instead of stopping at 500 slips");
-assert.match(apiBridgeSource, /reflectedPurchaseProducts !== APP_DATA\.inventory\.length/u,
-  "admin hydration must reject purchase and inventory datasets whose reflected counts diverge");
+assert.match(apiBridgeSource, /const linkedPurchaseProducts = APP_DATA\.inventory\.filter\(item => Boolean\(item\.purchaseSlipLineId\)\)\.length/u,
+  "admin hydration must compare purchase counts only with products linked to purchase lines");
+assert.match(apiBridgeSource, /reflectedPurchaseProducts !== linkedPurchaseProducts/u,
+  "admin hydration must reject genuinely divergent purchase-linked datasets");
 assert.match(apiBridgeSource, /const maxAttempts = retry && \['GET', 'HEAD'\]\.includes\(method\) \? 4 : 1/u,
   "safe DB reads must retry temporary network and server failures");
 assert.match(apiBridgeSource, /cache: method === 'GET' \|\| method === 'HEAD' \? 'no-store' : 'default'/u,
@@ -163,6 +165,8 @@ assert.equal(
 );
 assert.match(apiBridgeSource, /request\(`\/sales\/\$\{encodeURIComponent\(saleID\)\}\/issue`/u,
   "sales issue must persist its timestamp through the REST API");
+assert.match(apiBridgeSource, /reason:\s*line\.reason\s*\|\|\s*record\.notes/u,
+  "sales revision hydration must retain each product's reason with a legacy slip-note fallback");
 assert.match(staticAppSource, /function issueSaleSlipDocument\(slipId, event\)/u,
   "sales invoices must expose the administrator issue workflow");
 assert.match(staticAppSource, /売上登録時固定レート/u,
@@ -1331,15 +1335,12 @@ assert.match(appSource, /clientCompanyCode,/u, "shipping slips must retain the c
 
 window.navigateTo("inventory");
 window.execInventorySearch();
-assert.match(document.getElementById("inventoryNavToggle").textContent, /在庫管理/u,
-  "inventory management must remain the parent sidebar label");
-assert.deepEqual(
-  [...document.querySelectorAll("#inventoryNavSubmenu .nav-subitem")].map(item => item.textContent.trim()),
-  ["商品管理", "パーツ管理"],
-  "inventory management must expose product and part management children",
-);
-assert.equal(document.getElementById("pageTitle").textContent, "商品管理",
-  "the existing inventory page must be presented as product management");
+assert.match(document.querySelector('[data-page="inventory"]').textContent, /在庫管理/u,
+  "inventory management must be a direct sidebar item");
+assert.equal(document.getElementById("inventoryNavGroup"), null,
+  "inventory management must not have a nested sidebar hierarchy");
+assert.equal(document.getElementById("pageTitle").textContent, "在庫管理",
+  "the existing inventory page must be presented as inventory management");
 assert.equal(document.querySelector("#page-inventory #partInventoryTable"), null,
   "the product management page must not contain the parts list");
 window.navigateTo("parts-management");
@@ -1352,7 +1353,7 @@ assert.equal(document.querySelectorAll("#partInventoryTableBody .part-inventory-
 window.resetPartInventorySearch();
 assert.deepEqual(
   [...document.querySelectorAll("#partInventoryTable thead th")].map(cell => cell.textContent.trim()),
-  ["パーツ管理番号", "仕入日", "パーツ名", "詳細", "ブランド", "型番／モデル", "SKU", "仕入先", "バイヤー", "原価（JPY）", "売価", "ステータス"],
+  ["パーツ管理番号", "仕入日", "パーツ名", "詳細", "ブランド", "型番／モデル", "SKU", "仕入先", "バイヤー", "原価（JPY）", "想定売価", "ステータス"],
   "the parts list must expose the selected management fields in a stable order",
 );
 assert.equal(document.querySelectorAll("#partInventoryTableBody tr").length,
@@ -1454,6 +1455,109 @@ assert.equal(document.getElementById("inv-purchase-current-jpy").getAttribute("a
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').classList.contains("inv-purchase-currency-match"), true);
 assert.match(document.getElementById("inv-sale-heading").textContent, /JPY/u);
 
+const actualSaleTestData = window.eval("APP_DATA");
+const actualSaleHistoryBackup = actualSaleTestData.fxRateHistory;
+const actualSaleItemBackup = { ...inventory[0] };
+try {
+  actualSaleTestData.fxRateHistory = [
+    { code: "HKD", rate: 18, observedAt: "2026-08-01T09:00:00+09:00" },
+    { code: "HKD", rate: 20, observedAt: "2026-08-10T09:00:00+09:00" },
+    { code: "HKD", rate: 25, observedAt: "2026-08-20T09:00:00+09:00" },
+    { code: "USD", rate: 145, observedAt: "2026-08-10T09:00:00+09:00" },
+    { code: "USD", rate: 165, observedAt: "2026-08-20T09:00:00+09:00" },
+  ];
+  const usdSale = {
+    saleDate: "2026-08-15", actualSaleCurrency: "USD", actualSalePrice: 1001,
+    actualSalePriceJpy: 150151, saleFxRateScaled: 15000000000, saleFxScale: 100000000,
+  };
+  const jpySale = {
+    saleDate: "2026-08-15", actualSaleCurrency: "JPY", actualSalePrice: 300000,
+    actualSalePriceJpy: 300000, saleFxRateScaled: 15000000000, saleFxScale: 100000000,
+  };
+  const hkdSale = {
+    saleDate: "2026-08-15", actualSaleCurrency: "HKD", actualSalePrice: 10000,
+    actualSalePriceJpy: 195000, saleFxRateScaled: 1950000000, saleFxScale: 100000000,
+  };
+  assert.equal(window.formatInventoryActualSalePrice(usdSale), "$1,001",
+    "actual sale detail must retain its transaction currency by default");
+  assert.equal(window.formatInventoryActualSalePrice(usdSale, "JPY"), "¥150,151",
+    "converted actual sales must preserve the backend's adjusted JPY value, including rounding");
+  assert.equal(window.formatInventoryActualSalePrice(usdSale, "HKD"), "HK$7,508",
+    "actual sales must use the latest HKD history before the sale, not a later or current rate");
+  assert.equal(window.formatInventoryActualSalePrice({ ...usdSale, saleFxRateObservedAt: "2026-08-21T09:00:00+09:00" }, "HKD"), "HK$6,006",
+    "cross-currency sales must prefer the frozen snapshot timestamp when it differs from the sale date");
+  assert.equal(window.formatInventoryActualSaleRate(usdSale, "USD"), "1 USD = ¥150.00",
+    "the transaction's frozen sale rate must take priority over USD history");
+  assert.equal(window.formatInventoryActualSalePrice(jpySale, "USD"), "$2,000",
+    "JPY sales must use the stored USD snapshot when displayed in USD");
+  assert.equal(window.formatInventoryActualSalePrice(jpySale, "JPY"), "¥300,000",
+    "JPY transactions must retain their exact native amount");
+  assert.equal(window.formatInventoryActualSaleRate(jpySale, "JPY"), "1 JPY = ¥1.00");
+  assert.equal(window.formatInventoryActualSalePrice(hkdSale, "HKD"), "HK$10,000",
+    "HKD transactions must retain their exact native amount");
+  assert.equal(window.formatInventoryActualSalePrice(hkdSale, "JPY"), "¥195,000");
+  assert.equal(window.formatInventoryActualSalePrice(hkdSale, "USD"), "$1,345",
+    "HKD sales must convert through saved JPY value using sale-date USD history");
+  assert.equal(window.formatInventoryActualSaleRate(hkdSale), "1 HKD = ¥19.50",
+    "an HKD sale snapshot must be labeled as HKD instead of USD");
+  assert.equal(window.isInventoryOriginalSaleCurrency(usdSale, "USD"), true);
+  assert.equal(window.isInventoryOriginalSaleCurrency(usdSale, "JPY"), false);
+  assert.equal(window.isInventoryOriginalSaleCurrency(jpySale, "JPY"), true);
+  assert.equal(window.isInventoryOriginalSaleCurrency(hkdSale, "HKD"), true);
+  assert.equal(window.formatInventoryActualSalePrice({ ...usdSale, saleDate: "" }, "JPY"), "—",
+    "unsold inventory must stay empty even if stale sale fields exist");
+  assert.equal(window.isInventoryOriginalSaleCurrency({ ...jpySale, saleDate: "" }, "JPY"), false,
+    "unsold inventory must never receive the original-sale-currency highlight");
+
+  Object.assign(inventory[0], usdSale);
+  window.switchInventoryPriceCurrency("sale", "JPY");
+  const actualSaleCell = () => document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="actualSalePrice"]');
+  assert.equal(document.querySelectorAll('#page-inventory th[data-inv-col="actualSalePrice"] .inv-price-currency-btn').length, 3,
+    "the actual sale column must expose JPY, USD, and HKD controls");
+  assert.equal(actualSaleCell().textContent.trim(), "¥150,151");
+  assert.equal(actualSaleCell().classList.contains("inv-sale-currency-match"), false,
+    "converted actual sales must not be highlighted as native-currency amounts");
+  window.switchInventoryCostCurrency("purchase-time", "USD");
+  assert.equal(actualSaleCell().textContent.trim(), "$1,001",
+    "purchase-cost currency controls must also change actual sale currency");
+  assert.equal(actualSaleCell().classList.contains("inv-sale-currency-match"), true,
+    "actual sales must receive the blue highlight when the native transaction currency is selected");
+  assert.equal(document.getElementById("inv-actual-sale-usd").getAttribute("aria-pressed"), "true");
+  document.getElementById("inv-actual-sale-hkd").click();
+  assert.equal(actualSaleCell().textContent.trim(), "HK$7,508");
+  assert.equal(actualSaleCell().classList.contains("inv-sale-currency-match"), false);
+  for (const id of ["inv-purchase-time-hkd", "inv-purchase-current-hkd", "inv-sale-hkd", "inv-actual-sale-hkd"]) {
+    assert.equal(document.getElementById(id).getAttribute("aria-pressed"), "true",
+      "the actual-sale switch must update all four linked currency controls");
+  }
+  assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="saleRate"]').textContent.trim(), "1 HKD = ¥20.00",
+    "the sale-rate column must show the rate used for the selected sale display currency");
+  document.getElementById("inv-actual-sale-usd").click();
+  assert.equal(actualSaleCell().textContent.trim(), "$1,001",
+    "switching through other currencies must return to the exact original transaction amount");
+  assert.equal(inventory[0].actualSalePrice, 1001,
+    "display currency switching must not mutate the saved transaction amount");
+  for (const [sale, currency, expected] of [[jpySale, "JPY", "¥300,000"], [hkdSale, "HKD", "HK$10,000"]]) {
+    Object.assign(inventory[0], sale);
+    document.getElementById(`inv-actual-sale-${currency.toLowerCase()}`).click();
+    assert.equal(actualSaleCell().textContent.trim(), expected);
+    assert.equal(actualSaleCell().classList.contains("inv-sale-currency-match"), true,
+      `${currency} sales must highlight their original currency in the table`);
+  }
+  inventory[0].saleDate = "";
+  window.renderInventoryTable();
+  assert.equal(actualSaleCell().textContent.trim(), "—");
+  assert.equal(actualSaleCell().classList.contains("inv-sale-currency-match"), false,
+    "the table must not highlight an unsold item with stale transaction fields");
+} finally {
+  actualSaleTestData.fxRateHistory = actualSaleHistoryBackup;
+  for (const key of Object.keys(inventory[0])) {
+    if (!Object.hasOwn(actualSaleItemBackup, key)) delete inventory[0][key];
+  }
+  Object.assign(inventory[0], actualSaleItemBackup);
+  window.switchInventoryPriceCurrency("sale", "JPY");
+}
+
 const foreignInventoryItem = {
   purchaseCurrency: "USD", purchaseOriginalPrice: 1000, purchasePrice: 150000,
   purchaseFxRateScaled: 15000000000, purchaseFxScale: 100000000,
@@ -1464,6 +1568,12 @@ assert.equal(window.formatInventoryPurchaseTimeRate(foreignInventoryItem, "USD")
 assert.equal(window.isInventoryOriginalPurchaseCurrency(foreignInventoryItem, "USD"), true);
 assert.equal(window.formatInventoryPurchaseCostAtRegisteredRate(foreignInventoryItem), "¥150,000");
 assert.equal(window.formatInventoryPurchaseCostAtCurrentRate(foreignInventoryItem), "¥155,000");
+assert.equal(window.formatItemDetailPurchasePrice(foreignInventoryItem, "JPY"), "¥150,000",
+  "item detail cost must retain its fixed purchase-time JPY value");
+assert.equal(window.formatItemDetailPurchasePrice(foreignInventoryItem, "USD"), "$1,000",
+  "item detail cost must convert with the saved purchase rate");
+assert.match(window.getItemDetailPurchaseRateNote(foreignInventoryItem), /仕入レート：1 USD = ¥150\.00/u,
+  "item detail must identify the saved purchase rate instead of the current rate");
 assert.equal(window.formatInventoryGrossMargin(foreignInventoryItem), "50.0%", "gross margin must compare the current-rate JPY cost with the current-rate JPY sale price");
 assert.equal(window.formatInventoryGrossMargin({ salePrice: 0, purchasePrice: 1000 }), "—", "zero sale price must not divide by zero");
 
@@ -1474,15 +1584,17 @@ assert.match(document.getElementById("itemDetailBody").textContent, /¥850,000/u
 assert.match(document.getElementById("itemDetailBody").textContent, /¥1,180,015/u, "item detail sale price must follow the selected JPY display");
 const itemDetailInfoPanel = document.getElementById("itemDetailInfoPanel");
 const itemDetailLabels = [...itemDetailInfoPanel.querySelectorAll(".detail-label")].map(label => label.textContent.trim());
-assert.ok(itemDetailLabels.includes("原価（現在レート）"), "product details must label current-rate cost explicitly");
+assert.ok(itemDetailLabels.includes("原価（仕入レート）"), "product details must label purchase-rate cost explicitly");
 assert.deepEqual(
   [...itemDetailInfoPanel.querySelectorAll(".item-detail-summary-field > .detail-label")].map(label => label.textContent.trim()),
-  ["原価（現在レート）", "売価", "粗利率", "ステータス"],
+  ["原価（仕入レート）", "想定売価", "想定粗利率", "ステータス"],
   "cost, sale price, gross margin, and status must share one four-column summary row",
 );
 assert.equal(document.getElementById("item-detail-gross-margin-value").textContent, window.formatInventoryGrossMargin(inventory[0]));
 assert.equal(itemDetailInfoPanel.querySelectorAll('[data-item-detail-price="purchase"] .item-detail-currency-btn').length, 3,
-  "current-rate cost must support JPY, USD, and HKD display");
+  "purchase-rate cost must support JPY, USD, and HKD display");
+assert.match(itemDetailInfoPanel.querySelector('[data-item-detail-price="purchase"] .item-detail-price-rate').textContent, /^仕入レート：/u);
+assert.match(itemDetailInfoPanel.querySelector('[data-item-detail-price="sale"] .item-detail-price-rate').textContent, /^現在レート：/u);
 assert.equal(itemDetailInfoPanel.querySelectorAll('[data-item-detail-price="sale"] .item-detail-currency-btn').length, 3,
   "sale price must support JPY, USD, and HKD display");
 assert.equal(typeof window.switchItemDetailPriceCurrency, "function");
@@ -1580,7 +1692,7 @@ serialVisibility.checked = false;
 window._invColumnVisibilityChanged(serialVisibility);
 assert.equal(document.querySelector('th[data-inv-col="serial"]').classList.contains("inv-col-hidden"), true);
 assert.equal(document.querySelector('#inventoryTableBody td[data-inv-col="serial"]').classList.contains("inv-col-hidden"), true);
-assert.equal(document.getElementById("inv-column-count").textContent, "19/21");
+assert.equal(document.getElementById("inv-column-count").textContent, "22/24");
 
 const purchaseVisibility = document.querySelector('#inv-column-panel input[value="purchasePrice"]');
 const saleVisibility = document.querySelector('#inv-column-panel input[value="salePrice"]');
@@ -1591,7 +1703,7 @@ window._invColumnVisibilityChanged(saleVisibility);
 assert.equal(document.querySelector('th[data-inv-col="purchasePrice"]').classList.contains("inv-col-hidden"), true);
 assert.equal(document.querySelector('th[data-inv-col="salePrice"]').classList.contains("inv-col-hidden"), true);
 window._invShowAllColumns();
-assert.equal(document.getElementById("inv-column-count").textContent, "21/21");
+assert.equal(document.getElementById("inv-column-count").textContent, "24/24");
 assert.equal(document.querySelectorAll("#inventoryTable .inv-col-hidden").length, 0);
 
 assert.equal(typeof window.openInventoryQr, "function", "inventory QR display must be globally callable");
@@ -1678,6 +1790,40 @@ assert.deepEqual(
 window.toggleInventoryStatusSort();
 assert.equal(document.getElementById("inv-status-sort-th").getAttribute("aria-sort"), "none");
 
+const marginSortItems = [
+  { code: 'missing', purchasePrice: 100, actualSalePriceJpy: 100 },
+  { code: 'high', purchasePrice: 10, actualSalePriceJpy: 100, saleDate: '2026-09-14' },
+  { code: 'negative', purchasePrice: 150, actualSalePriceJpy: 100, saleDate: '2026-09-14' },
+  { code: 'zero', purchasePrice: 100, actualSalePriceJpy: 100, saleDate: '2026-09-14' },
+  { code: 'equal', purchasePrice: 10, actualSalePriceJpy: 100, saleDate: '2026-09-14' },
+  { code: 'no-price', purchasePrice: 100, actualSalePriceJpy: 0, saleDate: '2026-09-14' },
+];
+const marginOriginalOrder = marginSortItems.map(item => item.code);
+assert.deepEqual(Array.from(window.sortInventoryByGrossMargin(marginSortItems, 'ascending'), item => item.code),
+  ['negative', 'zero', 'high', 'equal', 'missing', 'no-price']);
+assert.deepEqual(Array.from(window.sortInventoryByGrossMargin(marginSortItems, 'descending'), item => item.code),
+  ['high', 'equal', 'zero', 'negative', 'missing', 'no-price']);
+assert.deepEqual(marginSortItems.map(item => item.code), marginOriginalOrder, 'sorting must not mutate source inventory');
+const marginSortButton = document.getElementById('inv-gross-margin-sort-btn');
+marginSortButton.click();
+assert.equal(document.getElementById('inv-gross-margin-sort-th').getAttribute('aria-sort'), 'ascending');
+assert.equal(window.eval('inventoryPage'), 1);
+assert.deepEqual(
+  [...document.querySelectorAll('#inventoryTableBody td[data-inv-col="actualGrossMargin"]')].map(cell => cell.textContent.trim()),
+  Array.from(window.sortInventoryByGrossMargin(inventory, 'ascending').slice(0, 10), item => window.formatInventoryActualGrossMargin(item)),
+  'margin sorting applies to the whole filtered list before pagination');
+marginSortButton.click();
+assert.equal(document.getElementById('inv-gross-margin-sort-th').getAttribute('aria-sort'), 'descending');
+marginSortButton.click();
+assert.equal(document.getElementById('inv-gross-margin-sort-th').getAttribute('aria-sort'), 'none');
+window.toggleInventoryStatusSort();
+marginSortButton.click();
+assert.equal(document.getElementById('inv-status-sort-th').getAttribute('aria-sort'), 'none');
+window.toggleInventoryStatusSort();
+assert.equal(document.getElementById('inv-gross-margin-sort-th').getAttribute('aria-sort'), 'none');
+window.toggleInventoryStatusSort();
+window.toggleInventoryStatusSort();
+
 const originalEditImages = [...(inventory[0].images || [])];
 const originalEditImageFiles = inventory[0].imageFiles;
 const originalEditAccessories = [...(inventory[0].accessories || [])];
@@ -1689,7 +1835,7 @@ inventory[0].imageFiles = [
 ];
 window.openItemEdit(inventory[0].code);
 assert.equal(document.getElementById("ie-salePrice").value, "7,613", "inventory edit must show the USD value with thousands separators");
-assert.equal((document.querySelector('label[for="ie-salePrice"]')?.textContent || document.getElementById("ie-salePrice").previousElementSibling?.textContent || "").trim(), "売価");
+assert.equal((document.querySelector('label[for="ie-salePrice"]')?.textContent || document.getElementById("ie-salePrice").previousElementSibling?.textContent || "").trim(), "想定売価");
 assert.equal(document.getElementById("ie-image-count").textContent, "2 / 10枚", "inventory edit must load the product's existing images");
 assert.equal(document.querySelectorAll("#ie-image-grid .item-edit-image-card").length, 2);
 window.moveItemEditImage(1, -1);
@@ -1863,7 +2009,7 @@ assert.match(document.getElementById("inventoryTableBody").textContent, new RegE
 window.navigateTo("sales-list");
 assert.equal(document.getElementById("slipBulkControls"), null,
   "the shared bulk download and print controls must not exist");
-for (const slipType of ["purchase", "purchaseadjustment", "shipping", "consignment", "sales", "salesadjustment", "salesreturn", "purchasereturn"]) {
+for (const slipType of ["purchase", "shipping", "consignment", "sales", "salesreturn", "purchasereturn"]) {
   window.switchSlipTab(slipType);
   window.showAllSlipList();
   assert.equal(document.querySelectorAll("#slipTableHead input[type='checkbox'], #slipListBody input[type='checkbox']").length, 0,
@@ -1872,23 +2018,25 @@ for (const slipType of ["purchase", "purchaseadjustment", "shipping", "consignme
     `${slipType} slips must not retain the legacy purchase-return issue button`);
 }
 const slipTabOrder = [...document.querySelectorAll(".slip-type-tabs > .slip-type-tab")].map(tab => tab.id);
-assert.equal(slipTabOrder.indexOf("sltab-purchaseadjustment"), slipTabOrder.indexOf("sltab-purchase") + 1,
-  "purchase adjustment slips must appear immediately after purchase slips");
-assert.equal(slipTabOrder.indexOf("sltab-salesadjustment"), slipTabOrder.indexOf("sltab-sales") + 1,
-  "sales adjustment slips must appear immediately after sales slips");
-window.switchSlipTab("purchaseadjustment");
+assert.equal(document.getElementById("sltab-purchaseadjustment"), null,
+  "the separate purchase adjustment tab must be removed");
+assert.equal(document.getElementById("sltab-salesadjustment"), null,
+  "the separate sales adjustment tab must be removed");
+assert.equal(document.getElementById("sltab-adjustment"), null,
+  "adjustment slips must not appear as a tab in the accounting document list");
+assert.deepEqual(slipTabOrder,
+  ["sltab-purchase", "sltab-shipping", "sltab-consignment", "sltab-sales", "sltab-salesreturn", "sltab-purchasereturn"]);
+window.navigateTo("cost-adjustment-slips");
 window.showAllSlipList();
-assert.match(document.getElementById("sltab-purchaseadjustment").textContent, /仕入調整伝票/u);
-assert.match(document.getElementById("slipFilterPartyLabel").textContent, /仕入先/u);
-assert.equal(window.getFilteredSlipData().length, 0,
-  "purchase adjustment slips must begin with an independent empty data source");
-window.switchSlipTab("salesadjustment");
-window.showAllSlipList();
-assert.match(document.getElementById("sltab-salesadjustment").textContent, /売上調整伝票/u);
+assert.equal(document.getElementById("page-cost-adjustment-slips").classList.contains("hidden"), false);
+assert.equal(document.getElementById("sharedSlipListCard").parentElement.id, "page-cost-adjustment-slips");
+assert.match(document.getElementById("sharedSlipListTitle").textContent, /調整伝票/u);
 assert.match(document.getElementById("slipFilterPartyLabel").textContent, /取引先/u);
 assert.equal(window.getFilteredSlipData().length, 0,
-  "sales adjustment slips must not reuse ordinary sales-slip data");
+  "the unified adjustment tab must begin with independent adjustment data sources");
 window.switchSlipTab("purchase");
+assert.equal(document.getElementById("sharedSlipListCard").parentElement.id, "page-sales-list",
+  "leaving the dedicated adjustment page must restore the shared list to the accounting page");
 assert.equal(document.getElementById("slip-filter-status").value, "processing", "document status search must default to processing");
 assert.deepEqual([...document.querySelectorAll("#slip-filter-status option")].map(option => option.textContent),
   ["処理中", "未払い", "処理済", "すべて"],
@@ -1933,6 +2081,345 @@ assert.equal(document.getElementById("slipDetailOverlay").classList.contains("hi
   "the purchase slip must remain behind product detail so closing returns to the slip");
 document.getElementById("itemDetailModal").classList.add("hidden");
 window.closeSlipDetail();
+const originalRevisePurchaseSlip = window.ZaikoAPI?.revisePurchaseSlip;
+savedSinglePurchaseSlip.apiManaged = true;
+savedSinglePurchaseSlip._id = "pur-revision-test";
+savedSinglePurchaseSlip.staffCode = window.eval("APP_DATA.staffRecords[0]?.code || ''");
+savedSinglePurchaseSlip.lines[0]._id = "pul-revision-test";
+let purchaseRevisionPayload = null;
+window.ZaikoAPI = window.ZaikoAPI || {};
+window.ZaikoAPI.revisePurchaseSlip = async (_record, payload) => { purchaseRevisionPayload = payload; return {}; };
+window.openSlipRevise("purchase", savedSinglePurchaseSlip.id);
+assert.equal(document.getElementById("slipReviseSaveButton").disabled, true,
+  "purchase revision save must remain disabled until a required reason is entered");
+document.getElementById("slipReviseNote").value = "仕入金額の入力訂正";
+window.updateSlipReviseSaveState();
+assert.equal(document.getElementById("slipReviseSaveButton").disabled, false,
+  "entering a save reason must expose an enabled save action");
+assert.equal(await window.submitSlipRevise(), true);
+assert.equal(purchaseRevisionPayload.reason, "仕入金額の入力訂正");
+assert.equal(purchaseRevisionPayload.lines[0].id, "pul-revision-test");
+assert.equal(purchaseRevisionPayload.notes, savedSinglePurchaseSlip.note || "",
+  "the DB revision must send the slip remarks together with the required save reason");
+if (originalRevisePurchaseSlip) window.ZaikoAPI.revisePurchaseSlip = originalRevisePurchaseSlip;
+else delete window.ZaikoAPI.revisePurchaseSlip;
+
+const revisedYenSale = window.eval("APP_DATA.sales.find((record) => record.id === 'SL-2026-0001')");
+const originalReviseSaleSlip = window.ZaikoAPI?.reviseSaleSlip;
+revisedYenSale.apiManaged = true;
+revisedYenSale._id = "sal-revision-yen-test";
+revisedYenSale.currency = "JPY";
+revisedYenSale.inputCurrency = "JPY";
+revisedYenSale.displaySubtotalMinor = 1200000;
+revisedYenSale.items[0]._id = "sln-revision-yen-test";
+revisedYenSale.items[0].inputCurrency = "JPY";
+revisedYenSale.items[0].inputAmount = 1200000;
+let saleRevisionPayload = null;
+window.ZaikoAPI.reviseSaleSlip = async (_record, payload) => { saleRevisionPayload = payload; return {}; };
+window.openSlipRevise("sales", revisedYenSale.id);
+assert.match(document.getElementById("slipReviseFields").textContent, /売価（JPY）/u,
+  "a JPY sale revision must label its editable sales price as JPY");
+assert.equal(document.getElementById("rv-sale-price-0").value, "1,200,000",
+  "a JPY sale revision must start from the original JPY transaction amount rather than its USD conversion");
+document.getElementById("rv-sale-price-0").value = "1,250,000";
+document.getElementById("slipReviseNote").value = "円建て売価の入力訂正";
+window.updateSlipReviseSaveState();
+assert.equal(await window.submitSlipRevise(), true);
+assert.equal(saleRevisionPayload.lines[0].id, "sln-revision-yen-test");
+assert.equal(saleRevisionPayload.lines[0].unitPriceMinor, 1250000,
+  "the DB revision must submit a JPY amount without USD conversion");
+assert.equal(saleRevisionPayload.reason, "円建て売価の入力訂正",
+  "the required save reason must be sent for persistence in the sales-slip remarks");
+if (originalReviseSaleSlip) window.ZaikoAPI.reviseSaleSlip = originalReviseSaleSlip;
+else delete window.ZaikoAPI.reviseSaleSlip;
+
+// Sales-change edits are line-specific deltas, not replacement sales prices.
+// Use only an in-memory API stub so this contract never creates a real slip.
+const salesChangeData = window.eval("APP_DATA");
+const salesChangeOriginalSales = [...salesChangeData.sales];
+const salesChangeOriginalAPI = window.ZaikoAPI;
+const salesChangeOriginalCreate = window.ZaikoAPI?.createSalesAdjustment;
+const salesChangeSource = {
+  _id: "sal-change-test", id: "SI-CHANGE-TEST", date: "2026-09-14", buyer: "B001",
+  currency: "USD", inputCurrency: "USD", status: "処理済", apiManaged: true,
+  items: [
+    { _id: "sln-change-a", code: "CHANGE-A", brand: "<img src=x onerror=alert(1)>", model: "A & B",
+      inputCurrency: "USD", inputAmount: 9200, salePrice: 9200 },
+    { _id: "sln-change-b", code: "CHANGE-B", brand: "オメガ", model: "Speedmaster",
+      inputCurrency: "USD", inputAmount: 9850, salePrice: 9850 },
+  ],
+};
+const makeSalesChangeRevision = (id, direction, amount, overrides = {}) => ({
+  _id: `sal-${id}`, id, documentType: "sales_revision", sourceSaleId: salesChangeSource._id,
+  currency: "USD", inputCurrency: "USD", status: "処理済", rawStatus: "confirmed",
+  adjustmentDirection: direction,
+  items: [{ _id: `${id}-line`, sourceSaleLineId: "sln-change-a", adjustmentAmount: amount,
+    inputCurrency: "USD", inputAmount: (direction === "decrease" ? -1 : 1) * amount }],
+  ...overrides,
+});
+const salesChangeSubmissions = [];
+try {
+  salesChangeData.sales.push(
+    salesChangeSource,
+    makeSalesChangeRevision("SC-INCREASE", "increase", 300),
+    makeSalesChangeRevision("SC-DECREASE", "decrease", 150),
+    makeSalesChangeRevision("SC-CANCELLED", "increase", 9000, { status: "取消済", rawStatus: "cancelled" }),
+    makeSalesChangeRevision("SC-DRAFT", "increase", 9000, { status: "未処理", rawStatus: "draft" }),
+    makeSalesChangeRevision("SC-OTHER-SALE", "increase", 9000, { sourceSaleId: "sal-unrelated" }),
+    makeSalesChangeRevision("SC-OTHER-LINE", "increase", 9000, {
+      items: [{ sourceSaleLineId: "sln-unrelated", adjustmentAmount: 9000, inputAmount: 9000 }],
+    }),
+  );
+  window.ZaikoAPI = window.ZaikoAPI || {};
+  window.ZaikoAPI.createSalesAdjustment = async (record, payload) => {
+    salesChangeSubmissions.push({ recordID: record._id, payload: JSON.parse(JSON.stringify(payload)) });
+    return { slipNumber: "SC-MOCK-ONLY" };
+  };
+  assert.equal(window._salesChangeAmount(salesChangeSource, salesChangeSource.items[0]), 9350,
+    "current sales price must accumulate only confirmed adjustments for the same original sale and line");
+  assert.equal(window._salesChangeAmount(salesChangeSource, salesChangeSource.items[1]), 9850,
+    "adjustments for another source line must not leak into the second product");
+  window.openSalesChangeModal(salesChangeSource.id);
+  const salesChangeOverlay = document.getElementById("salesChangeOverlay");
+  const salesChangeClickDate = window.getLocalDateISO();
+  assert.equal(salesChangeOverlay.dataset.adjustmentDate, salesChangeClickDate);
+  assert.equal(document.getElementById('sales-change-date').value, salesChangeClickDate);
+  assert.equal(document.getElementById('sales-change-date').readOnly, true);
+  const salesChangeDirectionGroup = document.getElementById("sales-change-direction-group");
+  const salesChangeTable = salesChangeOverlay.querySelector("table");
+  assert.ok(salesChangeDirectionGroup.compareDocumentPosition(salesChangeTable) & window.Node.DOCUMENT_POSITION_FOLLOWING,
+    "increase/decrease controls must appear above the product table");
+  const salesChangeHeadings = [...salesChangeTable.querySelectorAll("th")].map(cell => cell.textContent);
+  assert.ok(salesChangeHeadings.some(label => /現在売価/u.test(label)));
+  assert.ok(salesChangeHeadings.some(label => /調整金額.*USD/u.test(label)),
+    "the editable amount must be labelled as the adjustment delta in the sale currency");
+  assert.ok(salesChangeHeadings.some(label => /理由・説明/u.test(label)));
+  assert.ok(salesChangeHeadings.some(label => /変更金額.*USD/u.test(label)),
+    "the calculated final sales price must be labelled 変更金額");
+  assert.equal(salesChangeOverlay.querySelector("img"), null,
+    "product labels must be escaped instead of interpreted as HTML in the change modal");
+  assert.match(salesChangeTable.textContent, /<img src=x onerror=alert\(1\)>/u);
+  assert.equal(document.getElementById("sales-change-reason"), null,
+    "a single global reason must not replace the reason for each selected product");
+  const salesChangeCheckA = document.getElementById("sales-change-check-0");
+  const salesChangeCheckB = document.getElementById("sales-change-check-1");
+  const salesChangeAmountA = document.getElementById("sales-change-amount-0");
+  const salesChangeAmountB = document.getElementById("sales-change-amount-1");
+  const salesChangeReasonA = document.getElementById("sales-change-reason-0");
+  const salesChangeReasonB = document.getElementById("sales-change-reason-1");
+  const salesChangeResultA = document.getElementById("sales-change-result-0");
+  const salesChangeSave = document.getElementById("sales-change-save");
+  const salesChangeIncrease = salesChangeOverlay.querySelector('input[name="sales-change-direction"][value="increase"]');
+  const salesChangeDecrease = salesChangeOverlay.querySelector('input[name="sales-change-direction"][value="decrease"]');
+  assert.equal(salesChangeReasonA.maxLength, 1000);
+  assert.equal(salesChangeAmountA.disabled, true);
+  assert.equal(salesChangeReasonA.disabled, true);
+  assert.notEqual(salesChangeResultA.tagName, "INPUT", "the calculated final price must not be editable");
+  assert.equal(salesChangeResultA.isContentEditable === true, false);
+  assert.equal(salesChangeSave.disabled, true);
+  assert.equal(window.updateSalesChangeState(), false);
+  await window.submitSalesChange(salesChangeSource.id);
+  assert.equal(salesChangeSubmissions.length, 0, "direct submission must revalidate rather than bypass disabled save");
+
+  salesChangeCheckA.checked = true;
+  salesChangeCheckA.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(salesChangeAmountA.disabled, false);
+  assert.equal(salesChangeReasonA.disabled, false);
+  assert.equal(salesChangeAmountB.disabled, true);
+  assert.equal(salesChangeReasonB.disabled, true);
+  salesChangeIncrease.checked = true;
+  salesChangeIncrease.dispatchEvent(new window.Event("change", { bubbles: true }));
+  salesChangeAmountA.value = "200";
+  salesChangeAmountA.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.match(salesChangeResultA.textContent, /\$9,550/u,
+    "typing an adjustment must show the current cumulative price plus the adjustment");
+  assert.equal(salesChangeSave.disabled, true, "each selected product requires its own reason");
+  salesChangeReasonA.value = "  値引き合意  ";
+  salesChangeReasonA.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.equal(salesChangeSave.disabled, false);
+  salesChangeDecrease.checked = true;
+  salesChangeDecrease.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.match(salesChangeResultA.textContent, /\$9,150/u,
+    "changing direction must immediately recalculate the final sales price");
+
+  for (const invalidAmount of ["0", "-1", "1.5", "9351"]) {
+    salesChangeAmountA.value = invalidAmount;
+    assert.equal(window.updateSalesChangeState(), false,
+      `adjustment ${invalidAmount} must not allow an invalid amount or a negative final price`);
+    assert.equal(salesChangeSave.disabled, true);
+    await window.submitSalesChange(salesChangeSource.id);
+  }
+  assert.equal(salesChangeSubmissions.length, 0, "invalid edits must not call the mutation API");
+  salesChangeAmountA.value = "9,350";
+  assert.equal(window.updateSalesChangeState(), true, "a final sales price of zero remains valid");
+  assert.match(salesChangeResultA.textContent, /\$0(?:\D|$)/u);
+  salesChangeAmountA.value = "200";
+  salesChangeReasonA.value = " ";
+  assert.equal(window.updateSalesChangeState(), false, "whitespace-only reasons are invalid");
+  salesChangeReasonA.value = "あ".repeat(1001);
+  assert.equal(window.updateSalesChangeState(), false, "a reason beyond the API length limit must not be submitted");
+  salesChangeReasonA.value = "  値引き合意  ";
+  salesChangeCheckB.checked = true;
+  salesChangeCheckB.dispatchEvent(new window.Event("change", { bubbles: true }));
+  salesChangeAmountB.value = "350";
+  assert.equal(window.updateSalesChangeState(), false, "the second selected product also requires a reason");
+  salesChangeReasonB.value = "付属品不足への対応";
+  salesChangeReasonB.dispatchEvent(new window.Event("input", { bubbles: true }));
+  assert.equal(salesChangeSave.disabled, false);
+  assert.match(document.getElementById("sales-change-result-1").textContent, /\$9,500/u);
+  salesChangeCheckB.checked = false;
+  salesChangeCheckB.dispatchEvent(new window.Event("change", { bubbles: true }));
+  assert.equal(salesChangeAmountB.disabled, true);
+  assert.equal(salesChangeReasonB.disabled, true);
+  assert.equal(salesChangeSave.disabled, false, "deselecting a row must exclude its fields from validation");
+  salesChangeCheckB.checked = true;
+  salesChangeCheckB.dispatchEvent(new window.Event("change", { bubbles: true }));
+  const originalSalesChangeDate = window.getLocalDateISO;
+  window.getLocalDateISO = () => '2099-01-01';
+  try {
+    await window.submitSalesChange(salesChangeSource.id);
+  } finally {
+    window.getLocalDateISO = originalSalesChangeDate;
+  }
+  assert.equal(salesChangeSubmissions.length, 1);
+  assert.deepEqual(salesChangeSubmissions[0], {
+    recordID: "sal-change-test",
+    payload: { adjustmentDate: salesChangeClickDate, direction: "decrease", lines: [
+      { saleLineId: "sln-change-a", adjustmentAmountMinor: 200, direction: "decrease", reason: "値引き合意" },
+      { saleLineId: "sln-change-b", adjustmentAmountMinor: 350, direction: "decrease", reason: "付属品不足への対応" },
+    ] },
+  }, "the API must receive deltas and distinct trimmed reasons, not calculated final prices");
+  assert.equal(document.getElementById("salesChangeOverlay"), null);
+
+  window.openSalesChangeModal(salesChangeSource.id);
+  window.applySalesChangeDirection('decrease');
+  const mixedDirectionA = document.getElementById('sales-change-line-direction-0');
+  const mixedDirectionB = document.getElementById('sales-change-line-direction-1');
+  assert.equal(mixedDirectionA.value, 'decrease');
+  assert.equal(mixedDirectionB.value, 'decrease', 'bulk selection includes products not selected yet');
+  assert.equal(document.querySelector('.sales-change-table th:nth-child(5)').textContent.trim(), '増減 必須');
+  for (const index of [0, 1]) {
+    document.getElementById(`sales-change-check-${index}`).checked = true;
+    document.getElementById(`sales-change-amount-${index}`).value = '200';
+    document.getElementById(`sales-change-reason-${index}`).value = '個別変更';
+  }
+  mixedDirectionB.value = 'increase';
+  mixedDirectionB.dispatchEvent(new window.Event('change', { bubbles: true }));
+  assert.equal(mixedDirectionA.value, 'decrease', 'individual edits must not change other rows');
+  assert.match(document.getElementById('sales-change-result-0').textContent, /\$9,150/u);
+  assert.match(document.getElementById('sales-change-result-1').textContent, /\$10,050/u);
+  assert.equal(document.querySelector('#salesChangeOverlay input[name="sales-change-direction"]:checked'), null,
+    'mixed selections must not show a misleading bulk direction');
+  assert.equal(window.updateSalesChangeState(), true);
+  window.applySalesChangeDirection('increase');
+  assert.equal(mixedDirectionA.value, 'increase', 'bulk can overwrite individual selections');
+  mixedDirectionA.value = 'decrease';
+  await window.submitSalesChange(salesChangeSource.id);
+  assert.equal(salesChangeSubmissions[1].payload.direction, 'mixed');
+  assert.deepEqual(salesChangeSubmissions[1].payload.lines.map(line => line.direction), ['decrease', 'increase']);
+  const mixedRevision = makeSalesChangeRevision('SC-MIXED', 'mixed', 0, {
+    displayTotalMinor: -150,
+    items: [
+      { sourceSaleLineId: 'sln-change-a', direction: 'increase', adjustmentAmount: 200, reason: '増額理由' },
+      { sourceSaleLineId: 'sln-change-b', direction: 'decrease', adjustmentAmount: 350, reason: '減額理由' },
+    ],
+  });
+  const mixedPreview = JSDOM.fragment(window.buildSalesAdjustmentRecordTemplateHTML(mixedRevision));
+  assert.match(mixedPreview.textContent, /\+\$200/u);
+  assert.match(mixedPreview.textContent, /−\$350/u);
+  assert.match(mixedPreview.textContent, /−\$150/u, 'mixed voucher total is the signed net adjustment');
+  assert.match(mixedPreview.textContent, /増額理由：増額理由/u);
+  assert.match(mixedPreview.textContent, /減額理由：減額理由/u);
+  const mixedDetail = JSDOM.fragment(window.buildSlipDetailBody('sales', mixedRevision));
+  assert.match(mixedDetail.textContent, /増額・減額/u);
+  assert.match(mixedDetail.textContent, /−\$150/u);
+  salesChangeData.sales.push(mixedRevision);
+  assert.equal(window._salesChangeAmount(salesChangeSource, salesChangeSource.items[0]), 9550);
+  assert.equal(window._salesChangeAmount(salesChangeSource, salesChangeSource.items[1]), 9500);
+  salesChangeData.sales.pop();
+
+  const savedSalesChangeRevision = makeSalesChangeRevision("SC-REASONS-PREVIEW", "decrease", 200, {
+    date: "2026-09-14", buyer: "B001", sourceSlipNumber: salesChangeSource.id,
+    displayTotalMinor: -550, reason: "商品ごとの調整理由", note: "商品ごとの調整理由",
+    items: [
+      { code: "CHANGE-A", brand: "ロレックス", model: "Submariner", adjustmentAmount: 200, beforeSalePrice: 9200, afterSalePrice: 9000, reason: "値引き合意 <説明>" },
+      { code: "CHANGE-B", brand: "オメガ", model: "Speedmaster", adjustmentAmount: 350, beforeSalePrice: 350, afterSalePrice: 0, reason: "付属品不足への対応" },
+    ],
+  });
+  const salesChangePreview = JSDOM.fragment(window.buildSalesAdjustmentRecordTemplateHTML(savedSalesChangeRevision));
+  assert.ok(salesChangePreview.textContent.includes(`売上伝票:${salesChangeSource.id}における金額修正`),
+    "revision remarks must identify the sales slip and state that its amount is being corrected");
+  assert.doesNotMatch(salesChangePreview.textContent, /元売上伝票：/u);
+  assert.doesNotMatch(salesChangePreview.textContent, /理由：商品ごとの調整理由/u, 'remarks must only identify the source sale');
+  assert.match(salesChangePreview.textContent, /初期売価：\$9,200 → 変更売価：\$9,000/u, "before and after prices must be on one line in that order");
+  assert.doesNotMatch(salesChangePreview.textContent, /元値：|変更後売価：/u);
+  assert.match(salesChangePreview.textContent, /ロレックス \/ Submariner\n初期売価：/u);
+  assert.doesNotMatch(salesChangePreview.textContent, /Submariner \/ 減額|Speedmaster \/ 減額/u);
+  assert.match(salesChangePreview.textContent, /変更売価：\$0/u, "zero must not be treated as missing");
+  assert.match(salesChangePreview.textContent, /−\$550/u, "total must remain the adjustment delta only");
+  const yenRevisionPreview = JSDOM.fragment(window.buildSalesAdjustmentRecordTemplateHTML({
+    ...savedSalesChangeRevision, currency: 'JPY', inputCurrency: 'JPY', adjustmentDirection: 'increase',
+    items: [{ brand: 'ロレックス', model: 'Submariner', adjustmentAmount: 1000, beforeSalePrice: 9000, afterSalePrice: 10000, reason: '追加の合意' }],
+  }));
+  assert.match(yenRevisionPreview.textContent, /初期売価：¥9,000 → 変更売価：¥10,000/u);
+  assert.match(yenRevisionPreview.textContent, /\+¥1,000/u);
+  assert.match(yenRevisionPreview.textContent, /増額理由：追加の合意/u);
+  assert.doesNotMatch(yenRevisionPreview.textContent, /Submariner \/ 増額/u);
+  assert.match(salesChangePreview.textContent, /減額理由：値引き合意 <説明>/u,
+    "print previews must preserve the first product's saved reason");
+  assert.match(salesChangePreview.textContent, /減額理由：付属品不足への対応/u,
+    "print previews must preserve each product's distinct reason");
+  assert.equal(salesChangePreview.querySelector("説明"), null,
+    "saved reasons must be escaped in the printable document");
+  assert.match(salesChangePreview.textContent, /調整金額合計/u);
+  const taxableRevision = { ...savedSalesChangeRevision, currency: 'JPY', inputCurrency: 'JPY', taxMode: 'taxable', taxRateBasisPoints: 1000,
+    displaySubtotalMinor: -50000, displayTaxAmountMinor: -5000, displayTotalMinor: -55000,
+    items: [{ adjustmentAmount: 50000, beforeSalePrice: 650000, afterSalePrice: 600000, direction: 'decrease', reason: '保証書なし' }] };
+  const taxablePreview = JSDOM.fragment(window.buildSalesAdjustmentRecordTemplateHTML(taxableRevision));
+  assert.match(taxablePreview.textContent, /消費税（10%）/u);
+  assert.match(taxablePreview.textContent, /−¥5,000/u);
+  assert.match(taxablePreview.textContent, /−¥55,000/u);
+  assert.match(taxablePreview.textContent, /減額理由：保証書なし/u);
+  const taxableDetail = JSDOM.fragment(window.buildSlipDetailBody('sales', taxableRevision));
+  assert.match(taxableDetail.textContent, /調整小計（税抜）/u);
+  assert.match(taxableDetail.textContent, /−¥5,000/u);
+  assert.match(taxableDetail.textContent, /−¥55,000/u);
+  assert.equal(window._salesAdjustmentLineTax(-15, taxableRevision), -2, 'round absolute tax before applying the direction');
+  assert.equal(window._salesAdjustmentLineTax(15, taxableRevision), 2);
+  assert.equal(window._salesAdjustmentLineTax(-50000, {taxMode:'tax_exempt',taxRateBasisPoints:1000}), 0);
+  assert.equal(window._salesAdjustmentLineTax(-50000, {taxMode:'taxable',taxRateBasisPoints:800}), -4000);
+  const salesChangeDetails = JSDOM.fragment(window.buildSlipDetailBody("sales", savedSalesChangeRevision));
+  const salesChangeDetailRows = [...salesChangeDetails.querySelectorAll(".appr-items-table tbody tr")];
+  assert.match(salesChangeDetailRows[0].textContent, /CHANGE-A[\s\S]*値引き合意 <説明>/u,
+    "saved slip details must associate the first reason with its own product row");
+  assert.match(salesChangeDetailRows[1].textContent, /CHANGE-B[\s\S]*付属品不足への対応/u,
+    "saved slip details must associate the second reason with its own product row");
+  assert.equal(salesChangeDetails.querySelector("説明"), null);
+
+  for (const [currency, expectedCurrencyText] of [["JPY", /¥9,250/u], ["HKD", /HK\$9,250/u]]) {
+    const currencySale = { ...salesChangeSource, _id: `sal-change-${currency}`, id: `SI-CHANGE-${currency}`,
+      currency, inputCurrency: currency,
+      items: [{ ...salesChangeSource.items[0], _id: `sln-change-${currency}`, inputCurrency: currency }] };
+    salesChangeData.sales.push(currencySale);
+    window.openSalesChangeModal(currencySale.id);
+    document.getElementById("sales-change-check-0").checked = true;
+    window.applySalesChangeDirection('increase');
+    document.getElementById("sales-change-amount-0").value = "50";
+    document.getElementById("sales-change-reason-0").value = "通貨表示の確認";
+    assert.equal(window.updateSalesChangeState(), true);
+    assert.match(document.getElementById("sales-change-result-0").textContent, expectedCurrencyText,
+      `${currency} sales must calculate and format in their native transaction currency`);
+    window.closeSalesChangeModal();
+  }
+} finally {
+  window.closeSalesChangeModal();
+  salesChangeData.sales.splice(0, salesChangeData.sales.length, ...salesChangeOriginalSales);
+  if (salesChangeOriginalAPI) {
+    window.ZaikoAPI = salesChangeOriginalAPI;
+    if (salesChangeOriginalCreate) window.ZaikoAPI.createSalesAdjustment = salesChangeOriginalCreate;
+    else delete window.ZaikoAPI.createSalesAdjustment;
+  } else delete window.ZaikoAPI;
+}
 savedSinglePurchaseSlip.arrivalStatus = "processing";
 savedSinglePurchaseSlip.pendingArrivalCount = 0;
 savedSinglePurchaseSlip.lines[0].currentStatus = "原価調整中";
@@ -3636,8 +4123,8 @@ assert.deepEqual(
   `inline handlers reference missing functions: ${[...missingHandlerFunctions].sort().join(", ")}`,
 );
 
-assert.equal(document.querySelectorAll(".page-panel").length, 24);
-assert.equal(document.querySelectorAll(".nav-item").length, 24);
+assert.equal(document.querySelectorAll(".page-panel").length, 25);
+assert.equal(document.querySelectorAll(".nav-item").length, 21);
 assert.equal(document.querySelectorAll(".modal-overlay").length, 50);
 const desktopSidebar = document.getElementById("appSidebar");
 const desktopSidebarToggle = document.getElementById("sidebarVisibilityToggle");
@@ -3672,22 +4159,27 @@ assert.equal(marketNavToggle.getAttribute("aria-expanded"), "true");
 assert.equal(marketNavGroup.classList.contains("has-active"), true,
   "the market parent must stay highlighted while a market child page is active");
 const costAdjustmentNavButton = document.getElementById("costAdjustmentNavButton");
-assert.ok(costAdjustmentNavButton, "cost adjustment must remain directly below product registration");
-assert.match(costAdjustmentNavButton.textContent, /原価調整/u);
-assert.equal(document.getElementById("costAdjustmentNavSubmenu"), null,
-  "removed cost adjustment child actions must not remain in the DOM");
+assert.ok(costAdjustmentNavButton, "cost adjustment must remain under cost management");
+assert.match(costAdjustmentNavButton.textContent, /原価管理/u);
+const costManagementNavGroup = document.getElementById("costManagementNavGroup");
+const costManagementNavToggle = document.getElementById("costManagementNavToggle");
+const costManagementNavSubmenu = document.getElementById("costManagementNavSubmenu");
+assert.ok(costManagementNavGroup && costManagementNavToggle && costManagementNavSubmenu);
+assert.deepEqual([...costManagementNavSubmenu.querySelectorAll('.nav-item[data-page]')].map(item=>item.dataset.page),
+  ["cost-adjustment", "cost-adjustment-slips"]);
 assert.doesNotMatch(sidebarGroups[0].textContent, /分解|結合|入れ替え/u,
   "the three removed cost adjustment actions must not remain in the sidebar");
 assert.deepEqual(
   [...sidebarGroups[0].querySelectorAll(".nav-item[data-page]")].map((item) => item.dataset.page),
-  ["dashboard", "market-entry", "market", "inventory", "parts-management", "purchase-entry", "purchase", "cost-adjustment"],
+  ["dashboard", "market-entry", "market", "inventory", "purchase-entry", "purchase", "cost-adjustment", "cost-adjustment-slips"],
   "main navigation order must follow the inventory workflow",
 );
 assert.ok(document.getElementById("page-cost-adjustment"), "cost adjustment must have its own page");
+assert.ok(document.getElementById("page-cost-adjustment-slips"), "adjustment slips must have their dedicated page");
 assert.deepEqual(
   [...document.querySelectorAll("[data-ca-mode]")].map((button) => button.textContent.trim()),
-  ["崩し", "結合"],
-  "the cost adjustment toolbar must expose only breakdown and combine",
+  ["原価分け", "原価合わせ", "原価調整"],
+  "the cost management toolbar must expose split, combine, and adjustment",
 );
 assert.equal(document.querySelector('[data-ca-mode="swap"]'), null,
   "the removed swap mode must not remain in the cost adjustment toolbar");
@@ -3707,6 +4199,15 @@ assert.equal(document.querySelectorAll("#ca-part-grid .ca-part-slot").length, 20
   "the parts box must render as twenty positions (4 by 5)");
 assert.equal(document.getElementById("ca-start-button").disabled, true,
   "cost adjustment must not start before a product is loaded");
+window.eval("APP_DATA.inventory.push({_id:'cost-sold',code:'COST-SOLD',status:'売上済',purchasePrice:999999},{_id:'cost-progress',code:'COST-IN-PROGRESS',status:'原価調整中',purchasePrice:999999});");
+document.getElementById("ca-product-code").value = "COST-SOLD";
+assert.equal(window.costAdjustmentLoadProduct(), false,
+  "sold products must never be loaded into cost management");
+assert.match(document.getElementById("ca-product-feedback").textContent, /対象外/u);
+document.getElementById("ca-product-code").value = "COST-IN-PROGRESS";
+assert.equal(window.costAdjustmentLoadProduct(), false,
+  "products already under cost adjustment must not be loaded into another cost-management operation");
+window.eval("APP_DATA.inventory[0].status = '在庫中'; APP_DATA.inventory[0].inventoryValuationExcluded = false;");
 const costAdjustmentProductCode = window.eval("APP_DATA.inventory[0].code");
 document.getElementById("ca-product-code").value = costAdjustmentProductCode;
 assert.equal(window.costAdjustmentLoadProduct(), true);
@@ -3790,7 +4291,7 @@ assert.equal(window.costAdjustmentSetMode("swap"), "breakdown",
 window.costAdjustmentSetMode("breakdown");
 assert.equal(await window.costAdjustmentStart(), true,
   "breakdown must start once the management number resolves to a product");
-assert.equal(document.getElementById("ca-parts-title").textContent, "崩し作業スペース");
+assert.equal(document.getElementById("ca-parts-title").textContent, "原価分け作業スペース");
 assert.equal(document.getElementById("ca-product-summary").draggable, true,
   "the full product summary must become draggable after breakdown starts");
 assert.equal(document.getElementById("ca-breakdown-drop-guide").getAttribute("role"), "button",
@@ -3818,59 +4319,130 @@ assert.equal(window.costAdjustmentDropProduct({
 }), true, "dropping the full product summary into the breakdown workspace must open its modal");
 assert.equal(document.getElementById("costAdjustmentBreakdownModal").classList.contains("hidden"), false,
   "dropping the product must be able to open the quantity modal");
-document.getElementById("ca-breakdown-product-count").value = "13";
-document.getElementById("ca-breakdown-part-count").value = "8";
+document.getElementById("ca-breakdown-product-count").value = "21";
 assert.equal(window.costAdjustmentConfirmBreakdown(), false,
   "breakdown quantities must not exceed the twenty available slots");
-assert.match(document.getElementById("ca-breakdown-modal-error").textContent, /20点以内/u);
-document.getElementById("ca-breakdown-product-count").value = "2";
-document.getElementById("ca-breakdown-part-count").value = "8";
+assert.match(document.getElementById("ca-breakdown-modal-error").textContent, /20個以内/u);
+document.getElementById("ca-breakdown-product-count").value = "4";
+window.eval("_costAdjustmentState.breakdownStartedDate = '2026-09-11'");
 assert.equal(window.costAdjustmentConfirmBreakdown(), true);
-assert.match(document.getElementById("ca-breakdown-result").textContent, /商品\s*2\s*点/u);
-assert.match(document.getElementById("ca-breakdown-result").textContent, /パーツ\s*8\s*点/u);
-assert.equal(document.querySelectorAll("#ca-part-grid .ca-breakdown-product-slot").length, 2,
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft.adjustmentDate"), '2026-09-11');
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft.items.every(item => item.managementCode.startsWith('110926'))"), true);
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft.items.every(item => item.sku === '')"), true,
+  "split outputs must start with an empty SKU");
+assert.equal(window.eval(`_costAdjustmentState.breakdownDraft.items.every(item => {
+  const product = item.product;
+  return product.brandCode === '' && product.modelName === '' && product.referenceNumber === ''
+    && product.serialNumber === '' && product.materialCode === '' && product.movementCode === ''
+    && product.conditionCode === '' && product.beltMaterial === '' && product.dial === ''
+    && product.accessories.length === 0 && product.salePriceUsdMinor === 0 && product.notes === '';
+})`), true, "split output details must not inherit the source product data");
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft.items.every(item => item.product.internalComment === `原価管理番号: ${_costAdjustmentState.product.code}`)"), true,
+  "split outputs must keep only the source cost management number as an audit comment");
+window.costAdjustmentOpenItemEditor(0);
+assert.match(document.querySelector('label[for="ca-item-comment"]').textContent, /原価管理番号/u);
+assert.match(document.querySelector('label[for="ca-item-comment"] + textarea + small').textContent, /調整伝票番号/u);
+assert.equal(document.getElementById("ca-item-sku").value, "");
+assert.equal(document.getElementById("ca-edit-product-brand").value, "");
+assert.equal(document.getElementById("ca-edit-product-model").value, "");
+assert.equal(document.getElementById("ca-edit-product-ref").value, "");
+assert.equal(document.getElementById("ca-edit-product-condition").value, "");
+assert.equal([...document.getElementById("ca-edit-product-accessories").selectedOptions].length, 0);
+assert.equal(document.getElementById("ca-item-notes").value, "");
+document.getElementById("ca-edit-product-brand").value = document.getElementById("ca-edit-product-brand").options[1].value;
+document.getElementById("ca-item-cost").value = "123000";
+assert.equal(window.costAdjustmentCompleteItemEdit(), true);
+assert.equal(document.querySelector("#ca-split-slip-lines .ca-split-cost-input").value, "123000",
+  "a cost entered in the item editor must immediately appear in the matching adjustment-slip line");
+assert.match(document.getElementById("ca-breakdown-result").textContent, /分裂後の商品\s*4\s*個/u);
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-breakdown-product-slot").length, 4,
   "confirmed product quantities must occupy red breakdown slots");
-assert.equal(document.querySelectorAll("#ca-part-grid .ca-breakdown-part-slot").length, 8,
-  "confirmed part quantities must occupy blue breakdown slots");
-assert.equal(document.querySelectorAll("#ca-part-grid .ca-part-slot-disabled").length, 10,
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-breakdown-part-slot").length, 0,
+  "cost splitting must not create part slots");
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-part-slot-disabled").length, 16,
   "all remaining breakdown slots must be greyed out");
-assert.equal(document.querySelectorAll("#ca-part-grid .ca-part-slot-disabled[aria-disabled='true']").length, 10,
+assert.equal(document.querySelectorAll("#ca-part-grid .ca-part-slot-disabled[aria-disabled='true']").length, 16,
   "greyed out slots must be exposed as disabled to assistive technology");
+assert.equal(document.getElementById("ca-split-slip").hidden, false,
+  "the cost split slip must appear directly below the BOX after quantities are confirmed");
+assert.match(document.getElementById("ca-split-slip-title").textContent, /原価調整伝票/u);
+assert.match(document.getElementById("ca-split-slip").textContent, /備考：原価分け/u);
+assert.equal(document.querySelectorAll("#ca-split-slip-lines .ca-split-cost-input").length, 4,
+  "the cost split slip must provide one editable amount for every generated product");
+assert.equal(document.querySelectorAll("#ca-split-slip-lines .ca-split-source-row").length, 1,
+  "the adjustment slip preview must include the source product");
+assert.match(document.querySelector("#ca-split-slip-lines .ca-split-source-row").textContent, /対象商品（原価分け前）/u);
+assert.match(document.querySelector("#ca-split-slip-lines .ca-split-source-row").textContent, /¥0/u,
+  "the source product must be shown at zero yen on the adjustment slip");
 assert.equal(document.getElementById("ca-part-code").disabled, true,
   "part management number input must be disabled after breakdown confirmation");
 assert.equal(document.querySelector("#ca-parts-panel .ca-add-part-button").disabled, true,
   "the part add action must be disabled after breakdown confirmation");
+assert.equal(document.querySelector('label[for="ca-part-code"]').textContent.trim(), "管理番号検索");
 assert.equal(window.costAdjustmentAddPart("PART-LOCKED-001"), false,
   "confirmed breakdown boxes must reject further part entry");
 assert.equal(window.eval("_costAdjustmentMove({ source: 'slot', index: 0 }, 'slot', 5)"), false,
   "confirmed breakdown boxes must reject drag movement");
+for (let index = 0; index < 4; index += 1) {
+  window.costAdjustmentUpdateSplitLineAmount(index, "1");
+}
+assert.equal(document.getElementById("ca-finalize-button").disabled, true,
+  "cost split confirmation must remain disabled while the allocated total differs from the source cost");
+assert.match(document.getElementById("ca-finalize-button").title, /編集/u,
+  "blank split outputs must explain that product editing is still required");
+const costSplitTarget = window.eval("_costAdjustmentState.breakdownDraft.targetCostJpyMinor");
+const sourceHistoricalCost = window.eval("_costAdjustmentState.product.purchasePrice");
+window.costAdjustmentUpdateSplitLineAmount(0, String(costSplitTarget - 3));
+assert.equal(document.getElementById("ca-finalize-button").disabled, true,
+  "cost split confirmation must remain disabled until every blank output has been edited");
+window.eval("_costAdjustmentState.breakdownDraft.items.forEach(item => { item.completed = true; })");
+window.costAdjustmentRenderAllocationSummary();
+window.costAdjustmentRenderSplitSlip();
+assert.equal(document.getElementById("ca-finalize-button").disabled, false,
+  "cost split confirmation must unlock only when every item is complete and the cost total matches exactly");
+assert.equal(document.getElementById("ca-finalize-button").getAttribute("aria-disabled"), "false");
+assert.match(document.getElementById("ca-allocation-balance").textContent, /完全一致/u);
+assert.match(document.getElementById("ca-split-slip-status").textContent, /元商品の原価と完全一致/u);
+const originalZaikoAPI = window.ZaikoAPI;
+window.ZaikoAPI = window.ZaikoAPI || {};
+const originalConfirmProductCostAdjustment = window.ZaikoAPI.confirmProductCostAdjustment;
+window.ZaikoAPI.confirmProductCostAdjustment = async () => ({
+  id: "cad-test-1",
+  slipNumber: "CA-2026-0001",
+  adjustmentDate: "2026-08-31",
+  sourceProductCode: costAdjustmentProductCode,
+  sourceStatus: "cost_adjustment",
+  outputs: window.eval("_costAdjustmentState.breakdownDraft.items.map(item => ({ position: item.position, managementCode: `3108269${String(item.position).padStart(3, '0')}` }))"),
+});
+assert.equal(await window.costAdjustmentFinalize(), true,
+  "an exactly allocated cost split must issue its confirmed adjustment slip");
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft.items.every(item => item.product.internalComment.includes('調整伝票番号: CA-2026-0001'))"), true,
+  "confirmed split outputs must show their issued adjustment slip number in the cost management field");
+assert.match(document.getElementById("ca-split-slip-title").textContent, /原価調整伝票/u);
+assert.equal(document.querySelector("#ca-split-slip .ca-split-slip-badge").textContent, "CA-2026-0001");
+assert.match(document.querySelector("#ca-split-slip-lines .ca-split-source-row").textContent, /対象商品（原価分け前）/u,
+  "the confirmed slip must retain the source product as an audit line");
+assert.equal(document.querySelectorAll("#ca-split-slip .ca-split-cost-input:disabled").length, 4,
+  "confirmed slip amounts must be locked");
+assert.equal(window.eval("_costAdjustmentState.product.purchasePrice"), sourceHistoricalCost,
+  "the source product must retain its historical cost after a split");
+assert.equal(window.eval("_costAdjustmentState.product.inventoryValuationExcluded"), true,
+  "the source product must be excluded from current inventory valuation after a split");
+assert.equal(window.eval("_costAdjustmentState.product.status"), "原価調整中");
+if (originalZaikoAPI) window.ZaikoAPI.confirmProductCostAdjustment = originalConfirmProductCostAdjustment;
+else delete window.ZaikoAPI;
 assert.equal(sidebarGroups[1].querySelector(".nav-group-label").textContent.trim(), "経理・会計");
 assert.deepEqual(
   [...sidebarGroups[1].querySelectorAll(".nav-item[data-page]")].map((item) => item.dataset.page),
-  ["sales-list", "deleted-slips", "sales", "shipping", "consignment", "sales-adjustment-entry", "purchase-adjustment-entry"],
+  ["sales-list", "deleted-slips", "sales", "shipping", "consignment"],
   "accounting navigation must start with the document list",
 );
-const adjustmentEntryNavGroup = document.getElementById("adjustmentEntryNavGroup");
-const adjustmentEntryNavToggle = document.getElementById("adjustmentEntryNavToggle");
-const adjustmentEntryNavSubmenu = document.getElementById("adjustmentEntryNavSubmenu");
-assert.ok(adjustmentEntryNavGroup, "adjustment registration links must be grouped below consignment registration");
-assert.match(adjustmentEntryNavToggle.textContent, /調整登録/u);
-assert.deepEqual(
-  [...adjustmentEntryNavSubmenu.querySelectorAll(".nav-item[data-page]")].map((item) => item.dataset.page),
-  ["sales-adjustment-entry", "purchase-adjustment-entry"],
-  "adjustment registration must list sales adjustment before purchase adjustment",
-);
-window.navigateTo("consignment");
-assert.equal(adjustmentEntryNavToggle.getAttribute("aria-expanded"), "false");
-assert.equal(adjustmentEntryNavSubmenu.hidden, true, "adjustment registration children must be collapsed outside adjustment pages");
-adjustmentEntryNavToggle.click();
-await Promise.resolve();
-assert.equal(adjustmentEntryNavToggle.getAttribute("aria-expanded"), "true");
-assert.equal(adjustmentEntryNavSubmenu.hidden, false, "clicking adjustment registration must reveal both child links");
+assert.equal(document.getElementById("adjustmentEntryNavGroup"), null,
+  "the retired adjustment registration hierarchy must not appear in the sidebar");
+assert.equal(document.querySelector('.nav-item[data-page="sales-adjustment-entry"]'), null);
+assert.equal(document.querySelector('.nav-item[data-page="purchase-adjustment-entry"]'), null);
 window.navigateTo("sales-adjustment-entry");
 assert.equal(document.getElementById("page-sales-adjustment-entry").classList.contains("hidden"), false);
-assert.equal(adjustmentEntryNavGroup.classList.contains("has-active"), true);
-assert.equal(adjustmentEntryNavToggle.getAttribute("aria-expanded"), "true");
 assert.equal(document.getElementById("pageTitle").textContent, "売上調整登録");
 for (const controlId of [
   "sae-part-code", "sae-product-code", "sae-load-button", "sae-target-result", "sae-linked-slip",
@@ -3910,10 +4482,11 @@ const persistedBusinessState = JSON.parse(window.localStorage.getItem("inv_busin
 assert.equal(persistedBusinessState.salesAdjustments.at(-1).id, registeredSalesAdjustment.id,
   "created adjustment slips must survive page reload through business workflow persistence");
 window.navigateTo("sales-list");
-window.switchSlipTab("salesadjustment");
+window.navigateTo("cost-adjustment-slips");
 window.showAllSlipList();
 assert.match(document.getElementById("slipListBody").textContent, new RegExp(registeredSalesAdjustment.id),
-  "the created sales adjustment slip must appear in the sales-adjustment document tab");
+  "the created sales adjustment slip must appear in the unified adjustment document tab");
+assert.match(document.getElementById("slipListBody").textContent, /売上調整/u);
 
 window.navigateTo("sales-adjustment-entry");
 window.eval(`APP_DATA.inventory.push({
@@ -3945,7 +4518,6 @@ assert.match(document.getElementById("sae-linked-slip").textContent, /CO-SAE-000
 window.eval("APP_DATA.parts.pop(); APP_DATA.consignments.pop()");
 window.navigateTo("purchase-adjustment-entry");
 assert.equal(document.getElementById("page-purchase-adjustment-entry").classList.contains("hidden"), false);
-assert.equal(adjustmentEntryNavGroup.classList.contains("has-active"), true);
 assert.equal(document.getElementById("pageTitle").textContent, "仕入調整登録");
 assert.ok(document.getElementById("page-deleted-slips"), "deleted document archive page must be present");
 assert.ok(document.getElementById("deletedSlipListBody"), "deleted document archive table must be present");
@@ -3960,8 +4532,31 @@ assert.match(staticAppSource, /'consignment': '委託登録'/u,
 assert.equal(staticAppSource.includes("委託伝票登録"), false,
   "the former consignment registration page label must not remain");
 assert.ok(document.getElementById("sltab-consignment"), "document list must include the consignment tab");
-assert.ok(document.getElementById("sltab-purchaseadjustment"), "document list must include the purchase adjustment tab");
-assert.ok(document.getElementById("sltab-salesadjustment"), "document list must include the sales adjustment tab");
+assert.equal(document.getElementById("sltab-adjustment"), null, "document list must not include adjustment slips");
+assert.equal(document.getElementById("sltab-purchaseadjustment"), null);
+assert.equal(document.getElementById("sltab-salesadjustment"), null);
+window.eval(`APP_DATA.costAdjustments = [{
+  id: "CA-2026-0001", date: "2026-08-31", adjustmentType: "breakdown",
+  sourceProductCode: "3108260010", sourceBrand: "ロレックス", sourceModel: "Classic Watch",
+  sourceCostJpyMinor: 350000, adjustedCostJpyMinor: 350000, status: "処理済", note: "原価分け",
+  lines: [{ position: 1, kind: "product", code: "3108260011", allocatedCostJpyMinor: 350000 }]
+}]`);
+window.navigateTo("cost-adjustment-slips");
+window.showAllSlipList();
+assert.match(document.getElementById("slipListBody").textContent, /原価調整（原価分け）/u,
+  "unified adjustment list must render the cost-adjustment slip pattern");
+assert.match(document.getElementById("slipListBody").textContent, /CA-2026-0001/u);
+window.openCostAdjustmentSlipDetail("CA-2026-0001");
+assert.match(document.getElementById("slipDetailTitle").textContent, /原価調整伝票/u);
+assert.match(document.getElementById("slipDetailBody").textContent, /調整前原価/u);
+assert.match(document.getElementById("slipDetailFooter").textContent, /伝票をプレビューで見る/u);
+window.openSavedSlipDocument("costadjustment", "CA-2026-0001");
+assert.equal(document.getElementById("savedSlipDocumentModal").classList.contains("hidden"), false);
+assert.match(document.getElementById("savedSlipDocumentTitle").textContent, /原価調整伝票プレビュー/u);
+assert.match(document.getElementById("savedSlipDocumentPrintArea").textContent, /3108260011/u);
+window.closeSavedSlipDocument();
+window.closeSlipDetail();
+window.eval("APP_DATA.costAdjustments = []");
 const shipmentDetailTable = window.buildItemsTable(
   [{ code: "0408260004", brand: "グランドセイコー", model: "Heritage Collection", salePrice: 5975 }],
   "shipping",
@@ -4027,6 +4622,178 @@ window.renderFxRateTab(fxRateArea);
 assert.equal(fxRateArea.querySelectorAll(".fx-trend-card").length, 3, "foreign exchange tab must show three currency charts");
 assert.ok(fxRateArea.querySelector(".fx-history-table"), "numeric rate history must remain available below the charts");
 
+window.eval(await readFile(path.join(referenceRoot, 'js', 'cost_merge.js'), 'utf8'));
+window.eval(`_costAdjustmentState.breakdownActive=false; _costAdjustmentState.combineActive=false;
+  _costAdjustmentState.breakdownDraft=null; _costAdjustmentState.combineDraft=null;
+  APP_DATA.inventory.push({_id:'merge-a',code:'MERGE-A',status:'在庫中',purchasePrice:100,salePrice:250,sku:'A',internalComment:'調整伝票番号: CA-2026-0001'},
+    {_id:'merge-b',code:'MERGE-B',status:'原価調整中',purchasePrice:200,sku:'B',internalComment:'原価調整伝票番号: CA-2026-0001'});`);
+window.costAdjustmentSetMode('combine');
+assert.equal(window.costAdjustmentAddPart('COST-SOLD'), false,
+  'sold products must not be added to the cost merge BOX');
+assert.equal(window.costAdjustmentAddPart('MERGE-A'), true);
+assert.equal(document.getElementById('ca-start-button').disabled, true);
+assert.equal(window.costAdjustmentAddPart('MERGE-A'), false);
+assert.equal(window.costAdjustmentAddPart('MERGE-B'), false,
+  'products already under cost adjustment must not be added to a cost merge BOX');
+assert.equal(document.getElementById('ca-start-button').disabled, true);
+window.eval("APP_DATA.inventory.find(p=>p.code==='MERGE-B').status='在庫中'");
+assert.equal(window.costAdjustmentAddPart('MERGE-B'), true);
+assert.match(document.getElementById('ca-parts-subtitle').textContent,/在庫中の商品/u);
+assert.equal(document.getElementById('ca-start-button').disabled, false);
+assert.equal(document.querySelectorAll('#ca-split-slip-lines tr').length, 2);
+assert.match(document.getElementById('ca-split-slip-lines').textContent,/履歴原価・現在在庫集計対象外/u);
+let mergeConfirmCount=0;
+let costStartResetCount=0;
+window.ZaikoAPI={hydrateAdmin:async()=>{},request:async(path,options)=>{
+ if(path==='/cost-merges') {
+  assert.deepEqual(JSON.parse(options.body).productIds,['merge-a','merge-b']);
+  return {id:'cmg-test',managementCode:'1209260001',businessDate:'2026-09-12'};
+ }
+ mergeConfirmCount++;
+ const body=JSON.parse(options.body);
+ assert.equal(body.output.allocatedCostJpyMinor,300);
+ assert.equal(body.output.product.modelNumber,'Merged watch');
+ return {slipNumber:'CA-2026-0099'};
+},startProductCostAdjustment:async(item,options)=>{
+ assert.equal(options.mode,'adjustment');
+ const product=window.eval('APP_DATA.inventory').find(product=>product._id===item._id);
+ product.status='原価調整中';
+ product.comment=[product.comment,`もともとの想定売価: ${window.formatSalePrice(product.salePrice||0)}`].filter(Boolean).join('\n');
+ product.salePrice=0;
+ return product;
+},resetCostAdjustmentStart:async(items)=>{
+ costStartResetCount++;
+ for (const item of items) {
+  const product=window.eval('APP_DATA.inventory').find(product=>product._id===item._id);
+  if (!product) continue;
+  product.status='在庫中';
+  product.salePrice=250;
+  product.comment=String(product.comment||'').split('\n').filter(line=>!line.startsWith('もともとの想定売価:')).join('\n');
+ }
+ return {mode:items.length > 1 ? 'combine' : 'adjustment',products:items};
+}};
+assert.equal(await window.costAdjustmentStart(),true);
+assert.equal(document.getElementById('ca-reset-button').hidden,false,
+  'a started cost merge must expose the current-operation reset action');
+assert.equal(window.eval("APP_DATA.inventory.find(p=>p.code==='MERGE-A').status"),'原価調整中');
+assert.equal(window.eval("APP_DATA.inventory.find(p=>p.code==='MERGE-B').status"),'原価調整中');
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft.inputs.map(p=>p.status).join(',')"),'原価調整中,原価調整中',
+  'starting cost merge must immediately mark every source product as cost adjustment in progress');
+assert.match(document.getElementById('ca-product-feedback').textContent,/1209260001/u);
+assert.equal(document.querySelectorAll('#ca-split-slip-lines tr').length,3);
+assert.equal(document.querySelector('#ca-split-slip-lines .ca-split-cost-input'),null,
+  'cost merge output must not expose an editable cost input');
+assert.match(document.querySelector('#ca-split-slip-lines .ca-merge-auto-cost').textContent,/¥300/u,
+  'cost merge output must show the sum of BOX source costs');
+assert.equal(window.costMergeEdit(),true);
+assert.equal(document.getElementById('ca-item-cost').readOnly,true,
+  'cost merge editor must keep the automatically summed cost read-only');
+assert.equal(document.getElementById('ca-item-comment-label').textContent.includes('原価管理番号'),false,
+  'cost merge editor must not show a cost management number');
+assert.match(document.getElementById('ca-item-comment').value,/調整伝票番号: CA-2026-0001/u,
+  'cost merge editor must retain the source cost-adjustment slip number');
+assert.match(document.getElementById('ca-item-comment').value,/原価合わせ元: MERGE-A, MERGE-B/u);
+assert.equal(document.getElementById('ca-item-comment').value.includes('原価管理番号:'),false);
+document.getElementById('ca-edit-product-brand').value=document.getElementById('ca-edit-product-brand').options[1].value;
+document.getElementById('ca-edit-product-model').value='Merged watch';
+assert.equal(window.costAdjustmentCompleteItemEdit(),true);
+window.costMergeAmount('299');
+assert.equal(window.eval('_costAdjustmentState.breakdownDraft.items[0].allocatedCostJpyMinor'),300,
+  'cost merge amount must ignore attempted overrides and stay equal to the BOX total');
+assert.equal(document.getElementById('ca-finalize-button').disabled,false);
+assert.equal(await window.costAdjustmentFinalize(),true);
+assert.equal(await window.costAdjustmentFinalize(),false);
+assert.equal(mergeConfirmCount,1);
+assert.match(document.getElementById('ca-split-slip-title').textContent,/原価調整済み/u);
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft.items[0].product.internalComment.includes('原価管理番号:')"),false);
+assert.equal(window.eval("(_costAdjustmentState.breakdownDraft.items[0].product.internalComment.match(/CA-2026-0001/g)||[]).length"),1,
+  'duplicate source adjustment slip numbers must be accumulated only once');
+assert.match(window.eval("_costAdjustmentState.breakdownDraft.items[0].product.internalComment"),/調整伝票番号: CA-2026-0001[\s\S]*調整伝票番号: CA-2026-0099/u);
+assert.match(window.eval("_costAdjustmentState.breakdownDraft.items[0].product.internalComment"),/調整伝票番号: CA-2026-0099/u);
+window.eval(await readFile(path.join(referenceRoot, 'js', 'cost_adjustment_entry.js'), 'utf8'));
+window.eval('_costAdjustmentState.combineActive=false; _costAdjustmentState.breakdownActive=false;');
+window.costAdjustmentSetMode('adjustment');
+assert.equal(document.getElementById('ca-direct-adjustment').hidden,false);
+assert.equal(document.querySelector('#page-cost-adjustment .ca-workbench').classList.contains('ca-direct-hidden'),true);
+assert.equal(document.querySelector('.ca-direct-slip-table').classList.contains('purchase-slip-detail-table'),true,
+  'the cost adjustment slip must reuse the purchase/sales slip detail-table presentation');
+assert.match(document.querySelector('.ca-direct-slip .sdi-heading').textContent,/明細一覧/u);
+assert.deepEqual([...document.querySelectorAll('.ca-direct-slip-table thead th')].map(th=>th.textContent.trim()),
+  ['No.','商品コード','SKU','ブランド','型番／モデル','ステータス','現在原価','今回調整','調整後原価','備考','操作']);
+assert.equal(document.getElementById('ca-direct-start').disabled,true,
+  'direct cost adjustment start must stay disabled until a management number is entered');
+document.getElementById('ca-direct-code').value='COST-SOLD';
+window.costDirectCodeChanged();
+assert.equal(document.getElementById('ca-direct-start').disabled,false);
+assert.equal(await window.costDirectStart(),false,
+  'sold products must not be added to a direct cost adjustment slip');
+document.getElementById('ca-direct-code').value='COST-IN-PROGRESS';
+assert.equal(await window.costDirectStart(),false,
+  'products already under cost adjustment must not be added to a direct cost adjustment slip');
+document.getElementById('ca-direct-code').value='MERGE-A';
+assert.equal(await window.costDirectStart(),false,
+  'a product started by another cost-management operation must be rejected');
+window.eval("const p=APP_DATA.inventory.find(p=>p.code==='MERGE-A'); p.status='在庫中'; p.note='既存の備考'");
+document.getElementById('ca-direct-code').value='MERGE-A';
+assert.equal(await window.costDirectStart(),true);
+assert.equal(window.eval("APP_DATA.inventory.find(p=>p.code==='MERGE-A').salePrice"),0,
+  'starting direct cost adjustment must clear the planned sale price');
+assert.match(window.eval("APP_DATA.inventory.find(p=>p.code==='MERGE-A').comment"),/もともとの想定売価:/u,
+  'starting direct cost adjustment must preserve the former sale price in the internal comment');
+assert.equal(document.getElementById('ca-direct-start').disabled,true,
+  'direct cost adjustment must not accept a second product after starting');
+assert.equal(document.getElementById('ca-direct-code').disabled,true);
+assert.equal(document.querySelectorAll('#ca-direct-lines tr').length,1,
+  'direct cost adjustment must contain exactly one product line');
+assert.equal(document.getElementById('ca-direct-reset').hidden,false,
+  'a started direct adjustment must expose the current-operation reset action');
+assert.equal(await window.costDirectReset(),true);
+assert.equal(costStartResetCount,1);
+assert.equal(window.eval("APP_DATA.inventory.find(p=>p.code==='MERGE-A').status"),'在庫中');
+assert.equal(window.eval("APP_DATA.inventory.find(p=>p.code==='MERGE-A').salePrice"),250);
+assert.equal(document.getElementById('ca-direct-reset').hidden,true);
+document.getElementById('ca-direct-code').value='MERGE-A';
+window.costDirectCodeChanged();
+assert.equal(await window.costDirectStart(),true,
+  'the restored product can be started again with the corrected operation');
+assert.equal(document.getElementById('ca-direct-reason').required,true);
+assert.equal(document.getElementById('ca-direct-global-amount').required,true);
+assert.match(document.querySelector('label[for="ca-direct-global-amount"] .ca-direct-field-label').textContent,/調整金額（税抜き）/u);
+assert.equal(document.getElementById('ca-direct-register').disabled,true,
+  'reason and adjustment amount must be required before issuing the slip');
+document.getElementById('ca-direct-global-amount').value='50000';
+document.getElementById('ca-direct-global-amount').dispatchEvent(new window.Event('input',{bubbles:true}));
+assert.equal(document.getElementById('ca-direct-global-amount').value,'50,000',
+  'direct cost adjustment amount must be formatted with thousands separators while typing');
+document.getElementById('ca-direct-code').value='MERGE-A';
+assert.equal(await window.costDirectStart(),false);
+window.costDirectReason('手入力メモ');
+window.costDirectGlobalAmount('50');
+window.costDirectDirection('減額');
+assert.equal(document.getElementById('ca-direct-reason').value,'手入力メモ');
+assert.equal(document.getElementById('ca-direct-amount-sign').textContent,'−');
+assert.match(document.getElementById('ca-direct-lines').textContent,/¥100\s*−\s*¥50/u);
+assert.match(document.getElementById('ca-direct-lines').textContent,/¥50/u);
+assert.match(document.getElementById('ca-direct-lines').textContent,/減額｜理由：手入力メモ｜金額：−¥50/u);
+assert.match(document.getElementById('ca-direct-totals').textContent,/合計/u);
+assert.match(document.getElementById('ca-direct-totals').textContent,/−¥50/u);
+assert.equal(document.getElementById('ca-direct-register').disabled, false);
+const mergeRequest = window.ZaikoAPI.request;
+window.ZaikoAPI.request = async (path, options) => {
+  assert.equal(path, '/cost-adjustments/direct');
+  const body = JSON.parse(options.body);
+  assert.equal(body.direction, 'decrease');
+  assert.equal(body.notes, '手入力メモ');
+  assert.deepEqual(body.items, [{productId:'merge-a',adjustmentAmountJpyMinor:50}]);
+  return {id:'cad-direct-test',slipNumber:'CA-2026-0100',items:[{productId:'merge-a',adjustedCostJpyMinor:50}]};
+};
+assert.equal(await window.costDirectRegister(), true);
+assert.match(document.getElementById('ca-direct-register-status').textContent,/CA-2026-0100/u);
+assert.match(document.getElementById('ca-direct-register-status').textContent,/仕入伝票は変更されていません/u);
+window.ZaikoAPI.request = mergeRequest;
+window.costAdjustmentSetMode('breakdown');
+assert.equal(document.getElementById('ca-direct-adjustment').hidden,true);
+assert.equal(document.querySelector('#page-cost-adjustment .ca-workbench').classList.contains('ca-direct-hidden'),false);
 dom.window.close();
 
 let guestHtml = guestHtmlSource.replace(/<link\b[^>]*>/gi, "");

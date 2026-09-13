@@ -279,11 +279,12 @@ func nextDocumentSequence(tx *gorm.DB, organizationID, documentType string, year
 		table      string
 		dateColumn string
 	}{
-		"purchase":    {"purchase_slips", "purchase_date"},
-		"sale":        {"sales_slips", "sale_date"},
-		"shipment":    {"shipment_slips", "shipment_date"},
-		"consignment": {"consignment_slips", "consignment_date"},
-		"return":      {"return_slips", "transaction_date"},
+		"purchase":         {"purchase_slips", "purchase_date"},
+		"sale":             {"sales_slips", "sale_date"},
+		"shipment":         {"shipment_slips", "shipment_date"},
+		"consignment":      {"consignment_slips", "consignment_date"},
+		"return":           {"return_slips", "transaction_date"},
+		"sales_adjustment": {"sales_adjustment_slips", "adjustment_date"},
 	}[documentType]
 	if !ok {
 		return 0, fmt.Errorf("unsupported document sequence type %q", documentType)

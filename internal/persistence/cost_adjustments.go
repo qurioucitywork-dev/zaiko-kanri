@@ -2,7 +2,6 @@ package persistence
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -58,12 +57,13 @@ type CostAdjustmentOutputDraft struct {
 }
 
 type CostAdjustmentConfirmInput struct {
-	OrganizationID  string
-	ActorUserID     string
-	SourceProductID string                      `json:"-"`
-	Mode            string                      `json:"mode"`
-	PartIDs         []string                    `json:"partIds,omitempty"`
-	Outputs         []CostAdjustmentOutputDraft `json:"outputs"`
+	ReservedProductCode string `json:"-"`
+	OrganizationID      string
+	ActorUserID         string
+	SourceProductID     string                      `json:"-"`
+	Mode                string                      `json:"mode"`
+	PartIDs             []string                    `json:"partIds,omitempty"`
+	Outputs             []CostAdjustmentOutputDraft `json:"outputs"`
 }
 
 type CostAdjustmentOutputResult struct {
@@ -76,6 +76,7 @@ type CostAdjustmentOutputResult struct {
 
 type CostAdjustmentConfirmResult struct {
 	ID                string                       `json:"id"`
+	SlipNumber        string                       `json:"slipNumber"`
 	AdjustmentDate    string                       `json:"adjustmentDate"`
 	SourceProductCode string                       `json:"sourceProductCode"`
 	SourceStatus      string                       `json:"sourceStatus"`
@@ -83,6 +84,7 @@ type CostAdjustmentConfirmResult struct {
 }
 
 type costAdjustmentSourceLine struct {
+	ID                string
 	PurchaseSlipID    string
 	PurchaseDate      time.Time
 	SlipStatus        string
@@ -90,6 +92,40 @@ type costAdjustmentSourceLine struct {
 	ConvertedTotalJPY int64
 	PurchaseTaxMode   string
 	TaxCategory       string
+}
+
+// resolveCostAdjustmentSource keeps the original purchase slip as immutable
+// audit provenance while using the product's current inventory cost. Products
+// created by an earlier cost adjustment do not have their own purchase line,
+// so their adjustment points back to the original acquisition line.
+func resolveCostAdjustmentSource(tx *gorm.DB, organizationID string, product Product) (costAdjustmentSourceLine, int64, error) {
+	lineID := strings.TrimSpace(product.PurchaseSlipLineID)
+	if lineID == "" && strings.TrimSpace(product.CostAdjustmentID) != "" {
+		if err := tx.Raw(`SELECT source_purchase_slip_line_id FROM cost_adjustments
+			WHERE id=? AND organization_id=?`, product.CostAdjustmentID, organizationID).Scan(&lineID).Error; err != nil {
+			return costAdjustmentSourceLine{}, 0, err
+		}
+	}
+	if lineID == "" {
+		return costAdjustmentSourceLine{}, 0, ErrCostAdjustmentState
+	}
+	var sourceLine costAdjustmentSourceLine
+	query := tx.Raw(`SELECT l.id,l.purchase_slip_id,s.purchase_date,s.status AS slip_status,l.line_number,
+		COALESCE(l.converted_total_jpy,CASE WHEN l.cost_currency='JPY' THEN l.unit_cost_minor ELSE 0 END) AS converted_total_jpy,
+		s.purchase_tax_mode,s.tax_category
+		FROM purchase_slip_lines l JOIN purchase_slips s ON s.id=l.purchase_slip_id
+		WHERE l.id=? AND s.organization_id=? FOR UPDATE`, lineID, organizationID).Scan(&sourceLine)
+	if query.Error != nil || query.RowsAffected == 0 || sourceLine.SlipStatus != "confirmed" {
+		return costAdjustmentSourceLine{}, 0, ErrCostAdjustmentState
+	}
+	cost := product.CostAmountMinor
+	if product.CostCurrency != "JPY" {
+		cost = sourceLine.ConvertedTotalJPY
+	}
+	if cost < 0 {
+		return costAdjustmentSourceLine{}, 0, ErrCostAllocation
+	}
+	return sourceLine, cost, nil
 }
 
 type costAdjustmentCombinePart struct {
@@ -107,13 +143,102 @@ type costAdjustmentCombinePart struct {
 	PurchaseSlipLineID string
 }
 
-func costAdjustmentInternalComment(sourceCode, value string) string {
-	prefix := "対象商品管理番号: " + strings.TrimSpace(sourceCode)
-	extra := strings.TrimSpace(value)
-	if extra == "" || strings.Contains(extra, prefix) {
-		return prefix
+func costAdjustmentInternalComment(sourceCode, slipNumber, value string) string {
+	return costAdjustmentInternalCommentForMode("breakdown", sourceCode, slipNumber, value)
+}
+
+func costAdjustmentInternalCommentForMode(mode, sourceCode, slipNumber, value string) string {
+	lines := []string{}
+	combine := strings.TrimSpace(mode) == "combine"
+	if !combine {
+		lines = append(lines, "原価管理番号: "+strings.TrimSpace(sourceCode))
+		if slipNumber = strings.TrimSpace(slipNumber); slipNumber != "" {
+			lines = append(lines, "調整伝票番号: "+slipNumber)
+		}
 	}
-	return prefix + "\n" + extra
+	seenSlips := map[string]bool{}
+	extras := []string{}
+	for _, raw := range strings.Split(strings.TrimSpace(value), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "対象商品管理番号:") || strings.HasPrefix(line, "原価管理番号:") {
+			continue
+		}
+		if number, ok := costAdjustmentSlipNumberFromLine(line); ok {
+			if combine && !seenSlips[number] {
+				lines = append(lines, "調整伝票番号: "+number)
+				seenSlips[number] = true
+			}
+			continue
+		}
+		extras = append(extras, line)
+	}
+	if combine {
+		if slipNumber = strings.TrimSpace(slipNumber); slipNumber != "" && !seenSlips[slipNumber] {
+			lines = append(lines, "調整伝票番号: "+slipNumber)
+		}
+	}
+	lines = append(lines, extras...)
+	return strings.Join(lines, "\n")
+}
+
+func costAdjustmentSlipNumberFromLine(line string) (string, bool) {
+	for _, prefix := range []string{"原価調整伝票番号:", "調整伝票番号:"} {
+		if strings.HasPrefix(line, prefix) {
+			number := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+			return number, number != ""
+		}
+	}
+	return "", false
+}
+
+func costSplitBusinessDate(startedAt time.Time) time.Time {
+	date, _ := time.Parse("2006-01-02", startedAt.In(time.FixedZone("JST", 9*3600)).Format("2006-01-02"))
+	return date
+}
+
+func costSplitNotes(value string) string {
+	for _, line := range strings.Split(value, "\n") {
+		if strings.TrimSpace(line) == "原価分け" {
+			return value
+		}
+	}
+	return strings.TrimSpace(strings.TrimSpace(value) + "\n原価分け")
+}
+
+func appendCostAdjustmentSlipNumber(value, slipNumber string) string {
+	line := "原価調整伝票番号: " + strings.TrimSpace(slipNumber)
+	current := strings.TrimSpace(value)
+	if current == "" {
+		return line
+	}
+	if strings.Contains(current, line) {
+		return current
+	}
+	return current + "\n" + line
+}
+
+func costAdjustmentSlipPrefix(adjustmentType string) string {
+	switch strings.TrimSpace(adjustmentType) {
+	case "breakdown":
+		return "GW"
+	case "combine":
+		return "GA"
+	default:
+		return "GC"
+	}
+}
+
+func nextCostAdjustmentSlipNumber(tx *gorm.DB, organizationID string, date, now time.Time, adjustmentType string) (string, error) {
+	var sequence int
+	result := tx.Raw(`INSERT INTO document_sequences(organization_id,document_type,business_year,last_sequence,updated_at)
+		VALUES(?,'cost_adjustment',?,1,?)
+		ON CONFLICT (organization_id,document_type,business_year)
+		DO UPDATE SET last_sequence=document_sequences.last_sequence+1,updated_at=EXCLUDED.updated_at
+		RETURNING last_sequence`, organizationID, date.Year(), now).Scan(&sequence)
+	if result.Error != nil {
+		return "", result.Error
+	}
+	return fmt.Sprintf("%s-%04d-%04d", costAdjustmentSlipPrefix(adjustmentType), date.Year(), sequence), nil
 }
 
 func combinedPartInternalComment(existing, targetProductCode string) string {
@@ -141,8 +266,9 @@ func combinedPartUpdates(part costAdjustmentCombinePart, adjustmentID, targetPro
 }
 
 // ConfirmCostAdjustmentBreakdown atomically redistributes the original JPY
-// acquisition value to newly numbered products and parts. The source remains
-// on its original purchase slip as a zero-cost audit row.
+// acquisition value to newly numbered products and parts. The original
+// purchase slip is an immutable acquisition-time snapshot; lineage is stored
+// only on the cost-adjustment slip and generated inventory records.
 func (r *Repository) ConfirmCostAdjustmentBreakdown(ctx context.Context, input CostAdjustmentConfirmInput) (CostAdjustmentConfirmResult, error) {
 	if strings.TrimSpace(input.Mode) != "breakdown" || len(input.Outputs) < 2 || len(input.Outputs) > 20 {
 		return CostAdjustmentConfirmResult{}, ErrCostAdjustmentState
@@ -161,9 +287,6 @@ func (r *Repository) ConfirmCostAdjustmentBreakdown(ctx context.Context, input C
 	}
 
 	result := CostAdjustmentConfirmResult{}
-	jst := time.FixedZone("JST", 9*60*60)
-	adjustmentDate := time.Now().In(jst)
-	dateOnly, _ := time.Parse("2006-01-02", adjustmentDate.Format("2006-01-02"))
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().UTC()
 		var source Product
@@ -171,27 +294,22 @@ func (r *Repository) ConfirmCostAdjustmentBreakdown(ctx context.Context, input C
 			"organization_id=? AND id=? AND deleted_at IS NULL", input.OrganizationID, input.SourceProductID).Take(&source).Error; err != nil {
 			return ErrProductUnavailable
 		}
-		if source.InventoryStatus != "cost_adjustment" || source.PurchaseSlipLineID == "" {
+		if source.InventoryStatus != "cost_adjustment" || source.InventoryValuationExcluded {
 			return ErrCostAdjustmentState
 		}
-		var existing int64
-		if err := tx.Table("cost_adjustments").Where("organization_id=? AND source_product_id=?", input.OrganizationID, source.ID).Count(&existing).Error; err != nil {
+		if source.CostAdjustmentStartedAt == nil {
+			var event struct{ CreatedAt time.Time }
+			if err := tx.Table("inventory_events").Select("created_at").Where("organization_id=? AND product_id=? AND event_type='cost_adjustment_started'", input.OrganizationID, source.ID).Order("created_at DESC").Take(&event).Error; err != nil {
+				return ErrCostAdjustmentState
+			}
+			source.CostAdjustmentStartedAt = &event.CreatedAt
+		}
+		dateOnly := costSplitBusinessDate(*source.CostAdjustmentStartedAt)
+		sourceLine, sourceCost, err := resolveCostAdjustmentSource(tx, input.OrganizationID, source)
+		if err != nil {
 			return err
 		}
-		if existing > 0 {
-			return ErrCostAdjustmentExists
-		}
-
-		var sourceLine costAdjustmentSourceLine
-		lineQuery := tx.Raw(`SELECT l.purchase_slip_id,s.purchase_date,s.status AS slip_status,l.line_number,
-			COALESCE(l.converted_total_jpy,CASE WHEN l.cost_currency='JPY' THEN l.unit_cost_minor ELSE 0 END) AS converted_total_jpy,
-			s.purchase_tax_mode,s.tax_category
-			FROM purchase_slip_lines l JOIN purchase_slips s ON s.id=l.purchase_slip_id
-			WHERE l.id=? AND s.organization_id=? FOR UPDATE`, source.PurchaseSlipLineID, input.OrganizationID).Scan(&sourceLine)
-		if lineQuery.Error != nil || lineQuery.RowsAffected == 0 || sourceLine.SlipStatus != "confirmed" {
-			return ErrCostAdjustmentState
-		}
-		if sourceLine.ConvertedTotalJPY < 0 || allocatedTotal != sourceLine.ConvertedTotalJPY {
+		if allocatedTotal != sourceCost {
 			return ErrCostAllocation
 		}
 
@@ -199,47 +317,47 @@ func (r *Repository) ConfirmCostAdjustmentBreakdown(ctx context.Context, input C
 		if err != nil {
 			return err
 		}
+		slipNumber, err := nextCostAdjustmentSlipNumber(tx, input.OrganizationID, dateOnly, now, "breakdown")
+		if err != nil {
+			return err
+		}
 		if err := tx.Exec(`INSERT INTO cost_adjustments(
-			id,organization_id,source_product_id,source_purchase_slip_id,source_purchase_slip_line_id,
+			id,slip_number,organization_id,source_product_id,source_purchase_slip_id,source_purchase_slip_line_id,
 			adjustment_type,adjustment_date,source_product_code,source_cost_jpy_minor,allocated_cost_jpy_minor,
-			status,confirmed_at,confirmed_by,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,'breakdown',?,?,?,?, 'confirmed',?,?,?,?,?)`,
-			adjustmentID, input.OrganizationID, source.ID, sourceLine.PurchaseSlipID, source.PurchaseSlipLineID,
-			dateOnly, source.ProductCode, sourceLine.ConvertedTotalJPY, allocatedTotal,
+			status,confirmed_at,confirmed_by,created_by,created_at,updated_at,notes
+		) VALUES(?,?,?,?,?,?,'breakdown',?,?,?,?, 'confirmed',?,?,?,?,?,'原価分け')`,
+			adjustmentID, slipNumber, input.OrganizationID, source.ID, sourceLine.PurchaseSlipID, sourceLine.ID,
+			dateOnly, source.ProductCode, sourceCost, allocatedTotal,
 			now, input.ActorUserID, input.ActorUserID, now, now).Error; err != nil {
 			return err
 		}
 
-		var nextLineNumber int
-		if err := tx.Raw("SELECT COALESCE(MAX(line_number),0) FROM purchase_slip_lines WHERE purchase_slip_id=?", sourceLine.PurchaseSlipID).Scan(&nextLineNumber).Error; err != nil {
-			return err
-		}
 		result = CostAdjustmentConfirmResult{
-			ID: adjustmentID, AdjustmentDate: dateOnly.Format("2006-01-02"),
-			SourceProductCode: source.ProductCode, SourceStatus: "broken_down",
+			ID: adjustmentID, SlipNumber: slipNumber, AdjustmentDate: dateOnly.Format("2006-01-02"),
+			SourceProductCode: source.ProductCode, SourceStatus: "cost_adjustment",
 			Outputs: make([]CostAdjustmentOutputResult, 0, len(input.Outputs)),
 		}
 
 		for _, output := range input.Outputs {
-			nextLineNumber++
-			lineID, err := database.NewID("pul")
-			if err != nil {
-				return err
+			if output.Product != nil {
+				copy := *output.Product
+				copy.Notes = costSplitNotes(copy.Notes)
+				output.Product = &copy
 			}
 			itemID, err := database.NewID("cai")
 			if err != nil {
 				return err
 			}
 			if output.Kind == "product" {
-				created, err := r.createCostAdjustmentProduct(tx, source, sourceLine.PurchaseSlipID, lineID, adjustmentID, itemID,
-					nextLineNumber, output, dateOnly, now, input)
+				created, err := r.createCostAdjustmentProduct(tx, source, adjustmentID, slipNumber, itemID,
+					output, dateOnly, now, input)
 				if err != nil {
 					return err
 				}
 				result.Outputs = append(result.Outputs, created)
 			} else {
-				created, err := r.createCostAdjustmentPart(tx, source, sourceLine, lineID, adjustmentID, itemID,
-					nextLineNumber, output, dateOnly, now, input)
+				created, err := r.createCostAdjustmentPart(tx, source, sourceLine, adjustmentID, slipNumber, itemID,
+					output, dateOnly, now, input)
 				if err != nil {
 					return err
 				}
@@ -247,21 +365,24 @@ func (r *Repository) ConfirmCostAdjustmentBreakdown(ctx context.Context, input C
 			}
 		}
 
-		if err := tx.Exec(`UPDATE purchase_slip_lines SET unit_cost_minor=0,converted_total_jpy=0,
-			base_sale_price_minor=0,cost_adjustment_id=? WHERE id=?`, adjustmentID, source.PurchaseSlipLineID).Error; err != nil {
-			return err
-		}
 		if err := tx.Model(&Product{}).Where("organization_id=? AND id=?", input.OrganizationID, source.ID).Updates(map[string]any{
-			"cost_amount_minor": 0, "base_sale_price_minor": 0, "inventory_status": "broken_down",
-			"cost_adjustment_id": adjustmentID, "updated_at": now,
+			"inventory_status":                     "cost_adjustment",
+			"inventory_valuation_excluded":         true,
+			"inventory_valuation_exclusion_reason": "cost_split_source",
+			"inventory_valuation_excluded_at":      now,
+			"notes":                                appendCostAdjustmentSlipNumber(costSplitNotes(source.Notes), slipNumber),
+			"cost_adjustment_id":                   adjustmentID, "updated_at": now,
 		}).Error; err != nil {
 			return err
 		}
 		eventID, _ := database.NewID("ive")
-		return tx.Exec(`INSERT INTO inventory_events(
+		if err := tx.Exec(`INSERT INTO inventory_events(
 			id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
-		) VALUES(?,?,?,'cost_adjustment_breakdown_confirmed','cost_adjustment','broken_down',?,?,?)`,
-			eventID, input.OrganizationID, source.ID, fmt.Sprintf("原価調整 %s を確定", adjustmentID), input.ActorUserID, now).Error
+		) VALUES(?,?,?,'cost_adjustment_breakdown_confirmed','cost_adjustment','cost_adjustment',?,?,?)`,
+			eventID, input.OrganizationID, source.ID, fmt.Sprintf("原価調整 %s を確定", adjustmentID), input.ActorUserID, now).Error; err != nil {
+			return err
+		}
+		return completeCostAdjustmentStartSnapshots(tx, input.OrganizationID, "", source.ID, input.ActorUserID, "confirmed", now)
 	})
 	if err != nil {
 		return CostAdjustmentConfirmResult{}, err
@@ -301,25 +422,12 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 			"organization_id=? AND id=? AND deleted_at IS NULL", input.OrganizationID, input.SourceProductID).Take(&source).Error; err != nil {
 			return ErrProductUnavailable
 		}
-		if source.InventoryStatus != "cost_adjustment" || source.PurchaseSlipLineID == "" {
+		if source.InventoryStatus != "cost_adjustment" || source.InventoryValuationExcluded {
 			return ErrCostAdjustmentState
 		}
-		var existing int64
-		if err := tx.Table("cost_adjustments").Where("organization_id=? AND source_product_id=?", input.OrganizationID, source.ID).Count(&existing).Error; err != nil {
+		sourceLine, sourceCost, err := resolveCostAdjustmentSource(tx, input.OrganizationID, source)
+		if err != nil {
 			return err
-		}
-		if existing > 0 {
-			return ErrCostAdjustmentExists
-		}
-
-		var sourceLine costAdjustmentSourceLine
-		lineQuery := tx.Raw(`SELECT l.purchase_slip_id,s.purchase_date,s.status AS slip_status,l.line_number,
-			COALESCE(l.converted_total_jpy,CASE WHEN l.cost_currency='JPY' THEN l.unit_cost_minor ELSE 0 END) AS converted_total_jpy,
-			s.purchase_tax_mode,s.tax_category
-			FROM purchase_slip_lines l JOIN purchase_slips s ON s.id=l.purchase_slip_id
-			WHERE l.id=? AND s.organization_id=? FOR UPDATE`, source.PurchaseSlipLineID, input.OrganizationID).Scan(&sourceLine)
-		if lineQuery.Error != nil || lineQuery.RowsAffected == 0 || sourceLine.SlipStatus != "confirmed" {
-			return ErrCostAdjustmentState
 		}
 
 		var parts []costAdjustmentCombinePart
@@ -334,7 +442,7 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 			return ErrCostAdjustmentState
 		}
 
-		combinedCost := sourceLine.ConvertedTotalJPY
+		combinedCost := sourceCost
 		accessoryNames := make([]string, 0)
 		accessorySet := map[string]bool{}
 		for _, value := range strings.Split(source.Accessories, ",") {
@@ -455,12 +563,16 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 		if err != nil {
 			return err
 		}
+		slipNumber, err := nextCostAdjustmentSlipNumber(tx, input.OrganizationID, dateOnly, now, "combine")
+		if err != nil {
+			return err
+		}
 		if err := tx.Exec(`INSERT INTO cost_adjustments(
-			id,organization_id,source_product_id,source_purchase_slip_id,source_purchase_slip_line_id,
+			id,slip_number,organization_id,source_product_id,source_purchase_slip_id,source_purchase_slip_line_id,
 			adjustment_type,adjustment_date,source_product_code,source_cost_jpy_minor,allocated_cost_jpy_minor,
 			status,confirmed_at,confirmed_by,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,'combine',?,?,?,?, 'confirmed',?,?,?,?,?)`,
-			adjustmentID, input.OrganizationID, source.ID, sourceLine.PurchaseSlipID, source.PurchaseSlipLineID,
+		) VALUES(?,?,?,?,?,?,'combine',?,?,?,?, 'confirmed',?,?,?,?,?)`,
+			adjustmentID, slipNumber, input.OrganizationID, source.ID, sourceLine.PurchaseSlipID, sourceLine.ID,
 			dateOnly, source.ProductCode, sourceLine.ConvertedTotalJPY, combinedCost,
 			now, input.ActorUserID, input.ActorUserID, now, now).Error; err != nil {
 			return err
@@ -479,7 +591,7 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 			"product_code": newCode, "cost_amount_minor": combinedCost, "cost_currency": "JPY",
 			"material_id": nullIfEmpty(materialID), "belt_text": beltText, "dial_text": dialText,
 			"accessories": strings.Join(accessoryNames, ", "), "bracelet_quantity": quantityValue,
-			"notes": strings.Join(noteLines, "\n"), "internal_comment": strings.Join(commentLines, "\n"),
+			"notes": appendCostAdjustmentSlipNumber(strings.Join(noteLines, "\n"), slipNumber), "internal_comment": strings.Join(commentLines, "\n"),
 			"inventory_status": "cost_adjustment", "cost_adjustment_id": adjustmentID, "updated_at": now,
 		}).Error; err != nil {
 			return err
@@ -510,10 +622,13 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 			return err
 		}
 		result = CostAdjustmentConfirmResult{
-			ID: adjustmentID, AdjustmentDate: dateOnly.Format("2006-01-02"), SourceProductCode: source.ProductCode,
+			ID: adjustmentID, SlipNumber: slipNumber, AdjustmentDate: dateOnly.Format("2006-01-02"), SourceProductCode: source.ProductCode,
 			SourceStatus: "cost_adjustment", Outputs: []CostAdjustmentOutputResult{{
 				Position: 1, Kind: "product", ManagementCode: newCode, RecordID: source.ID, CostJPYMinor: combinedCost,
 			}},
+		}
+		if err := completeCostAdjustmentStartSnapshots(tx, input.OrganizationID, "", source.ID, input.ActorUserID, "confirmed", now); err != nil {
+			return err
 		}
 		return nil
 	})
@@ -523,8 +638,8 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 	return result, nil
 }
 
-func (r *Repository) createCostAdjustmentProduct(tx *gorm.DB, source Product, purchaseSlipID, lineID, adjustmentID, itemID string,
-	lineNumber int, output CostAdjustmentOutputDraft, date, now time.Time, input CostAdjustmentConfirmInput) (CostAdjustmentOutputResult, error) {
+func (r *Repository) createCostAdjustmentProduct(tx *gorm.DB, source Product, adjustmentID, slipNumber, itemID string,
+	output CostAdjustmentOutputDraft, date, now time.Time, input CostAdjustmentConfirmInput) (CostAdjustmentOutputResult, error) {
 	draft := output.Product
 	brandID, brandName, err := lookupCatalog(tx, "brands", input.OrganizationID, draft.BrandCode, true)
 	if err != nil {
@@ -556,31 +671,28 @@ func (r *Repository) createCostAdjustmentProduct(tx *gorm.DB, source Product, pu
 			return CostAdjustmentOutputResult{}, ErrDuplicateSerialReason
 		}
 	}
-	sequence, err := nextProductSequence(tx, input.OrganizationID, date, now)
-	if err != nil {
-		return CostAdjustmentOutputResult{}, err
+	code := input.ReservedProductCode
+	if code == "" {
+		sequence, err := nextProductSequence(tx, input.OrganizationID, date, now)
+		if err != nil {
+			return CostAdjustmentOutputResult{}, err
+		}
+		code = formatProductCode(date, sequence)
 	}
-	code := formatProductCode(date, sequence)
 	productID, err := database.NewID("prd")
 	if err != nil {
 		return CostAdjustmentOutputResult{}, err
 	}
-	accessoryJSON, _ := json.Marshal(draft.AccessoryCodes)
-	comment := costAdjustmentInternalComment(source.ProductCode, draft.InternalComment)
-	if err := tx.Exec(`INSERT INTO purchase_slip_lines(
-		id,purchase_slip_id,line_number,quantity,unit_cost_minor,cost_currency,base_sale_price_minor,base_sale_currency,
-		brand_id,material_id,movement_id,condition_id,shape_id,marking_id,brand_text,model_number,reference_number,serial_number,
-		product_type,sku,generated_product_count,generated_part_count,converted_total_jpy,accessory_codes,belt_text,dial_text,
-		notes,line_item_kind,cost_adjustment_id,created_at
-	) VALUES(?,?,?,1,?,'JPY',?,'USD',?,?,?,?,?,?,?,?,?,?,?,?,1,0,?,?,?,?,?,'product',?,?)`,
-		lineID, purchaseSlipID, lineNumber, output.AllocatedCostJPYMinor, draft.SalePriceUSDMinor,
-		brandID, nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID),
-		nullIfEmpty(source.ShapeID), nullIfEmpty(source.MarkingID), brandName, strings.TrimSpace(draft.ModelNumber),
-		strings.TrimSpace(draft.ReferenceNumber), strings.TrimSpace(draft.SerialNumber), source.ProductType, source.SKU,
-		output.AllocatedCostJPYMinor, string(accessoryJSON), strings.TrimSpace(draft.BeltText), strings.TrimSpace(draft.DialText),
-		strings.TrimSpace(draft.Notes), adjustmentID, now).Error; err != nil {
-		return CostAdjustmentOutputResult{}, err
+	supplierID := source.SupplierID
+	supplierRoleID := source.SupplierRoleID
+	if input.Mode == "combine" {
+		// A cost-merge output is a newly constituted inventory item rather than
+		// another item purchased from one of the source products' suppliers.
+		supplierID = ""
+		supplierRoleID = ""
 	}
+	comment := costAdjustmentInternalCommentForMode(input.Mode, source.ProductCode, slipNumber, draft.InternalComment)
+	comment = appendOriginalPlannedSalePrice(comment, draft.SalePriceUSDMinor, "USD")
 	if err := tx.Exec(`INSERT INTO products(
 		id,organization_id,product_code,sku,brand,brand_id,model_number,reference_number,serial_number,product_type,
 		material_id,movement_id,condition_id,shape_id,marking_id,supplier_id,supplier_role_id,purchase_staff_profile_id,purchase_slip_line_id,
@@ -590,9 +702,9 @@ func (r *Repository) createCostAdjustmentProduct(tx *gorm.DB, source Product, pu
 		productID, input.OrganizationID, code, source.SKU, brandName, brandID, strings.TrimSpace(draft.ModelNumber),
 		strings.TrimSpace(draft.ReferenceNumber), strings.TrimSpace(draft.SerialNumber), source.ProductType,
 		nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), nullIfEmpty(source.ShapeID), nullIfEmpty(source.MarkingID),
-		source.SupplierID, nullIfEmpty(source.SupplierRoleID), nullIfEmpty(source.PurchaseStaffID), lineID, date,
-		output.AllocatedCostJPYMinor, draft.SalePriceUSDMinor, conditionName, strings.Join(accessoryNames, ", "),
-		strings.TrimSpace(draft.BeltText), strings.TrimSpace(draft.DialText), strings.TrimSpace(draft.Notes), comment, adjustmentID, now, now).Error; err != nil {
+		supplierID, nullIfEmpty(supplierRoleID), nullIfEmpty(source.PurchaseStaffID), nil, date,
+		output.AllocatedCostJPYMinor, int64(0), conditionName, strings.Join(accessoryNames, ", "),
+		strings.TrimSpace(draft.BeltText), strings.TrimSpace(draft.DialText), appendCostAdjustmentSlipNumber(draft.Notes, slipNumber), comment, adjustmentID, now, now).Error; err != nil {
 		return CostAdjustmentOutputResult{}, err
 	}
 	for _, accessoryID := range accessoryIDs {
@@ -614,8 +726,8 @@ func (r *Repository) createCostAdjustmentProduct(tx *gorm.DB, source Product, pu
 	return CostAdjustmentOutputResult{Position: output.Position, Kind: "product", ManagementCode: code, RecordID: productID, CostJPYMinor: output.AllocatedCostJPYMinor}, nil
 }
 
-func (r *Repository) createCostAdjustmentPart(tx *gorm.DB, source Product, sourceLine costAdjustmentSourceLine, lineID, adjustmentID, itemID string,
-	lineNumber int, output CostAdjustmentOutputDraft, date, now time.Time, input CostAdjustmentConfirmInput) (CostAdjustmentOutputResult, error) {
+func (r *Repository) createCostAdjustmentPart(tx *gorm.DB, source Product, sourceLine costAdjustmentSourceLine, adjustmentID, slipNumber, itemID string,
+	output CostAdjustmentOutputDraft, date, now time.Time, input CostAdjustmentConfirmInput) (CostAdjustmentOutputResult, error) {
 	draft := output.Part
 	brandID, brandName, err := lookupCatalog(tx, "brands", input.OrganizationID, draft.BrandCode, false)
 	if err != nil {
@@ -643,17 +755,7 @@ func (r *Repository) createCostAdjustmentPart(tx *gorm.DB, source Product, sourc
 	if err != nil {
 		return CostAdjustmentOutputResult{}, err
 	}
-	comment := costAdjustmentInternalComment(source.ProductCode, draft.InternalComment)
-	if err := tx.Exec(`INSERT INTO purchase_slip_lines(
-		id,purchase_slip_id,line_number,quantity,unit_cost_minor,cost_currency,base_sale_price_minor,base_sale_currency,
-		brand_id,brand_text,model_number,reference_number,product_type,sku,generated_product_count,generated_part_count,
-		converted_total_jpy,notes,line_item_kind,cost_adjustment_id,created_at
-	) VALUES(?,?,?,1,?,'JPY',?,'USD',?,?,?,?,?,?,0,1,?,?,'part',?,?)`,
-		lineID, sourceLine.PurchaseSlipID, lineNumber, output.AllocatedCostJPYMinor, draft.SalePriceUSDMinor,
-		nullIfEmpty(brandID), brandName, strings.TrimSpace(draft.ModelName), strings.TrimSpace(draft.ReferenceNumber),
-		"パーツ: "+partName, source.SKU, output.AllocatedCostJPYMinor, strings.TrimSpace(draft.Notes), adjustmentID, now).Error; err != nil {
-		return CostAdjustmentOutputResult{}, err
-	}
+	comment := costAdjustmentInternalCommentForMode(input.Mode, source.ProductCode, slipNumber, draft.InternalComment)
 	if err := tx.Exec(`INSERT INTO parts(
 		id,organization_id,part_code,purchase_date,purchase_staff_profile_id,supplier_role_id,purchase_tax_mode,tax_category,
 		cost_amount_minor,cost_currency,fixed_cost_jpy_minor,sku,brand_id,brand_text,model_name,reference_number,
@@ -664,7 +766,7 @@ func (r *Repository) createCostAdjustmentPart(tx *gorm.DB, source Product, sourc
 		sourceLine.PurchaseTaxMode, sourceLine.TaxCategory, output.AllocatedCostJPYMinor, output.AllocatedCostJPYMinor,
 		source.SKU, nullIfEmpty(brandID), brandName, strings.TrimSpace(draft.ModelName), strings.TrimSpace(draft.ReferenceNumber),
 		partNameID, partName, detailText, detailType, detailCode, quantity, draft.SalePriceUSDMinor,
-		strings.TrimSpace(draft.Notes), comment, adjustmentID, lineID, input.ActorUserID, input.ActorUserID, now, now).Error; err != nil {
+		strings.TrimSpace(draft.Notes), comment, adjustmentID, nil, input.ActorUserID, input.ActorUserID, now, now).Error; err != nil {
 		return CostAdjustmentOutputResult{}, err
 	}
 	if err := tx.Exec(`INSERT INTO cost_adjustment_items(

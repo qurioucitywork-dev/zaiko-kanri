@@ -76,6 +76,54 @@ func (s *Server) apiPurchase(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, record)
 }
 
+func (s *Server) apiPurchaseRevision(w http.ResponseWriter, r *http.Request) {
+	if s.repository.Driver() != "postgres" {
+		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "仕入伝票の修正にはPostgreSQLが必要です。")
+		return
+	}
+	user, ok := requireAPIAdmin(w, r, "仕入伝票の修正")
+	if !ok {
+		return
+	}
+	var input persistence.PurchaseRevisionInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid_json", "修正内容を確認してください。")
+		return
+	}
+	input.OrganizationID, input.ActorUserID = user.OrganizationID, user.ID
+	before, err := s.repository.PurchaseSlip(r.Context(), user.OrganizationID, r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "purchase_not_found", "仕入伝票が見つかりません。")
+		return
+	}
+	record, err := s.repository.RevisePurchase(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		status, code, message := http.StatusInternalServerError, "purchase_revision_failed", "仕入伝票を保存できませんでした。"
+		switch {
+		case errors.Is(err, persistence.ErrPurchaseNotFound):
+			status, code, message = http.StatusNotFound, "purchase_not_found", "仕入伝票が見つかりません。"
+		case errors.Is(err, persistence.ErrPurchaseDateMismatch):
+			status, code, message = http.StatusConflict, "purchase_date_fixed", "採番済み商品の仕入日は変更できません。"
+		case errors.Is(err, persistence.ErrPurchaseRevisionInvalid):
+			status, code, message = http.StatusBadRequest, "invalid_purchase_revision", "保存理由・明細の金額と通貨を確認してください。海外仕入の原価変更はこの画面ではできません。"
+		case errors.Is(err, persistence.ErrSupplierNotFound), errors.Is(err, persistence.ErrStaffNotFound):
+			status, code, message = http.StatusBadRequest, "master_not_found", "仕入先・担当者を確認してください。"
+		}
+		writeAPIError(w, status, code, message)
+		return
+	}
+	beforeJSON, _ := json.Marshal(before)
+	afterJSON, _ := json.Marshal(record)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
+		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "purchase", TargetID: record.ID,
+		Action: "purchase.revised", BeforeJSON: string(beforeJSON), AfterJSON: string(afterJSON), Reason: strings.TrimSpace(input.Reason),
+		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent(),
+	})
+	writeJSON(w, http.StatusOK, record)
+}
+
 func (s *Server) apiPurchaseCreate(w http.ResponseWriter, r *http.Request) {
 	if s.repository.Driver() != "postgres" {
 		writeAPIError(w, http.StatusServiceUnavailable, "postgres_required", "仕入APIはPostgreSQLモードで利用してください。")

@@ -2,6 +2,7 @@ package persistence
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -9,6 +10,45 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+func formatCostAdjustmentOriginalSalePrice(amount int64, currency string) string {
+	digits := strconv.FormatInt(amount, 10)
+	for index := len(digits) - 3; index > 0; index -= 3 {
+		digits = digits[:index] + "," + digits[index:]
+	}
+	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	case "JPY":
+		return "¥" + digits
+	case "HKD":
+		return "HK$" + digits
+	default:
+		return "$" + digits
+	}
+}
+
+func appendOriginalPlannedSalePrice(comment string, amount int64, currency string) string {
+	current := strings.TrimSpace(comment)
+	if amount <= 0 || strings.Contains(current, "もともとの想定売価:") {
+		return current
+	}
+	line := "もともとの想定売価: " + formatCostAdjustmentOriginalSalePrice(amount, currency)
+	if current == "" {
+		return line
+	}
+	return current + "\n" + line
+}
+
+func costAdjustmentStartProductUpdates(current Product, now time.Time) map[string]any {
+	return map[string]any{
+		"inventory_status":           "cost_adjustment",
+		"cost_adjustment_started_at": now,
+		"base_sale_price_minor":      int64(0),
+		"internal_comment": appendOriginalPlannedSalePrice(
+			current.InternalComment, current.BaseSalePriceMinor, current.BaseSaleCurrency,
+		),
+		"updated_at": now,
+	}
+}
 
 type ProductUpdateInput struct {
 	ProductCode           *string   `json:"productCode"`
@@ -266,6 +306,16 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 // StartProductCostAdjustment moves an available product into the dedicated
 // cost-adjustment workflow while recording an immutable inventory event.
 func (r *Repository) StartProductCostAdjustment(ctx context.Context, organizationID, productID, actorUserID string) (Product, error) {
+	return r.startProductCostAdjustment(ctx, organizationID, productID, actorUserID, "breakdown", "原価分け作業を開始")
+}
+
+// StartDirectProductCostAdjustment starts the one-product increase/decrease
+// flow while preserving the former planned sale price in the internal comment.
+func (r *Repository) StartDirectProductCostAdjustment(ctx context.Context, organizationID, productID, actorUserID string) (Product, error) {
+	return r.startProductCostAdjustment(ctx, organizationID, productID, actorUserID, "adjustment", "原価調整作業を開始")
+}
+
+func (r *Repository) startProductCostAdjustment(ctx context.Context, organizationID, productID, actorUserID, mode, reason string) (Product, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var current Product
 		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where(
@@ -273,22 +323,25 @@ func (r *Repository) StartProductCostAdjustment(ctx context.Context, organizatio
 		if result.Error != nil {
 			return ErrProductUnavailable
 		}
-		if current.InventoryStatus == "cost_adjustment" {
-			return nil
+		if current.InventoryValuationExcluded {
+			return ErrProductConflict
 		}
 		if current.InventoryStatus != "in_stock" {
 			return ErrProductConflict
 		}
 		now := time.Now().UTC()
+		if err := createCostAdjustmentStartSnapshot(tx, current, "", mode, actorUserID, now); err != nil {
+			return err
+		}
 		if err := tx.Model(&Product{}).Where("organization_id=? AND id=?", organizationID, productID).
-			Updates(map[string]any{"inventory_status": "cost_adjustment", "updated_at": now}).Error; err != nil {
+			Updates(costAdjustmentStartProductUpdates(current, now)).Error; err != nil {
 			return err
 		}
 		eventID, _ := database.NewID("ive")
 		return tx.Exec(`INSERT INTO inventory_events(
 			id,organization_id,product_id,event_type,from_status,to_status,reason,actor_user_id,created_at
-		) VALUES(?,?,?,'cost_adjustment_started',?,'cost_adjustment','崩し作業を開始',?,?)`,
-			eventID, organizationID, productID, current.InventoryStatus, actorUserID, now).Error
+		) VALUES(?,?,?,'cost_adjustment_started',?,'cost_adjustment',?,?,?)`,
+			eventID, organizationID, productID, current.InventoryStatus, reason, actorUserID, now).Error
 	})
 	if err != nil {
 		return Product{}, err
@@ -320,7 +373,10 @@ func (r *Repository) StartCombineCostAdjustment(ctx context.Context, organizatio
 		if result.Error != nil {
 			return ErrProductUnavailable
 		}
-		if current.InventoryStatus != "in_stock" && current.InventoryStatus != "cost_adjustment" {
+		if current.InventoryValuationExcluded {
+			return ErrProductConflict
+		}
+		if current.InventoryStatus != "in_stock" {
 			return ErrProductConflict
 		}
 		var parts []struct {
@@ -340,8 +396,11 @@ func (r *Repository) StartCombineCostAdjustment(ctx context.Context, organizatio
 			}
 		}
 		now := time.Now().UTC()
+		if err := createCostAdjustmentStartSnapshot(tx, current, "", "combine", actorUserID, now); err != nil {
+			return err
+		}
 		if err := tx.Model(&Product{}).Where("organization_id=? AND id=?", organizationID, productID).
-			Updates(map[string]any{"inventory_status": "cost_adjustment", "updated_at": now}).Error; err != nil {
+			Updates(costAdjustmentStartProductUpdates(current, now)).Error; err != nil {
 			return err
 		}
 		if err := tx.Table("parts").Where("organization_id=? AND id IN ?", organizationID, uniquePartIDs).

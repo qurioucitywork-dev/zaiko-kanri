@@ -136,8 +136,16 @@ func (r *Repository) StartStocktake(ctx context.Context, organizationID, actorUs
 			return err
 		}
 		var products []Product
-		if err := tx.Where("organization_id = ? AND deleted_at IS NULL AND inventory_status IN ?", organizationID, stocktakeTargetStatuses).
-			Order("product_code").Find(&products).Error; err != nil {
+		productQuery := tx.Where("organization_id = ? AND deleted_at IS NULL AND inventory_status IN ?", organizationID, stocktakeTargetStatuses)
+		if tx.Migrator().HasColumn(&Product{}, "inventory_valuation_excluded") {
+			productQuery = productQuery.Where("inventory_valuation_excluded = ?", false)
+		}
+		if r.driver == "postgres" {
+			productQuery = productQuery.Where(`NOT EXISTS (
+				SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id
+				AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`)
+		}
+		if err := productQuery.Order("product_code").Find(&products).Error; err != nil {
 			return err
 		}
 		lines := make([]StocktakeLine, 0, len(products))
@@ -189,22 +197,53 @@ func (r *Repository) SyncStocktake(ctx context.Context, organizationID, sessionI
 			}
 			return err
 		}
-		// 仕入返品処理済商品（内部値 cancelled）は棚卸対象外。過去の棚卸仕様で作られた
-		// 不明在庫行や、棚卸開始後に仕入返品処理済へ変わった対象行も同期時に確実に除外する。
-		if err := tx.Exec(`DELETE FROM stocktake_lines
+		// 仕入返品処理済商品と、原価分け・原価合わせの元商品は棚卸対象外。
+		// 後者は履歴原価を保持したまま、現在在庫の数量・金額だけから除外する。
+		deleteSQL := `DELETE FROM stocktake_lines
 			WHERE session_id = ? AND organization_id = ? AND (
 				source = 'cancelled' OR inventory_status = 'cancelled' OR
 				product_id IN (
 					SELECT id FROM products
 					WHERE organization_id = ? AND deleted_at IS NULL AND inventory_status = 'cancelled'
 				)
-			)`, sessionID, organizationID, organizationID).Error; err != nil {
+			)`
+		if tx.Migrator().HasColumn(&Product{}, "inventory_valuation_excluded") {
+			deleteSQL = `DELETE FROM stocktake_lines
+				WHERE session_id = ? AND organization_id = ? AND (
+					source = 'cancelled' OR inventory_status = 'cancelled' OR
+					product_id IN (
+						SELECT id FROM products WHERE organization_id = ? AND deleted_at IS NULL
+						  AND (inventory_status = 'cancelled' OR inventory_valuation_excluded = TRUE)
+					)
+				)`
+			if r.driver == "postgres" {
+				deleteSQL = `DELETE FROM stocktake_lines
+					WHERE session_id = ? AND organization_id = ? AND (
+						source = 'cancelled' OR inventory_status = 'cancelled' OR
+						product_id IN (
+							SELECT id FROM products WHERE organization_id = ? AND deleted_at IS NULL
+							  AND (inventory_status = 'cancelled' OR inventory_valuation_excluded = TRUE
+							    OR EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id
+							      AND ca.adjustment_type='breakdown' AND ca.status='confirmed'))
+						)
+					)`
+			}
+		}
+		if err := tx.Exec(deleteSQL, sessionID, organizationID, organizationID).Error; err != nil {
 			return err
 		}
 
 		var products []Product
-		if err := tx.Where("organization_id = ? AND deleted_at IS NULL AND inventory_status IN ?", organizationID, stocktakeTargetStatuses).
-			Order("product_code").Find(&products).Error; err != nil {
+		productQuery := tx.Where("organization_id = ? AND deleted_at IS NULL AND inventory_status IN ?", organizationID, stocktakeTargetStatuses)
+		if tx.Migrator().HasColumn(&Product{}, "inventory_valuation_excluded") {
+			productQuery = productQuery.Where("inventory_valuation_excluded = ?", false)
+		}
+		if r.driver == "postgres" {
+			productQuery = productQuery.Where(`NOT EXISTS (
+				SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id
+				AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`)
+		}
+		if err := productQuery.Order("product_code").Find(&products).Error; err != nil {
 			return err
 		}
 		var lines []StocktakeLine
@@ -305,6 +344,22 @@ func (r *Repository) ScanStocktake(ctx context.Context, organizationID, sessionI
 			if product.InventoryStatus == "cancelled" {
 				message = "cancelled_ignored"
 				return nil
+			}
+			if product.InventoryValuationExcluded {
+				message = "valuation_excluded_ignored"
+				return nil
+			}
+			if r.driver == "postgres" {
+				var historicalBreakdown int64
+				if err := tx.Table("cost_adjustments").Where(
+					"organization_id=? AND source_product_id=? AND adjustment_type='breakdown' AND status='confirmed'", organizationID, product.ID,
+				).Count(&historicalBreakdown).Error; err != nil {
+					return err
+				}
+				if historicalBreakdown > 0 {
+					message = "valuation_excluded_ignored"
+					return nil
+				}
 			}
 			source = "non_target"
 		} else if !errors.Is(err, gorm.ErrRecordNotFound) {

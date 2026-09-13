@@ -12,7 +12,7 @@
   let hydrateRetryStep = 0;
   let syncSuccessTimer = null;
   const statusLabel = {
-    purchasing: '仕入中', in_stock: '在庫中', cost_adjustment: '原価調整中', broken_down: '崩し済み', combined: '結合済み', reserved: '取置中', return_pending: '仕入返品処理中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '仕入返品処理済',
+    purchasing: '仕入中', in_stock: '在庫中', cost_adjustment: '原価調整中', cost_adjusted: '原価調整済', broken_down: '原価調整済', combined: '結合済み', reserved: '取置中', return_pending: '仕入返品処理中', consigned: '委託中', shipped: '出荷済', sold: '売上済', cancelled: '仕入返品処理済',
     draft: '未処理', confirmed: '処理済', pending: '未対応', approved: '承認済', rejected: '却下', returned: '差戻し',
   };
   const approvalActionLabel = value => ({
@@ -380,10 +380,12 @@
       supplier: (product.supplierRoleId || '').replace('partner_role_', ''),
       supplierName: product.supplierName || '',
       staff: staffName(product.purchaseStaffProfileId),
-      // The JPY acquisition value is the immutable purchase-line snapshot.
-      // Do not recalculate it with the latest master rate when hydrating stock.
-      purchasePrice: Number(product.fixedPurchaseCostJpyMinor)
-        || (product.costCurrency === 'JPY' ? Number(product.costAmountMinor) || 0 : Math.round((Number(product.costAmountMinor) || 0) * rate)),
+      // Use the current inventory cost in JPY. Direct adjustments are added to
+      // this value while the original purchase slip and its fixed FX rate stay immutable.
+      purchasePrice: Object.prototype.hasOwnProperty.call(product, 'inventoryCostJpyMinor')
+        ? Number(product.inventoryCostJpyMinor) || 0
+        : (Number(product.fixedPurchaseCostJpyMinor)
+          || (product.costCurrency === 'JPY' ? Number(product.costAmountMinor) || 0 : Math.round((Number(product.costAmountMinor) || 0) * rate))),
       purchaseCurrency: product.purchaseSourceCurrency || product.costCurrency,
       purchaseType: ['personal', 'overseas'].includes(product.purchaseTaxMode) ? product.purchaseTaxMode : 'domestic',
       purchaseOriginalPrice: Number(product.purchaseSourceAmountMinor) || Number(product.costAmountMinor) || 0,
@@ -392,7 +394,15 @@
       purchaseFxRateObservedAt: product.purchaseFxRateObservedAt || null,
       salePrice: product.baseSaleCurrency === 'JPY' ? Math.round(product.baseSalePriceMinor / rate) : product.baseSalePriceMinor,
       saleCurrency: product.baseSaleCurrency,
+      saleDate: product.saleDate || null,
+      actualSaleCurrency: product.saleCurrency || '',
+      actualSalePrice: Number(product.saleAdjustedPriceMinor) || 0,
+      actualSalePriceJpy: Number(product.salePriceJpyMinor) || 0,
+      saleFxRateScaled: Number(product.saleFxRateScaled) || 0,
+      saleFxScale: Number(product.saleFxScale) || 0,
+      saleFxRateObservedAt: product.saleFxRateObservedAt || null,
       purchaseDate: product.purchaseDate,
+      purchaseSlipLineId: product.purchaseSlipLineId || '',
       status: statusLabel[product.inventoryStatus] || product.inventoryStatus,
       material: masterCode(masters.materials?.items, product.materialId),
       movement: masterCode(masters.movements?.items, product.movementId),
@@ -407,6 +417,9 @@
       note: product.notes || '',
 	  comment: product.internalComment || '',
 	  costAdjustmentId: product.costAdjustmentId || '',
+	  inventoryValuationExcluded: Boolean(product.inventoryValuationExcluded),
+	  inventoryValuationExclusionReason: product.inventoryValuationExclusionReason || '',
+	  inventoryValuationExcludedAt: product.inventoryValuationExcludedAt || null,
       revisions: [],
       apiManaged: true,
     }));
@@ -454,6 +467,7 @@
         const isPart = line.lineItemKind === 'part' || Boolean(line.partCode);
         const annotations = productNotes(line.notes);
         return {
+          _id: line.id,
           lineNo: line.lineNumber,
           code: currentProduct?.code || line.partCode || '',
           sku: currentProduct ? currentProduct.sku : line.sku,
@@ -500,6 +514,41 @@
   }
 
   function saleView(record) {
+    if (record.documentType === 'sales_revision') {
+      const direction = ['decrease', 'mixed'].includes(record.adjustmentDirection) ? record.adjustmentDirection : 'increase';
+      const sign = direction === 'decrease' ? -1 : 1;
+      return {
+        _id: record.id, id: record.slipNumber, date: record.saleDate,
+        buyer: record.buyerCode, status: statusLabel[record.status] || record.status,
+        documentType: 'sales_revision', sourceSaleId: record.sourceSaleId,
+        sourceSlipNumber: record.sourceSlipNumber, adjustmentDirection: direction,
+        currency: record.displayCurrency, inputCurrency: record.displayCurrency,
+        taxMode: record.taxMode || 'out_of_scope', taxRateBasisPoints: Number(record.taxRateBasisPoints) || 0,
+        fxRateScaled: Number(record.fxRateScaled) || 0, fxScale: Number(record.fxScale) || 0,
+        displaySubtotalMinor: sign * (Number(record.subtotalMinor ?? record.totalMinor) || 0),
+        displayTaxAmountMinor: sign * (Number(record.taxAmountMinor) || 0),
+        displayTotalMinor: sign * (Number(record.totalMinor) || 0),
+        totalJpy: sign * (Number(record.convertedTotalJpy) || 0),
+        note: record.notes || '', reason: record.notes || '', apiManaged: true,
+        revisions: [],
+        items: (record.lines || []).map(line => {
+          const lineDirection = line.direction || direction;
+          const lineSign = lineDirection === 'decrease' ? -1 : 1;
+          return {
+          direction: lineDirection,
+          _id: line.id, sourceSaleLineId: line.sourceSaleLineId, productId: line.productId,
+          code: line.productCode, brand: line.brand, model: line.modelNumber,
+          adjustmentAmount: Number(line.adjustmentAmountMinor) || 0,
+          beforeSalePrice: line.beforeSalePriceMinor == null ? null : Number(line.beforeSalePriceMinor),
+          afterSalePrice: line.afterSalePriceMinor == null ? null : Number(line.afterSalePriceMinor),
+          reason: line.reason || record.notes || '',
+          convertedAdjustmentJpy: Number(line.convertedAdjustmentJpy) || 0,
+          inputAmount: lineSign * (Number(line.adjustmentAmountMinor) || 0),
+          inputCurrency: record.displayCurrency, currency: record.displayCurrency,
+          salePrice: lineSign * (Number(line.adjustmentAmountMinor) || 0),
+        }; }),
+      };
+    }
     const rate = Number(record.fxRateScaled) > 0 && Number(record.fxScale) > 0
       ? Number(record.fxRateScaled) / Number(record.fxScale)
       : Number(state.latestRate || 155);
@@ -518,6 +567,7 @@
     return {
       _id: record.id, id: record.slipNumber, date: record.saleDate, buyer: record.buyerCode,
       status: statusLabel[record.status] || record.status, currency: record.displayCurrency, taxMode: record.taxMode,
+      taxRateBasisPoints: Number(record.taxRateBasisPoints) || 0,
       inputCurrency, usdJpyRate: rate,
       fxRateSnapshotId: record.fxRateSnapshotId || '',
       fxRateScaled: Number(record.fxRateScaled) || 0, fxScale: Number(record.fxScale) || 0,
@@ -534,6 +584,7 @@
       sourceShipmentId: sourceDocumentType === 'shipment' ? sourceDocumentId : '',
       sourceConsignmentId: sourceDocumentType === 'consignment' ? sourceDocumentId : '',
       items: (record.lines || []).map(line => ({
+        _id: line.id, productId: line.productId,
         code: line.productCode, brand: line.brand, model: line.modelNumber,
         ref: line.referenceNumber || '', serial: line.serialNumber || '',
         accessories: String(line.accessories || '').split(',').map(value => value.trim()).filter(Boolean).map(code =>
@@ -625,11 +676,11 @@
     const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials', 'product-shapes', 'markings', 'part-names'];
     const masterResults = {};
     await Promise.all(masterKeys.map(async key => { masterResults[key] = await optional(`/masters/${key}`); }));
-    const [products, parts, partners, users, staff, purchases, deletedPurchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, settings, company, rates, dashboard] = await Promise.all([
+    const [products, parts, partners, users, staff, purchases, deletedPurchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, costAdjustments, settings, company, rates, dashboard] = await Promise.all([
       fetchAllPages('/products?includeCancelled=true'), optional('/parts'), optional('/partners?includeInactive=true', { sqliteFallback: true }),
       optional('/users?includeInactive=true'), optional('/purchase-staff'), fetchAllPages('/purchases'), fetchAllPagesWithFallback('/purchases-deleted'), optional('/market-prices?limit=1000'),
       optional('/boxes', { sqliteFallback: true }), optional('/purchase-requests', { sqliteFallback: true }), optional('/notifications?limit=500', { sqliteFallback: true }), optional('/approvals', { sqliteFallback: true }),
-      optional('/sales?limit=500', { sqliteFallback: true }), optional('/shipments?limit=500', { sqliteFallback: true }), optional('/consignments?limit=500', { sqliteFallback: true }), optional('/returns?limit=500', { sqliteFallback: true }),
+      optional('/sales?limit=500', { sqliteFallback: true }), optional('/shipments?limit=500', { sqliteFallback: true }), optional('/consignments?limit=500', { sqliteFallback: true }), optional('/returns?limit=500', { sqliteFallback: true }), optional('/cost-adjustments?limit=500'),
       optional('/settings', { sqliteFallback: true }), optional('/company', { sqliteFallback: true }), optional('/exchange-rates?limit=100', { sqliteFallback: true }), optional('/dashboard?months=24', { sqliteFallback: true }),
     ]);
     // The endpoint mixes currencies in timestamp order. Selecting items[0] as
@@ -671,8 +722,9 @@
     const purchaseViews = purchaseDetails.map(record => purchaseView(record, productByLine, latestRate, users?.items || staff?.items || []));
     const reflectedPurchaseProducts = purchaseViews.reduce((total, slip) => total + (slip.lines || []).reduce(
       (lineTotal, line) => lineTotal + (Number(line.generatedProductCount) || 0), 0), 0);
-    if (reflectedPurchaseProducts !== APP_DATA.inventory.length) {
-      const error = new Error(`仕入反映点数（${reflectedPurchaseProducts}点）と在庫全件（${APP_DATA.inventory.length}点）が一致しません。`);
+    const linkedPurchaseProducts = APP_DATA.inventory.filter(item => Boolean(item.purchaseSlipLineId)).length;
+    if (reflectedPurchaseProducts !== linkedPurchaseProducts) {
+      const error = new Error(`仕入反映点数（${reflectedPurchaseProducts}点）と仕入紐づけ商品（${linkedPurchaseProducts}点）が一致しません。`);
       error.code = 'purchase_inventory_mismatch';
       throw error;
     }
@@ -732,6 +784,32 @@
     });
     APP_DATA.purchaseReturns = returnViews.filter(record => record.returnType === 'purchase_return');
     APP_DATA.salesReturns = returnViews.filter(record => record.returnType !== 'purchase_return');
+    APP_DATA.costAdjustments = (costAdjustments?.items || []).map(record => ({
+      _id: record.id,
+      id: record.slipNumber,
+      date: record.adjustmentDate,
+      adjustmentType: record.adjustmentType,
+      sourceProductCode: record.sourceProductCode,
+      sourceBrand: record.sourceBrand || '',
+      sourceModel: record.sourceModel || '',
+      sourceCostJpyMinor: Number(record.sourceCostJpyMinor) || 0,
+      adjustedCostJpyMinor: Number(record.adjustedCostJpyMinor) || 0,
+      status: record.status === 'confirmed' ? '処理済' : (statusLabel[record.status] || record.status),
+      note: record.notes || '',
+      confirmedAt: record.confirmedAt || null,
+      lines: (record.lines || []).map(line => ({
+        position: Number(line.position) || 0,
+        kind: line.kind || 'product',
+        code: line.managementCode || '',
+        previousCostJpyMinor: Number(line.previousCostJpyMinor) || 0,
+        adjustmentAmountJpyMinor: Number(line.adjustmentAmountJpyMinor) || 0,
+        adjustedCostJpyMinor: Number(line.adjustedCostJpyMinor) || 0,
+        allocatedCostJpyMinor: Number(line.allocatedCostJpyMinor) || 0,
+        direction: line.direction || '',
+        note: line.notes || '',
+      })),
+      apiManaged: true,
+    }));
     APP_DATA.marketPrices = (market?.items || []).map(record => {
       const marketCurrency = String(record.marketCurrency || 'JPY').toUpperCase();
       const storedRate = Number(record.marketFxRateScaled) > 0 && Number(record.marketFxScale) > 0
@@ -1291,6 +1369,16 @@
 	return result;
   }
 
+  async function scanCostAdjustmentProduct(slip, productCode) {
+    const adjustmentID = slip?._id;
+    if (!adjustmentID) throw new Error('原価調整伝票が見つかりません。');
+    const result = await request(`/cost-adjustments/${encodeURIComponent(adjustmentID)}/scan`, {
+      method: 'POST', body: JSON.stringify({ productCode: String(productCode || '').trim() }),
+    });
+    await hydrateAdmin();
+    return result;
+  }
+
   async function deletePurchaseSlip(slip) {
     const purchaseID = slip?._id || slip?.id;
     if (!purchaseID) throw new Error('削除対象の仕入伝票が見つかりません。');
@@ -1431,9 +1519,36 @@
     return result;
   }
 
+  async function revisePurchaseSlip(record, changes) {
+    if (!record?._id) throw new Error('仕入伝票のDB番号が見つかりません。');
+    const result = await request(`/purchases/${encodeURIComponent(record._id)}/revision`, {
+      method: 'PATCH', body: JSON.stringify(changes),
+    });
+    await hydrateAdmin();
+    return result;
+  }
+
+  async function reviseSaleSlip(record, changes) {
+    if (!record?._id) throw new Error('売上伝票のDB番号が見つかりません。');
+    const result = await request(`/sales/${encodeURIComponent(record._id)}/revision`, {
+      method: 'PATCH', body: JSON.stringify(changes),
+    });
+    await hydrateAdmin();
+    return result;
+  }
+
+  async function createSalesAdjustment(record, changes) {
+    if (!record?._id) throw new Error('元の売上伝票のDB番号が見つかりません。');
+    const result = await request(`/sales/${encodeURIComponent(record._id)}/adjustments`, {
+      method: 'POST', body: JSON.stringify(changes),
+    });
+    await hydrateAdmin();
+    return result;
+  }
+
   async function startProductCostAdjustment(item, options = {}) {
     if (!item?._id) throw new Error('原価調整を開始する商品が見つかりません。');
-    const mode = options.mode === 'combine' ? 'combine' : 'breakdown';
+    const mode = ['combine', 'adjustment'].includes(options.mode) ? options.mode : 'breakdown';
     const result = await request(`/products/${encodeURIComponent(item._id)}/cost-adjustments/start`, {
       method: 'POST',
       body: JSON.stringify({ mode, partIds: mode === 'combine' ? (options.partIds || []) : [] }),
@@ -1447,6 +1562,16 @@
     const result = await request(`/products/${encodeURIComponent(item._id)}/cost-adjustments/confirm`, {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+    await hydrateAdmin();
+    return result;
+  }
+
+  async function resetCostAdjustmentStart(items) {
+    const productIds = (items || []).map(item => item?._id).filter(Boolean);
+    if (productIds.length === 0) throw new Error('リセットする開始済み商品が見つかりません。');
+    const result = await request('/cost-adjustments/reset', {
+      method: 'POST', body: JSON.stringify({ productIds }),
     });
     await hydrateAdmin();
     return result;
@@ -1511,6 +1636,6 @@
     changePassword, setUserActive, queuePasswordReset, saveCompany, saveDashboardSettings,
     getAdminAccessCode, rotateAdminAccessCode, verifyAdminAccessCode, createUser,
     createGuestWithPartner, savePartner, saveMasterRecord, deactivateMasterRecord, createSingleProduct, createPart, updatePart, appendProductImages,
-    createApproval, decideApproval, saveSale, saveShipment, returnShipmentProduct, saveConsignment, returnConsignmentProduct, savePurchaseSlip, issuePurchaseSlip, markPurchasePaid, receivePurchaseProduct, deletePurchaseSlip, issueSaleSlip, markSalePaid, issueConsignmentSlip, saveBoxes, importMarketCSV, saveReturn,
-    updateProduct, startProductCostAdjustment, confirmProductCostAdjustment, updateProductImages, updateMarketPrice, updateShipmentTracking, updateReturnTracking, recordDocumentEvent };
+    createApproval, decideApproval, saveSale, saveShipment, returnShipmentProduct, saveConsignment, returnConsignmentProduct, savePurchaseSlip, issuePurchaseSlip, markPurchasePaid, receivePurchaseProduct, scanCostAdjustmentProduct, deletePurchaseSlip, issueSaleSlip, markSalePaid, issueConsignmentSlip, saveBoxes, importMarketCSV, saveReturn,
+    updateProduct, startProductCostAdjustment, confirmProductCostAdjustment, resetCostAdjustmentStart, updateProductImages, updateMarketPrice, updateShipmentTracking, updateReturnTracking, revisePurchaseSlip, reviseSaleSlip, createSalesAdjustment, recordDocumentEvent };
 })();

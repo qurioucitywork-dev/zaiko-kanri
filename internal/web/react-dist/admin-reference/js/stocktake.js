@@ -424,7 +424,7 @@ function _stkStateIcon(state) {
    進捗カウンタ更新
    ============================================================ */
 function stkUpdateProgress() {
-  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
+  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []).filter(i => !i.inventoryValuationExcluded);
 
   const inStockItems  = inv.filter(i => ['在庫中', '取置中', '仕入返品処理中'].includes(_stkNormalizeInventoryStatus(i.status)));
   const shippedItems  = inv.filter(i => ['出荷済', '委託中'].includes(i.status));
@@ -446,7 +446,7 @@ function stkUpdateProgress() {
    集計サマリー更新
    ============================================================ */
 function stkUpdateSummary() {
-  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
+  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []).filter(i => !i.inventoryValuationExcluded);
 
   const inStockItems  = inv.filter(i => ['在庫中', '取置中', '仕入返品処理中'].includes(_stkNormalizeInventoryStatus(i.status)));
   const shippedItems  = inv.filter(i => ['出荷済', '委託中'].includes(i.status));
@@ -613,7 +613,7 @@ async function stkResolveSelectedMismatches() {
 }
 
 function _stkUpdateMismatchBadge() {
-  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
+  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []).filter(i => !i.inventoryValuationExcluded);
   const count = inv.filter(i => {
     const s = _stkState[i.code]?.state || '未処理';
     return s === '未処理';
@@ -783,7 +783,7 @@ async function stkConfirmReason() {
    棚卸確定
    ============================================================ */
 function stkTryComplete() {
-  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
+  const inv = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []).filter(i => !i.inventoryValuationExcluded);
   const fmt = v => typeof formatPrice === 'function'
     ? formatPrice(v) : `¥${v.toLocaleString('ja-JP')}`;
 
@@ -872,7 +872,7 @@ async function stkExecuteComplete() {
    CSV ダウンロード
    ============================================================ */
 function stkDownloadCSV() {
-  const inv = _stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || []);
+  const inv = _stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || []).filter(i => !i.inventoryValuationExcluded);
   const fmt = v => v || '';
 
   const headers = ['管理番号','ブランド','モデル','型番','シリアル','原価','ステータス','棚卸状態','不一致理由','備考','棚卸日時'];
@@ -908,7 +908,7 @@ function stkDownloadCSV() {
    印刷
    ============================================================ */
 function stkPrint() {
-  const inv = _stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || []);
+  const inv = _stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || []).filter(i => !i.inventoryValuationExcluded);
   const fmt = v => typeof formatPrice === 'function'
     ? formatPrice(v) : `¥${v.toLocaleString('ja-JP')}`;
 

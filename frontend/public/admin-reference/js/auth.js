@@ -33,7 +33,7 @@ const ROLE_LABELS = { admin: '管理者', buyer: '作業者', worker: '作業者
 const ROLE_ADMIN_ONLY_PAGES = ['approval', 'password', 'company', 'login-info'];
 const ROLE_ADMIN_AUTH_PAGES = ['master', 'box'];
 const ROLE_WORKSPACE_PAGES = [
-  'dashboard', 'market', 'market-entry', 'inventory', 'purchase-entry', 'purchase', 'sales',
+  'dashboard', 'market', 'market-entry', 'inventory', 'purchase-entry', 'purchase', 'cost-adjustment', 'cost-adjustment-slips', 'sales',
   'sales-list', 'shipping', 'consignment', 'sales-adjustment-entry', 'purchase-adjustment-entry',
   'returns', 'master', 'box', 'performance',
   'stocktake', 'purchase-list', 'client',

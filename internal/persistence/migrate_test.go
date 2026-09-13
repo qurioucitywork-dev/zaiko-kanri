@@ -23,6 +23,135 @@ func TestMigrationCatalogIsOrderedAndChecksummed(t *testing.T) {
 	}
 }
 
+func TestCostMergeCommentMigrationRemovesManagementNumber(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000074_cost_merge_internal_comment" {
+			sql = migration.SQL
+			break
+		}
+	}
+	for _, fragment := range []string{"adjustment_type = 'combine'", "原価管理番号", "調整伝票番号", "internal_comment"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("cost merge comment migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestCostMergeOutputSupplierMigrationClearsSupplier(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000075_cost_merge_output_supplier" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("cost merge output supplier migration 000075 is missing")
+	}
+	for _, fragment := range []string{"product_cost_merges", "supplier_id = ''", "supplier_role_id = NULL", "adjustment_id = p.cost_adjustment_id"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("cost merge output supplier migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestCostMergeOutputSupplierScopeMigrationRestoresSources(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000076_cost_merge_output_supplier_scope" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("cost merge output supplier scope migration 000076 is missing")
+	}
+	for _, fragment := range []string{"product_cost_merge_inputs", "purchase_slip_lines", "purchase_slips", "cost_adjustment_items", "output_product_id = p.id"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("cost merge output supplier scope migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestCostMergeSupplierSnapshotRecoveryMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000077_cost_merge_supplier_snapshot_recovery" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("cost merge supplier snapshot recovery migration 000077 is missing")
+	}
+	for _, fragment := range []string{"jsonb_array_elements", "supplierRoleId", "snapshot->>'id'", "p.product_code = merge_record.management_code"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("cost merge supplier snapshot recovery migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestCostMergeSlipHistoryMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000078_cost_merge_slip_history" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("cost merge slip history migration 000078 is missing")
+	}
+	for _, fragment := range []string{"jsonb_array_elements", "internalComment", "調整伝票番号", "management_code", "string_agg"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("cost merge slip history migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestCostAdjustmentStartSnapshotMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000079_cost_adjustment_start_snapshots" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("cost adjustment start snapshot migration 000079 is missing")
+	}
+	for _, fragment := range []string{"cost_adjustment_start_snapshots", "previous_inventory_status", "previous_base_sale_price_minor", "previous_internal_comment", "previous_cost_adjustment_started_at", "cancelled"} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("cost adjustment start snapshot migration is missing %q", fragment)
+		}
+	}
+}
+
 func TestMarketResearchCurrencyRateMigrationPersistsHistoricalRate(t *testing.T) {
 	migrations, err := migrationCatalog()
 	if err != nil {
@@ -683,6 +812,86 @@ func TestCostAdjustmentBreakdownOutputsMigration(t *testing.T) {
 	} {
 		if !strings.Contains(sql, fragment) {
 			t.Fatalf("cost adjustment breakdown migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchaseInventoryLifecycleUpdatesMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000071_purchase_inventory_lifecycle_updates" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase inventory lifecycle migration 000071 is missing")
+	}
+	for _, fragment := range []string{
+		"TG_OP = 'UPDATE'",
+		"NEW.purchase_slip_line_id IS NOT DISTINCT FROM OLD.purchase_slip_line_id",
+		"NEW.deleted_at IS NOT DISTINCT FROM OLD.deleted_at",
+		"assert_purchase_inventory_consistency",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase inventory lifecycle migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestProductCostAdjustedStatusMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000072_product_cost_adjusted_status" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("product cost-adjusted status migration 000072 is missing")
+	}
+	for _, fragment := range []string{
+		"inventory_status = 'cost_adjusted'",
+		"WHERE inventory_status = 'broken_down'",
+		"'cost_adjusted'",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("product cost-adjusted status migration is missing %q", fragment)
+		}
+	}
+}
+
+func TestPurchaseLineReferenceUpdatesMigration(t *testing.T) {
+	migrations, err := migrationCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sql string
+	for _, migration := range migrations {
+		if migration.Version == "000073_purchase_line_reference_updates" {
+			sql = migration.SQL
+			break
+		}
+	}
+	if sql == "" {
+		t.Fatal("purchase line reference update migration 000073 is missing")
+	}
+	for _, fragment := range []string{
+		"NEW.purchase_slip_id IS NOT DISTINCT FROM OLD.purchase_slip_id",
+		"NEW.quantity IS NOT DISTINCT FROM OLD.quantity",
+		"NEW.generated_product_count IS NOT DISTINCT FROM OLD.generated_product_count",
+		"NEW.generated_part_count IS NOT DISTINCT FROM OLD.generated_part_count",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Fatalf("purchase line reference update migration is missing %q", fragment)
 		}
 	}
 }

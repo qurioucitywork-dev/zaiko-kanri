@@ -1,11 +1,29 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestUnknownAPIReturnsJSONNotSPAHTML(t *testing.T) {
+	app, _ := testServer(t)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/removed-optional-catalog", nil)
+	recorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("unknown API status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "application/json") {
+		t.Fatalf("unknown API content-type=%q, want JSON", contentType)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(recorder.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unknown API returned invalid JSON: %v body=%s", err, recorder.Body.String())
+	}
+}
 
 func TestDatabaseReadinessAndCacheHeaders(t *testing.T) {
 	app, _ := testServer(t)

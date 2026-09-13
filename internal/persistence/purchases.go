@@ -687,9 +687,8 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 	return record, nil
 }
 
-// ReceivePurchaseProduct records physical arrival of one product. In addition
-// to the initial purchasing state, a cost-adjustment output remains pending
-// until its new management number has been physically scanned.
+// ReceivePurchaseProduct records physical arrival of a newly purchased product.
+// Cost-adjustment goods must instead use the adjustment slip's scan endpoint.
 func (r *Repository) ReceivePurchaseProduct(ctx context.Context, organizationID, purchaseID, productCode, actorUserID string) (PurchaseArrivalResult, error) {
 	result := PurchaseArrivalResult{ProductCode: strings.TrimSpace(productCode)}
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -716,7 +715,9 @@ func (r *Repository) ReceivePurchaseProduct(ctx context.Context, organizationID,
 			result.InventoryStatus = "in_stock"
 			return nil
 		}
-		if product.InventoryStatus != "purchasing" && product.InventoryStatus != "cost_adjustment" {
+		// Cost-adjustment goods must be scanned against their adjustment slip:
+		// zero-value lines are historical, never incoming stock.
+		if product.InventoryStatus != "purchasing" {
 			return ErrPurchaseArrivalState
 		}
 		fromStatus := product.InventoryStatus
@@ -724,13 +725,6 @@ func (r *Repository) ReceivePurchaseProduct(ctx context.Context, organizationID,
 		if err := tx.Exec(`UPDATE products SET inventory_status='in_stock',updated_at=?
 			WHERE organization_id=? AND id=? AND inventory_status=?`, now, organizationID, product.ID, fromStatus).Error; err != nil {
 			return err
-		}
-		if fromStatus == "cost_adjustment" && product.CostAdjustmentID != "" {
-			if err := tx.Table("cost_adjustment_items").Where(
-				"cost_adjustment_id=? AND output_product_id=?", product.CostAdjustmentID, product.ID,
-			).Update("status", "completed").Error; err != nil {
-				return err
-			}
 		}
 		eventID, err := database.NewID("ive")
 		if err != nil {

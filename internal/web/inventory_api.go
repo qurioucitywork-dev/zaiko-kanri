@@ -195,8 +195,8 @@ func (s *Server) apiProductCostAdjustmentStart(w http.ResponseWriter, r *http.Re
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil || (input.Mode != "breakdown" && input.Mode != "combine") {
-		writeAPIError(w, http.StatusBadRequest, "invalid_cost_adjustment_mode", "崩しまたは結合モードを選択してください。")
+	if err := decoder.Decode(&input); err != nil || (input.Mode != "breakdown" && input.Mode != "combine" && input.Mode != "adjustment") {
+		writeAPIError(w, http.StatusBadRequest, "invalid_cost_adjustment_mode", "原価分け、原価合わせ、または原価調整モードを選択してください。")
 		return
 	}
 	if input.Mode == "combine" && len(input.PartIDs) == 0 {
@@ -211,6 +211,8 @@ func (s *Server) apiProductCostAdjustmentStart(w http.ResponseWriter, r *http.Re
 	var record persistence.Product
 	if input.Mode == "combine" {
 		record, err = s.repository.StartCombineCostAdjustment(r.Context(), user.OrganizationID, r.PathValue("id"), input.PartIDs, user.ID)
+	} else if input.Mode == "adjustment" {
+		record, err = s.repository.StartDirectProductCostAdjustment(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
 	} else {
 		record, err = s.repository.StartProductCostAdjustment(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
 	}
@@ -220,9 +222,15 @@ func (s *Server) apiProductCostAdjustmentStart(w http.ResponseWriter, r *http.Re
 			return
 		}
 		if errors.Is(err, persistence.ErrProductConflict) {
-			writeAPIError(w, http.StatusConflict, "product_state_conflict", "在庫中の商品だけ原価調整を開始できます。")
+			writeAPIError(w, http.StatusConflict, "product_state_conflict", "在庫中の商品だけ原価管理を開始できます。原価調整中の商品は使用できません。")
 			return
 		}
+		s.log.Error("cost adjustment start failed",
+			"product_id", r.PathValue("id"),
+			"mode", input.Mode,
+			"organization_id", user.OrganizationID,
+			"error", err,
+		)
 		writeAPIError(w, http.StatusInternalServerError, "cost_adjustment_start_failed", "原価調整を開始できませんでした。")
 		return
 	}
@@ -230,7 +238,7 @@ func (s *Server) apiProductCostAdjustmentStart(w http.ResponseWriter, r *http.Re
 	afterJSON, _ := json.Marshal(record)
 	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
 		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "product", TargetID: record.ID,
-		Action: "product.cost_adjustment_started", BeforeJSON: string(beforeJSON), AfterJSON: string(afterJSON), Reason: map[string]string{"breakdown": "崩し作業を開始", "combine": "結合作業を開始"}[input.Mode],
+		Action: "product.cost_adjustment_started", BeforeJSON: string(beforeJSON), AfterJSON: string(afterJSON), Reason: map[string]string{"breakdown": "原価分け作業を開始", "combine": "原価合わせ作業を開始", "adjustment": "原価調整作業を開始"}[input.Mode],
 		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 	})
 	writeJSON(w, http.StatusOK, record)
@@ -284,7 +292,7 @@ func (s *Server) apiProductCostAdjustmentConfirm(w http.ResponseWriter, r *http.
 	afterJSON, _ := json.Marshal(result)
 	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{
 		OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "product", TargetID: input.SourceProductID,
-		Action: "product.cost_adjustment_confirmed", AfterJSON: string(afterJSON), Reason: map[string]string{"breakdown": "崩し原価調整を確定", "combine": "結合原価調整を確定"}[input.Mode],
+		Action: "product.cost_adjustment_confirmed", AfterJSON: string(afterJSON), Reason: map[string]string{"breakdown": "原価分けを確定", "combine": "原価合わせを確定"}[input.Mode],
 		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent(),
 	})
 	writeJSON(w, http.StatusCreated, result)

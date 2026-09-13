@@ -24,6 +24,7 @@ func TestStocktakeSnapshotScanAndPersistence(t *testing.T) {
 		{ID: "prd_return", OrganizationID: "org", ProductCode: "RETURN-1", InventoryStatus: "return_pending", Brand: "B", CostAmountMinor: 2000, CreatedAt: now, UpdatedAt: now},
 		{ID: "prd_cancel", OrganizationID: "org", ProductCode: "CANCEL-1", InventoryStatus: "cancelled", Brand: "C", CostAmountMinor: 3000, CreatedAt: now, UpdatedAt: now},
 		{ID: "prd_sold", OrganizationID: "org", ProductCode: "SOLD-1", InventoryStatus: "sold", Brand: "D", CostAmountMinor: 4000, CreatedAt: now, UpdatedAt: now},
+		{ID: "prd_history", OrganizationID: "org", ProductCode: "HISTORY-1", InventoryStatus: "in_stock", Brand: "E", CostAmountMinor: 5000, InventoryValuationExcluded: true, InventoryValuationExclusionReason: "cost_split_source", CreatedAt: now, UpdatedAt: now},
 	}
 	if err := db.Create(&products).Error; err != nil {
 		t.Fatal(err)
@@ -37,8 +38,15 @@ func TestStocktakeSnapshotScanAndPersistence(t *testing.T) {
 	if len(session.Lines) != 2 {
 		t.Fatalf("snapshot lines=%d, want 2 (in_stock and return_pending)", len(session.Lines))
 	}
+	session, message, err := repo.ScanStocktake(ctx, "org", session.ID, "HISTORY-1")
+	if err != nil || message != "valuation_excluded_ignored" {
+		t.Fatalf("scan valuation-excluded history message=%q err=%v", message, err)
+	}
+	if line := findStocktakeLine(session.Lines, "HISTORY-1"); line != nil {
+		t.Fatalf("valuation-excluded history item must not appear in stocktake lines: %+v", line)
+	}
 
-	session, message, err := repo.ScanStocktake(ctx, "org", session.ID, "RETURN-1")
+	session, message, err = repo.ScanStocktake(ctx, "org", session.ID, "RETURN-1")
 	if err != nil || message != "verified" {
 		t.Fatalf("scan expected message=%q err=%v", message, err)
 	}

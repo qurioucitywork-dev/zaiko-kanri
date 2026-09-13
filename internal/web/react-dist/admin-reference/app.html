@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>在庫管理ツール — 管理画面</title>
-  <link rel="stylesheet" href="css/style.css?v=20260831-sales-adjustment-entry-v1">
+  <link rel="stylesheet" href="css/style.css?v=20260914-sales-line-directions-v1">
 <link rel="stylesheet" href="css/market-table.css?v=20260831-market-modal-currency-spacing-v1">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -1520,7 +1520,7 @@
               oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)">
           </div>
           <div class="form-group">
-            <label class="form-label">売価</label>
+            <label class="form-label">想定売価</label>
             <input type="text" inputmode="numeric" class="form-control" id="ie-salePrice"
               oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)" aria-describedby="ie-salePrice-help">
             <small id="ie-salePrice-help" style="color:var(--text-muted);">USドルで入力</small>
@@ -1657,7 +1657,7 @@
         </div>
       </div>
     </div>
-    <div class="modal-body" style="max-height:68vh;overflow-y:auto;padding-top:4px;">
+    <div class="modal-body" style="max-height:68vh;overflow-y:auto;padding-top:4px;" oninput="updateSlipReviseSaveState()" onchange="updateSlipReviseSaveState()">
       <input type="hidden" id="slipReviseId">
       <input type="hidden" id="slipReviseType">
       <!-- 伝票タイプ別フィールド（JS で動的生成） -->
@@ -1665,7 +1665,7 @@
       <!-- 修正備考（共通） -->
       <div style="border-top:2px solid var(--border);margin-top:16px;padding-top:14px;">
         <div style="font-size:12px;font-weight:bold;color:var(--text-muted);margin-bottom:8px;">
-          <i class="fa-solid fa-comment-dots"></i> 修正メモ（変更理由・備考）
+          <i class="fa-solid fa-comment-dots"></i> 保存理由 <span class="required">*</span>
         </div>
         <textarea class="form-control" id="slipReviseNote" rows="2"
           placeholder="例：金額を¥2,350,000に修正（当初¥2,400,000）"></textarea>
@@ -1679,8 +1679,8 @@
       <button class="btn btn-outline" onclick="closeSlipRevise()">
         <i class="fa-solid fa-xmark"></i> キャンセル
       </button>
-      <button class="btn btn-warning" onclick="submitSlipRevise()">
-        <i class="fa-solid fa-check"></i> 修正を記録する
+      <button class="btn btn-warning" id="slipReviseSaveButton" onclick="submitSlipRevise()" disabled>
+        <i class="fa-solid fa-floppy-disk"></i> 修正を保存
       </button>
     </div>
   </div>
@@ -1896,32 +1896,31 @@
             </a>
           </div>
         </div>
-        <div class="nav-folder" id="inventoryNavGroup">
-          <button class="nav-item nav-folder-toggle" id="inventoryNavToggle" type="button"
-            aria-expanded="false" aria-controls="inventoryNavSubmenu" onclick="toggleInventoryNavGroup()">
-            <span class="nav-icon"><i class="fa-solid fa-box-archive"></i></span>
-            <span>在庫管理</span>
-            <span class="nav-folder-chevron" aria-hidden="true"><i class="fa-solid fa-chevron-down"></i></span>
-          </button>
-          <div class="nav-submenu" id="inventoryNavSubmenu" aria-label="在庫管理メニュー" hidden>
-            <a class="nav-item nav-subitem" data-page="inventory" onclick="navigateTo('inventory')">
-              <span class="nav-icon"><i class="fa-solid fa-box"></i></span> 商品管理
-            </a>
-            <a class="nav-item nav-subitem" data-page="parts-management" onclick="navigateTo('parts-management')">
-              <span class="nav-icon"><i class="fa-solid fa-puzzle-piece"></i></span> パーツ管理
-            </a>
-          </div>
-        </div>
+        <a class="nav-item" data-page="inventory" onclick="navigateTo('inventory')">
+          <span class="nav-icon"><i class="fa-solid fa-box-archive"></i></span> 在庫管理
+        </a>
         <a class="nav-item" data-page="purchase-entry" onclick="navigateTo('purchase-entry')">
           <span class="nav-icon"><i class="fa-solid fa-file-invoice"></i></span> 仕入登録
         </a>
         <a class="nav-item" data-page="purchase" onclick="navigateTo('purchase')">
           <span class="nav-icon"><i class="fa-solid fa-file-import"></i></span> 商品登録
         </a>
-        <a class="nav-item" id="costAdjustmentNavButton" data-page="cost-adjustment"
-          onclick="navigateTo('cost-adjustment')">
-          <span class="nav-icon"><i class="fa-solid fa-scale-balanced"></i></span> 原価調整
-        </a>
+        <div class="nav-folder" id="costManagementNavGroup">
+          <button class="nav-item nav-folder-toggle" id="costManagementNavToggle" type="button"
+            aria-expanded="false" aria-controls="costManagementNavSubmenu" onclick="toggleCostManagementNavGroup()">
+            <span class="nav-icon"><i class="fa-solid fa-scale-balanced"></i></span>
+            <span>原価管理</span>
+            <span class="nav-folder-chevron" aria-hidden="true"><i class="fa-solid fa-chevron-down"></i></span>
+          </button>
+          <div class="nav-submenu" id="costManagementNavSubmenu" aria-label="原価管理メニュー" hidden>
+            <a class="nav-item nav-subitem" id="costAdjustmentNavButton" data-page="cost-adjustment" onclick="navigateTo('cost-adjustment')">
+              <span class="nav-icon"><i class="fa-solid fa-sliders"></i></span> 原価管理
+            </a>
+            <a class="nav-item nav-subitem" data-page="cost-adjustment-slips" onclick="navigateTo('cost-adjustment-slips')">
+              <span class="nav-icon"><i class="fa-solid fa-file-pen"></i></span> 調整伝票
+            </a>
+          </div>
+        </div>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">経理・会計</div>
@@ -1940,22 +1939,6 @@
         <a class="nav-item" data-page="consignment" onclick="navigateTo('consignment')">
           <span class="nav-icon"><i class="fa-solid fa-handshake"></i></span> 委託登録
         </a>
-        <div class="nav-folder" id="adjustmentEntryNavGroup">
-          <button class="nav-item nav-folder-toggle" id="adjustmentEntryNavToggle" type="button"
-            aria-expanded="false" aria-controls="adjustmentEntryNavSubmenu" onclick="toggleAdjustmentEntryNavGroup()">
-            <span class="nav-icon"><i class="fa-solid fa-file-circle-plus"></i></span>
-            <span>調整登録</span>
-            <span class="nav-folder-chevron" aria-hidden="true"><i class="fa-solid fa-chevron-down"></i></span>
-          </button>
-          <div class="nav-submenu" id="adjustmentEntryNavSubmenu" aria-label="調整登録メニュー" hidden>
-            <a class="nav-item nav-subitem" data-page="sales-adjustment-entry" onclick="navigateTo('sales-adjustment-entry')">
-              <span class="nav-icon"><i class="fa-solid fa-yen-sign"></i></span> 売上調整登録
-            </a>
-            <a class="nav-item nav-subitem" data-page="purchase-adjustment-entry" onclick="navigateTo('purchase-adjustment-entry')">
-              <span class="nav-icon"><i class="fa-solid fa-file-import"></i></span> 仕入調整登録
-            </a>
-          </div>
-        </div>
       </div>
       <div class="nav-group">
         <div class="nav-group-label">管理</div>
@@ -2606,7 +2589,7 @@
                 <option value="仕入中">仕入中</option>
                 <option value="在庫中" selected>在庫中</option>
                 <option value="原価調整中">原価調整中</option>
-                <option value="崩し済み">崩し済み</option>
+                <option value="原価調整済">原価調整済</option>
                 <option value="取置中">取置中</option>
                 <option value="売上済">売上済</option>
                 <option value="委託中">委託中</option>
@@ -2702,7 +2685,7 @@
                 aria-controls="inv-column-panel">
                 <i class="fa-solid fa-table-columns"></i>
                 <span>表示項目</span>
-                <span class="inv-column-count" id="inv-column-count">20/21</span>
+                <span class="inv-column-count" id="inv-column-count">23/24</span>
               </button>
               <div class="inv-column-panel" id="inv-column-panel" role="group" aria-label="在庫一覧の表示項目">
                 <div class="inv-column-panel-header">
@@ -2725,8 +2708,11 @@
                   <label><input type="checkbox" value="purchasePrice" checked onchange="_invColumnVisibilityChanged(this)">原価（現在レート）</label>
                   <label><input type="checkbox" value="supplier" checked onchange="_invColumnVisibilityChanged(this)">仕入先</label>
                   <label><input type="checkbox" value="staff" checked onchange="_invColumnVisibilityChanged(this)">バイヤー</label>
-                  <label><input type="checkbox" value="salePrice" checked onchange="_invColumnVisibilityChanged(this)">売価</label>
-                  <label><input type="checkbox" value="grossMargin" checked onchange="_invColumnVisibilityChanged(this)">粗利率</label>
+                  <label><input type="checkbox" value="salePrice" checked onchange="_invColumnVisibilityChanged(this)">想定売価</label>
+                  <label><input type="checkbox" value="grossMargin" checked onchange="_invColumnVisibilityChanged(this)">想定粗利率</label>
+                  <label><input type="checkbox" value="saleRate" checked onchange="_invColumnVisibilityChanged(this)">売上時レート</label>
+                  <label><input type="checkbox" value="actualSalePrice" checked onchange="_invColumnVisibilityChanged(this)">売価</label>
+                  <label><input type="checkbox" value="actualGrossMargin" checked onchange="_invColumnVisibilityChanged(this)">粗利率</label>
                   <label><input type="checkbox" value="status" checked onchange="_invColumnVisibilityChanged(this)">ステータス</label>
                   <label><input type="checkbox" value="box" checked onchange="_invColumnVisibilityChanged(this)">BOX</label>
                   <label><input type="checkbox" value="shape" checked onchange="_invColumnVisibilityChanged(this)">形状</label>
@@ -2751,6 +2737,7 @@
               <col data-inv-col="purchaseRate" style="width:150px;"><col data-inv-col="purchasePriceAtPurchaseRate" style="width:195px;">
               <col data-inv-col="purchasePrice" style="width:190px;"><col data-inv-col="supplier" style="width:90px;"><col data-inv-col="staff" style="width:80px;">
               <col data-inv-col="salePrice" style="width:132px;"><col data-inv-col="grossMargin" style="width:85px;">
+              <col data-inv-col="saleRate" style="width:155px;"><col data-inv-col="actualSalePrice" style="width:220px;"><col data-inv-col="actualGrossMargin" style="width:85px;">
               <col data-inv-col="status" style="width:80px;"><col data-inv-col="box" style="width:50px;">
               <col data-inv-col="shape" style="width:90px;"><col data-inv-col="edit" style="width:58px;">
             </colgroup>
@@ -2764,7 +2751,7 @@
                 <th data-inv-col="purchasePriceAtPurchaseRate">
                   <div class="inv-price-column-head">
                     <span id="inv-purchase-time-heading">原価（仕入時レート・JPY）</span>
-                    <div class="inv-price-currency-switch" role="group" aria-label="在庫金額3項目の連動表示通貨（原価・仕入時レートから操作）">
+                    <div class="inv-price-currency-switch" role="group" aria-label="在庫金額4項目の連動表示通貨（原価・仕入時レートから操作）">
                       <button type="button" id="inv-purchase-time-jpy" class="inv-price-currency-btn active"
                         aria-label="原価（仕入時レート）を円で表示" aria-pressed="true"
                         onclick="switchInventoryCostCurrency('purchase-time','JPY')">¥</button>
@@ -2780,7 +2767,7 @@
                 <th data-inv-col="purchasePrice">
                   <div class="inv-price-column-head">
                     <span id="inv-purchase-current-heading">原価（現在レート・JPY）</span>
-                    <div class="inv-price-currency-switch" role="group" aria-label="在庫金額3項目の連動表示通貨（原価・現在レートから操作）">
+                    <div class="inv-price-currency-switch" role="group" aria-label="在庫金額4項目の連動表示通貨（原価・現在レートから操作）">
                       <button type="button" id="inv-purchase-current-jpy" class="inv-price-currency-btn active"
                         aria-label="原価（現在レート）を円で表示" aria-pressed="true"
                         onclick="switchInventoryCostCurrency('current','JPY')">¥</button>
@@ -2796,21 +2783,46 @@
                 <th data-inv-col="supplier">仕入先</th><th data-inv-col="staff">バイヤー</th>
                 <th data-inv-col="salePrice">
                   <div class="inv-price-column-head">
-                    <span id="inv-sale-heading">売価（JPY）</span>
-                    <div class="inv-price-currency-switch" role="group" aria-label="在庫金額3項目の連動表示通貨（売価から操作）">
+                    <span id="inv-sale-heading">想定売価（JPY）</span>
+                    <div class="inv-price-currency-switch" role="group" aria-label="在庫金額4項目の連動表示通貨（想定売価から操作）">
                       <button type="button" id="inv-sale-jpy" class="inv-price-currency-btn active"
-                        aria-label="売価を円で表示" aria-pressed="true"
+                        aria-label="想定売価を円で表示" aria-pressed="true"
                         onclick="switchInventoryPriceCurrency('sale','JPY')">¥</button>
                       <button type="button" id="inv-sale-usd" class="inv-price-currency-btn"
-                        aria-label="売価をUSDで表示" aria-pressed="false"
+                        aria-label="想定売価をUSDで表示" aria-pressed="false"
                         onclick="switchInventoryPriceCurrency('sale','USD')">$</button>
                       <button type="button" id="inv-sale-hkd" class="inv-price-currency-btn"
-                        aria-label="売価をHKDで表示" aria-pressed="false"
+                        aria-label="想定売価をHKDで表示" aria-pressed="false"
                         onclick="switchInventoryPriceCurrency('sale','HKD')">HK$</button>
                     </div>
                   </div>
                 </th>
-                <th data-inv-col="grossMargin">粗利率</th>
+                <th data-inv-col="grossMargin">想定粗利率</th>
+                <th data-inv-col="saleRate">売上時レート</th>
+                <th data-inv-col="actualSalePrice">
+                  <div class="inv-price-column-head">
+                    <span id="inv-actual-sale-heading">売価（売上時レート・JPY）</span>
+                    <div class="inv-price-currency-switch" role="group" aria-label="在庫金額4項目の連動表示通貨（売価から操作）">
+                      <button type="button" id="inv-actual-sale-jpy" class="inv-price-currency-btn active"
+                        aria-label="売価を円で表示" aria-pressed="true"
+                        onclick="switchInventoryPriceCurrency('actual-sale','JPY')">¥</button>
+                      <button type="button" id="inv-actual-sale-usd" class="inv-price-currency-btn"
+                        aria-label="売価をUSDで表示" aria-pressed="false"
+                        onclick="switchInventoryPriceCurrency('actual-sale','USD')">$</button>
+                      <button type="button" id="inv-actual-sale-hkd" class="inv-price-currency-btn"
+                        aria-label="売価をHKDで表示" aria-pressed="false"
+                        onclick="switchInventoryPriceCurrency('actual-sale','HKD')">HK$</button>
+                    </div>
+                  </div>
+                </th>
+                <th data-inv-col="actualGrossMargin" id="inv-gross-margin-sort-th" aria-sort="none">
+                  <button type="button" class="inv-status-sort-btn" id="inv-gross-margin-sort-btn"
+                    onclick="toggleInventoryGrossMarginSort()" aria-label="粗利率を昇順に並べ替える"
+                    title="クリックして粗利率の昇順・降順を切り替え">
+                    <span>粗利率</span>
+                    <i class="fa-solid fa-sort" id="inv-gross-margin-sort-icon" aria-hidden="true"></i>
+                  </button>
+                </th>
                 <th data-inv-col="status" id="inv-status-sort-th" aria-sort="none">
                   <button type="button" class="inv-status-sort-btn" id="inv-status-sort-btn"
                     onclick="toggleInventoryStatusSort()"
@@ -2924,7 +2936,7 @@
                 <th>仕入先</th>
                 <th>バイヤー</th>
                 <th>原価（JPY）</th>
-                <th>売価（USD）</th>
+                <th>想定売価（USD）</th>
                 <th>ステータス</th>
               </tr>
             </thead>
@@ -3091,7 +3103,7 @@
                 <th style="min-width:160px;">SKU <span class="text-muted" style="font-size:11px;">（任意）</span></th>
                 <th id="pe-purchase-price-heading" style="width:140px;text-align:right;">仕入金額（円）</th>
                 <th style="width:150px;text-align:right;">税区分 / 税額</th>
-                <th style="width:140px;text-align:right;">売価（USD）</th>
+                  <th style="width:140px;text-align:right;">想定売価（USD）</th>
                 <th style="width:80px;text-align:center;">商品登録</th>
                 <th style="width:48px;text-align:center;">削除</th>
               </tr>
@@ -3165,14 +3177,11 @@
       <div class="registration-mode-card" aria-labelledby="registration-mode-title">
         <div>
           <h2 id="registration-mode-title"><i class="fa-solid fa-boxes-stacked" aria-hidden="true"></i> 登録する種類</h2>
-          <p>通常の商品と、原価調整で使用するパーツを切り替えて登録できます。</p>
+          <p>在庫として管理する商品を登録します。</p>
         </div>
         <div class="registration-mode-switch" role="radiogroup" aria-label="登録する種類">
           <button type="button" id="registration-mode-product" class="registration-mode-button active" role="radio" aria-checked="true" onclick="switchRegistrationMode('product')">
             <i class="fa-solid fa-box" aria-hidden="true"></i> 商品登録
-          </button>
-          <button type="button" id="registration-mode-part" class="registration-mode-button" role="radio" aria-checked="false" onclick="switchRegistrationMode('part')">
-            <i class="fa-solid fa-puzzle-piece" aria-hidden="true"></i> パーツ登録
           </button>
         </div>
       </div>
@@ -3368,7 +3377,7 @@
                     title="半角入力は全角へ自動変換されます">
                 </div>
                 <div class="form-group">
-                  <label class="form-label">売価</label>
+                  <label class="form-label">想定売価</label>
                   <input type="text" inputmode="numeric" class="form-control" id="pu-sale-price" placeholder="例: 7,613"
                     oninput="priceFormatHandler(this)"
                     onblur="priceFormatHandler(this)">
@@ -3437,19 +3446,23 @@
           <div class="ca-toolbar-title">
             <span class="ca-toolbar-icon"><i class="fa-solid fa-wand-magic-sparkles"></i></span>
             <div>
-              <h2 id="ca-workspace-title">原価調整ワークスペース</h2>
-              <p>対象商品とパーツBOXを使って、原価調整の内容を組み立てます</p>
+              <h2 id="ca-workspace-title">原価管理ワークスペース</h2>
+              <p>対象商品の原価を分ける・合わせる・調整する作業を行います</p>
             </div>
           </div>
           <div class="ca-toolbar-actions">
-            <div class="ca-mode-switch" role="radiogroup" aria-label="原価調整方法">
+            <div class="ca-mode-switch" role="radiogroup" aria-label="原価管理方法">
               <button type="button" class="ca-mode-button active" data-ca-mode="breakdown" role="radio"
                 aria-checked="true" onclick="costAdjustmentSetMode('breakdown')">
-                <i class="fa-solid fa-cubes-stacked"></i> 崩し
+                <i class="fa-solid fa-cubes-stacked"></i> 原価分け
               </button>
               <button type="button" class="ca-mode-button" data-ca-mode="combine" role="radio"
                 aria-checked="false" onclick="costAdjustmentSetMode('combine')">
-                <i class="fa-solid fa-object-group"></i> 結合
+                <i class="fa-solid fa-object-group"></i> 原価合わせ
+              </button>
+              <button type="button" class="ca-mode-button" data-ca-mode="adjustment" role="radio"
+                aria-checked="false" onclick="costAdjustmentSetMode('adjustment')">
+                <i class="fa-solid fa-sliders"></i> 原価調整
               </button>
             </div>
             <button type="button" class="btn btn-primary ca-start-button" id="ca-start-button"
@@ -3517,26 +3530,43 @@
             ondrop="costAdjustmentDropProduct(event)">
             <div class="ca-panel-heading">
               <span><i class="fa-solid fa-puzzle-piece"></i></span>
-              <div><h3 id="ca-parts-title">パーツBOX</h3><small id="ca-parts-subtitle">4列×5段・ドラッグ移動対応</small></div>
+              <div><h3 id="ca-parts-title">BOX</h3><small id="ca-parts-subtitle">4列×5段・ドラッグ移動対応</small></div>
             </div>
             <div class="ca-code-entry ca-part-entry">
-              <label for="ca-part-code">パーツ管理番号</label>
+              <label for="ca-part-code">管理番号検索</label>
               <div class="ca-code-input-row">
-                <input class="form-control" id="ca-part-code" placeholder="パーツ番号を入力"
+                <input class="form-control" id="ca-part-code" placeholder="管理番号を入力"
                   onkeydown="if(event.key==='Enter'){event.preventDefault();costAdjustmentAddPart();}">
                 <button type="button" class="btn btn-primary ca-add-part-button" onclick="costAdjustmentAddPart()"
-                  aria-label="パーツBOXへ追加"><i class="fa-solid fa-plus"></i></button>
+                  aria-label="BOXへ追加"><i class="fa-solid fa-plus"></i></button>
               </div>
             </div>
             <div class="ca-breakdown-drop-guide" id="ca-breakdown-drop-guide" hidden role="button" tabindex="0"
-              aria-label="対象商品を崩し作業スペースへ取り込む"
+              aria-label="対象商品を原価分け作業スペースへ取り込む"
               onclick="costAdjustmentOpenBreakdownModal()"
               onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();costAdjustmentOpenBreakdownModal();}">
               <i class="fa-solid fa-hand-pointer"></i>
               <span>左の商品情報を丸ごとここへドラッグ＆ドロップしてください</span>
             </div>
             <div class="ca-breakdown-result" id="ca-breakdown-result" hidden aria-live="polite"></div>
-            <div class="ca-part-box" id="ca-part-grid" role="grid" aria-label="4列5段のパーツBOX"></div>
+            <div class="ca-part-box" id="ca-part-grid" role="grid" aria-label="4列5段のBOX"></div>
+            <section class="ca-split-slip" id="ca-split-slip" aria-labelledby="ca-split-slip-title" hidden>
+              <div class="ca-split-slip-heading">
+                <div>
+                  <h4 id="ca-split-slip-title"><i class="fa-solid fa-file-invoice-dollar"></i> 原価調整伝票</h4>
+                  <small>分裂後の商品ごとに原価を入力してください</small>
+                </div>
+                <span class="ca-split-slip-badge">明細</span>
+              </div>
+              <div class="ca-split-slip-table-wrap">
+                <table class="ca-split-slip-table">
+                  <thead><tr><th>No.</th><th>管理番号</th><th>SKU</th><th>区分</th><th>原価（円）</th></tr></thead>
+                  <tbody id="ca-split-slip-lines"></tbody>
+                  <tfoot><tr><th colspan="4">原価合計</th><td id="ca-split-slip-total">¥0</td></tr></tfoot>
+                </table>
+              </div>
+              <p class="ca-split-slip-status" id="ca-split-slip-status">各明細の原価を入力してください</p>
+            </section>
             <p class="ca-parts-hint"><i class="fa-solid fa-circle-info"></i> パーツの商品登録・定義は今後追加予定です</p>
           </aside>
         </div>
@@ -3546,6 +3576,10 @@
             <span><span id="ca-allocated-cost-label">配賦済み原価</span> <strong id="ca-allocated-cost-total">¥0</strong></span>
             <span class="ca-allocation-balance" id="ca-allocation-balance">未編集の明細があります</span>
           </div>
+          <button type="button" class="btn btn-danger btn-lg" id="ca-reset-button"
+            onclick="costAdjustmentResetCurrent()" hidden>
+            <i class="fa-solid fa-rotate-left"></i> 開始した作業をリセット
+          </button>
           <button type="button" class="btn btn-success btn-lg" id="ca-finalize-button"
             onclick="costAdjustmentFinalize()" disabled>
             <i class="fa-solid fa-circle-check"></i> 原価調整確定
@@ -3558,20 +3592,16 @@
       aria-labelledby="costAdjustmentBreakdownTitle" onclick="if(event.target===this)costAdjustmentCloseBreakdownModal()">
       <div class="modal ca-breakdown-modal">
         <div class="modal-header">
-          <h3 id="costAdjustmentBreakdownTitle"><i class="fa-solid fa-cubes-stacked"></i> 崩し数量の入力</h3>
+          <h3 id="costAdjustmentBreakdownTitle"><i class="fa-solid fa-cubes-stacked"></i> 原価分け数量の入力</h3>
           <button type="button" class="modal-close" onclick="costAdjustmentCloseBreakdownModal()" aria-label="閉じる">&times;</button>
         </div>
         <div class="modal-body">
           <p class="ca-breakdown-product-name" id="ca-breakdown-product-name">—</p>
-          <p class="ca-breakdown-modal-help">崩し作業で生じる商品とパーツの点数を入力してください。</p>
+          <p class="ca-breakdown-modal-help">商品を何個に分けるか選択してください。</p>
           <div class="ca-breakdown-count-grid">
             <label for="ca-breakdown-product-count">
-              <span>商品点数</span>
-              <input type="number" class="form-control" id="ca-breakdown-product-count" min="1" max="20" step="1" value="1" inputmode="numeric">
-            </label>
-            <label for="ca-breakdown-part-count">
-              <span>パーツ点数</span>
-              <input type="number" class="form-control" id="ca-breakdown-part-count" min="1" max="20" step="1" value="1" inputmode="numeric">
+              <span>分裂後の商品個数</span>
+              <input type="number" class="form-control" id="ca-breakdown-product-count" min="2" max="20" step="1" value="2" inputmode="numeric">
             </label>
           </div>
           <p class="ca-breakdown-modal-error" id="ca-breakdown-modal-error" aria-live="assertive"></p>
@@ -3683,9 +3713,9 @@
                 <div class="part-quantity-input"><input type="number" min="0" step="1" inputmode="numeric" class="form-control" id="part-bracelet-quantity" placeholder="例：8"><span>コマ</span></div>
               </div>
               <div class="form-group" id="part-sale-price-group">
-                <label class="form-label" for="part-sale-price-usd">売価（USD）</label>
+                <label class="form-label" for="part-sale-price-usd">想定売価（USD）</label>
                 <div class="pu-price-input-shell"><span>$</span><input type="text" inputmode="numeric" class="form-control" id="part-sale-price-usd" placeholder="例: 2,500" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)"></div>
-                <small>売価は米ドルを基準通貨として保存します。</small>
+                <small>想定売価は米ドルを基準通貨として保存します。</small>
               </div>
             </div>
             <div class="form-group"><label class="form-label" for="part-notes">特徴・備考</label><textarea class="form-control" id="part-notes" rows="4" placeholder="状態、サイズ、欠品、保管上の注意など"></textarea></div>
@@ -3706,7 +3736,7 @@
       <div class="modal ca-item-editor-modal">
         <div class="modal-header">
           <div>
-            <h3 id="costAdjustmentItemTitle"><i class="fa-solid fa-pen-to-square"></i> 崩し明細の編集</h3>
+            <h3 id="costAdjustmentItemTitle"><i class="fa-solid fa-pen-to-square"></i> 原価分け明細の編集</h3>
             <p class="ca-item-editor-caption" id="ca-item-editor-caption">—</p>
           </div>
           <button type="button" class="modal-close" onclick="costAdjustmentCloseItemEditor()" aria-label="閉じる">&times;</button>
@@ -3772,9 +3802,9 @@
           <div class="form-row cols-2">
             <div class="form-group"><label class="form-label" for="ca-item-notes">特徴・備考</label><textarea class="form-control" id="ca-item-notes" rows="3"></textarea></div>
             <div class="form-group">
-              <label class="form-label" for="ca-item-comment">コメント <span class="internal-only-label"><i class="fa-solid fa-lock"></i> 社内専用</span></label>
+              <label class="form-label" id="ca-item-comment-label" for="ca-item-comment">原価管理番号 <span class="internal-only-label"><i class="fa-solid fa-lock"></i> 社内専用</span></label>
               <textarea class="form-control internal-comment-input" id="ca-item-comment" rows="3"></textarea>
-              <small>対象商品の管理番号を自動記載します。</small>
+              <small id="ca-item-comment-help">元商品の原価管理番号を自動記載し、確定後に調整伝票番号を追記します。</small>
             </div>
           </div>
           <p class="ca-breakdown-modal-error" id="ca-item-editor-error" aria-live="assertive"></p>
@@ -4053,11 +4083,14 @@
 
     </div>
 
+    <!-- ===== 原価管理配下の調整伝票一覧 ===== -->
+    <div class="page-panel page-content hidden" id="page-cost-adjustment-slips"></div>
+
     <!-- ===== 伝票一覧 ===== -->
     <div class="page-panel page-content hidden" id="page-sales-list">
-      <div class="card" style="overflow:hidden;">
+      <div class="card" id="sharedSlipListCard" style="overflow:hidden;">
         <div class="card-header">
-          <h3><i class="fa-solid fa-table-list"></i> 伝票一覧</h3>
+          <h3 id="sharedSlipListTitle"><i class="fa-solid fa-table-list"></i> 伝票一覧</h3>
           <div class="card-actions">
             <button class="btn btn-outline btn-sm" onclick="exportSlipCSV()">
               <i class="fa-solid fa-file-export"></i> CSV出力
@@ -4072,10 +4105,6 @@
             <span class="slip-tab-count" id="sltab-count-purchase" style="display:none;"
               onclick="event.stopPropagation();switchSlipTabPending('purchase')" title="承認タスクのある伝票を表示">0</span>
           </button>
-          <button class="slip-type-tab" id="sltab-purchaseadjustment" onclick="switchSlipTab('purchaseadjustment')">
-            <i class="fa-solid fa-file-pen"></i> 仕入調整伝票
-            <span class="slip-tab-count" id="sltab-count-purchaseadjustment" style="display:none;">0</span>
-          </button>
           <button class="slip-type-tab" id="sltab-shipping" onclick="switchSlipTab('shipping')">
             <i class="fa-solid fa-truck"></i> 出荷伝票
             <span class="slip-tab-count" id="sltab-count-shipping" style="display:none;"
@@ -4089,10 +4118,6 @@
             <i class="fa-solid fa-yen-sign"></i> 売上伝票
             <span class="slip-tab-count" id="sltab-count-sales" style="display:none;"
               onclick="event.stopPropagation();switchSlipTabPending('sales')" title="承認タスクのある伝票を表示">0</span>
-          </button>
-          <button class="slip-type-tab" id="sltab-salesadjustment" onclick="switchSlipTab('salesadjustment')">
-            <i class="fa-solid fa-file-pen"></i> 売上調整伝票
-            <span class="slip-tab-count" id="sltab-count-salesadjustment" style="display:none;">0</span>
           </button>
           <button class="slip-type-tab" id="sltab-salesreturn" onclick="switchSlipTab('salesreturn')">
             <i class="fa-solid fa-rotate-left"></i> 売上返品伝票
@@ -6171,17 +6196,19 @@
 
 <script src="js/qrcode-generator.js?v=1.4.4"></script>
 <script src="js/jsQR.js?v=1.4.0"></script>
-<script src="js/data.js?v=20260831-sales-adjustment-entry-v1"></script>
+<script src="js/data.js?v=20260913-cost-adjusted-status-v1"></script>
 <script src="js/guest_shared.js?v=20260803-workflow-consistency"></script>
 <script src="js/login_info.js?v=20260818-dropdown-name-only-v1"></script>
 <script src="js/auth.js?v=20260831-adjustment-entry-nav-v1"></script>
-<script src="js/api_bridge.js?v=20260831-combined-parts-v1"></script>
+<script src="js/api_bridge.js?v=20260914-sales-adjustment-tax-v1"></script>
 <script src="js/approval.js?v=20260817-today-audit-v2"></script>
 <script src="js/notify.js?v=20260817-approval-notification-link"></script>
 <script src="js/box.js?v=20260803-workflow-consistency"></script>
 <script src="js/market_table.js?v=20260831-market-manual-register-fix-v1"></script>
 <script src="js/qr_inventory.js?v=20260818-product-tag-v1"></script>
-<script src="js/app.js?v=20260831-sales-adjustment-entry-v1"></script>
+<script src="js/app.js?v=20260914-inventory-margin-sort-v1"></script>
+<script src="js/cost_merge.js?v=20260914-cost-start-reset-v1"></script>
+<script src="js/cost_adjustment_entry.js?v=20260914-cost-start-reset-v1"></script>
 <script src="js/consignment.js?v=20260831-consignment-label-v1"></script>
 <script src="js/stocktake.js?v=20260817-today-audit-v2"></script>
 <script src="js/purchase_entry.js?v=20260831-purchase-payment-status-v1"></script>

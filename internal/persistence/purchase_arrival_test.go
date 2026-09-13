@@ -2,13 +2,14 @@ package persistence
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/gorm"
 )
 
-func TestReceivePurchaseProductCompletesCostAdjustmentArrival(t *testing.T) {
+func TestReceivePurchaseProductRejectsCostAdjustmentGoods(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:purchase_arrival_cost_adjustment?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatal(err)
@@ -40,33 +41,19 @@ func TestReceivePurchaseProductCompletesCostAdjustmentArrival(t *testing.T) {
 	}
 
 	repo := &Repository{db: db, driver: "sqlite"}
-	result, err := repo.ReceivePurchaseProduct(context.Background(), "org-1", "purchase-1", "3108269001", "user-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Result != "received" || result.InventoryStatus != "in_stock" {
-		t.Fatalf("unexpected arrival result: %#v", result)
+	_, err = repo.ReceivePurchaseProduct(context.Background(), "org-1", "purchase-1", "3108269001", "user-1")
+	if !errors.Is(err, ErrPurchaseArrivalState) {
+		t.Fatalf("error=%v, want ErrPurchaseArrivalState", err)
 	}
 
-	var productStatus, itemStatus, eventFrom string
+	var productStatus, itemStatus string
 	if err := db.Raw(`SELECT inventory_status FROM products WHERE id='product-1'`).Scan(&productStatus).Error; err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Raw(`SELECT status FROM cost_adjustment_items WHERE output_product_id='product-1'`).Scan(&itemStatus).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Raw(`SELECT from_status FROM inventory_events WHERE product_id='product-1'`).Scan(&eventFrom).Error; err != nil {
-		t.Fatal(err)
-	}
-	if productStatus != "in_stock" || itemStatus != "completed" || eventFrom != "cost_adjustment" {
-		t.Fatalf("arrival state mismatch: product=%q item=%q event_from=%q", productStatus, itemStatus, eventFrom)
-	}
-
-	second, err := repo.ReceivePurchaseProduct(context.Background(), "org-1", "purchase-1", "3108269001", "user-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Result != "already_received" {
-		t.Fatalf("second scan result=%q, want already_received", second.Result)
+	if productStatus != "cost_adjustment" || itemStatus != "cost_adjustment" {
+		t.Fatalf("arrival must not settle adjustment goods: product=%q item=%q", productStatus, itemStatus)
 	}
 }

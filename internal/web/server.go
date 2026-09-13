@@ -106,13 +106,11 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/dashboard", s.apiAuthenticated("dashboard.read", http.HandlerFunc(s.apiDashboard)))
 	mux.Handle("GET /api/v1/products", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProducts)))
 	mux.Handle("POST /api/v1/products", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductCreate)))
-	mux.Handle("GET /api/v1/parts", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiParts)))
-	mux.Handle("POST /api/v1/parts", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiPartCreate)))
-	mux.Handle("PATCH /api/v1/parts/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiPartUpdate)))
 	mux.Handle("GET /api/v1/products/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProduct)))
 	mux.Handle("GET /api/v1/purchases", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiPurchases)))
 	mux.Handle("GET /api/v1/purchases-deleted", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiDeletedPurchases)))
 	mux.Handle("GET /api/v1/purchases/{id}", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiPurchase)))
+	mux.Handle("PATCH /api/v1/purchases/{id}/revision", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseRevision)))
 	mux.Handle("POST /api/v1/purchases", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseCreate)))
 	mux.Handle("POST /api/v1/purchases/{id}/confirm", s.apiAuthenticated("purchase.confirm", http.HandlerFunc(s.apiPurchaseConfirm)))
 	mux.Handle("POST /api/v1/purchases/{id}/arrival-scan", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseArrivalScan)))
@@ -140,6 +138,8 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/sales", s.apiAuthenticated("sales.read", http.HandlerFunc(s.apiSales)))
 	mux.Handle("GET /api/v1/sales/{id}", s.apiAuthenticated("sales.read", http.HandlerFunc(s.apiSale)))
 	mux.Handle("POST /api/v1/sales", s.apiAuthenticated("sales.write", http.HandlerFunc(s.apiSaleCreate)))
+	mux.Handle("PATCH /api/v1/sales/{id}/revision", s.apiAuthenticated("sales.write", http.HandlerFunc(s.apiSaleRevision)))
+	mux.Handle("POST /api/v1/sales/{id}/adjustments", s.apiAuthenticated("sales.write", http.HandlerFunc(s.apiSalesAdjustmentCreate)))
 	mux.Handle("POST /api/v1/sales/{id}/confirm", s.apiAuthenticated("sales.confirm", http.HandlerFunc(s.apiSaleConfirm)))
 	mux.Handle("POST /api/v1/sales/{id}/issue", s.apiAuthenticated("", http.HandlerFunc(s.apiSaleIssue)))
 	mux.Handle("POST /api/v1/sales/{id}/paid", s.apiAuthenticated("sales.write", http.HandlerFunc(s.apiSalePaid)))
@@ -179,6 +179,12 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("PATCH /api/v1/products/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductUpdate)))
 	mux.Handle("POST /api/v1/products/{id}/cost-adjustments/start", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductCostAdjustmentStart)))
 	mux.Handle("POST /api/v1/products/{id}/cost-adjustments/confirm", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductCostAdjustmentConfirm)))
+	mux.Handle("GET /api/v1/cost-adjustments", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiCostAdjustmentSlips)))
+	mux.Handle("POST /api/v1/cost-adjustments/{id}/scan", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiCostAdjustmentSlipScan)))
+	mux.Handle("POST /api/v1/cost-merges", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiCostMergeStart)))
+	mux.Handle("POST /api/v1/cost-merges/{id}/confirm", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiCostMergeConfirm)))
+	mux.Handle("POST /api/v1/cost-adjustments/direct", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiDirectCostAdjustmentConfirm)))
+	mux.Handle("POST /api/v1/cost-adjustments/reset", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiCostAdjustmentStartReset)))
 	mux.Handle("GET /api/v1/product-files/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProductFile)))
 	mux.Handle("DELETE /api/v1/product-files/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductFileDelete)))
 	mux.Handle("GET /api/v1/users", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUsers)))
@@ -202,6 +208,14 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("POST /api/v1/stocktakes/{id}/documents/{type}/{documentId}/confirm", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiConfirmStocktakeDocument)))
 	mux.Handle("PATCH /api/v1/stocktakes/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiSaveStocktake)))
 	mux.Handle("POST /api/v1/stocktakes/{id}/complete", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiCompleteStocktake)))
+	// 未定義のAPIをSPAへフォールバックさせない。HTMLを200で返すと、任意取得の
+	// APIでもJSON解析エラーとなり、管理画面全体のDB同期が中断してしまう。
+	apiNotFound := func(w http.ResponseWriter, _ *http.Request) {
+		writeAPIError(w, http.StatusNotFound, "api_not_found", "APIが見つかりません。")
+	}
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		mux.HandleFunc(method+" /api/v1/{path...}", apiNotFound)
+	}
 	mux.HandleFunc("GET /app", redirectToReact)
 	mux.HandleFunc("GET /app/{path...}", s.reactApp)
 	mux.HandleFunc("GET /login", s.loginPage)
@@ -294,7 +308,7 @@ func (s *Server) parseTemplates() error {
 		},
 		"productStatus": func(status string) string {
 			return map[string]string{
-				"purchasing": "仕入中", "in_stock": "在庫中", "cost_adjustment": "原価調整中", "combined": "結合済み", "reserved": "取置中",
+				"purchasing": "仕入中", "in_stock": "在庫中", "cost_adjustment": "原価調整中", "cost_adjusted": "原価調整済", "combined": "結合済み", "reserved": "取置中",
 				"return_pending": "仕入返品処理中", "consigned": "委託中",
 				"sold": "販売済み", "shipped": "出荷済み", "cancelled": "仕入返品処理済", "invalid": "無効",
 				"public": "公開", "private": "非公開",

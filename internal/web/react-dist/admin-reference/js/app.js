@@ -675,7 +675,7 @@ function clearPurchaseCarryover() {
 // =====================================================
 const BUSINESS_WORKFLOW_STORAGE_KEY = 'inv_business_workflow_v1';
 const BUSINESS_WORKFLOW_COLLECTIONS = [
-  'inventory', 'purchaseSlips', 'shipments', 'consignments', 'sales', 'salesAdjustments', 'salesReturns', 'purchaseReturns',
+  'inventory', 'purchaseSlips', 'shipments', 'consignments', 'sales', 'salesAdjustments', 'costAdjustments', 'salesReturns', 'purchaseReturns',
 ];
 
 function hydrateBusinessWorkflowState() {
@@ -810,7 +810,7 @@ function syncPurchaseSlipToInventory(slip) {
 function normalizeInventoryStatusLabel(status) {
   const value = String(status || '').trim();
   if (['cost_adjustment', '原価調整中'].includes(value)) return '原価調整中';
-  if (['broken_down', '崩し済み'].includes(value)) return '崩し済み';
+  if (['cost_adjusted', 'broken_down', '崩し済み', '原価分け済み', '原価調整済'].includes(value)) return '原価調整済';
   if (['combined', '結合済み'].includes(value)) return '結合済み';
   if (['return_pending', '仕入返品', '仕入返品中', '仕入返品処理中'].includes(value)) return '仕入返品処理中';
   if (['cancelled', '取消', '取消済', '取り消し', '仕入返品済', '仕入返品処理済'].includes(value)) return '仕入返品処理済';
@@ -1893,11 +1893,12 @@ function renderDashCharts(summary = getDashboardSummary()) {
 let inventoryPage = 1;
 const ITEMS_PER_PAGE = 10;
 let _invStatusSort = 'none';
+let _invGrossMarginSort = 'none';
 let partInventoryPage = 1;
 const PART_ITEMS_PER_PAGE = 10;
 
 // 在庫の業務進行順。未定義のステータスは末尾にまとめる。
-const INV_STATUS_SORT_ORDER = ['仕入中', '在庫中', '原価調整中', '崩し済み', '取置中', '委託中', '仕入返品処理中', '出荷済', '売上済', '売上返品処理中', '売上返品済', '仕入返品処理済', '保留'];
+const INV_STATUS_SORT_ORDER = ['仕入中', '在庫中', '原価調整中', '原価調整済', '取置中', '委託中', '仕入返品処理中', '出荷済', '売上済', '売上返品処理中', '売上返品済', '仕入返品処理済', '保留'];
 
 // =====================================================
 // 在庫一覧 — 検索・フィルター
@@ -1931,12 +1932,14 @@ function searchPanelEnter(event, callbackName) {
 const INV_COLUMN_KEYS = [
   'sku', 'marking', 'code', 'purchaseDate', 'brand', 'ref', 'model', 'serial', 'accessories',
   'purchaseType', 'purchaseRate', 'purchasePriceAtPurchaseRate', 'purchasePrice',
-  'supplier', 'staff', 'salePrice', 'grossMargin', 'status', 'box', 'shape', 'edit',
+  'supplier', 'staff', 'salePrice', 'grossMargin', 'saleRate', 'actualSalePrice',
+  'actualGrossMargin', 'status', 'box', 'shape', 'edit',
 ];
 const INV_COLUMN_WIDTHS = {
   code: 170, brand: 100, shape: 90, marking: 42, model: 110, ref: 100, serial: 90,
   supplier: 90, staff: 80, purchaseType: 170, purchaseRate: 150, purchasePriceAtPurchaseRate: 195,
-  purchasePrice: 190, salePrice: 132, grossMargin: 85,
+  purchasePrice: 190, salePrice: 132, grossMargin: 95, saleRate: 155,
+  actualSalePrice: 220, actualGrossMargin: 85,
   purchaseDate: 90, sku: 90, accessories: 120, status: 80, box: 50, edit: 58,
 };
 const _invVisibleColumns = new Set(INV_COLUMN_KEYS.filter(key => key !== 'sku'));
@@ -2115,6 +2118,80 @@ function formatInventoryGrossMargin(item) {
   return `${grossMargin.toLocaleString('ja-JP', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
 }
 
+function getInventoryActualSaleRate(item) {
+  const scale = Number(item?.saleFxScale) || 0;
+  const scaled = Number(item?.saleFxRateScaled) || 0;
+  return scale > 0 && scaled > 0 ? scaled / scale : null;
+}
+
+function getInventoryActualSaleCurrency(item) {
+  return String(item?.actualSaleCurrency || 'JPY').trim().toUpperCase();
+}
+
+/** 売上の固定レートを優先し、別通貨は売上日時点のレート履歴で換算する。 */
+function getInventoryActualSaleTimeRate(item, currency) {
+  const normalized = String(currency || 'JPY').trim().toUpperCase();
+  if (normalized === 'JPY') return 1;
+  const saleCurrency = getInventoryActualSaleCurrency(item);
+  const snapshotCurrency = saleCurrency === 'JPY' ? 'USD' : saleCurrency;
+  const frozenRate = getInventoryActualSaleRate(item);
+  if (normalized === snapshotCurrency && frozenRate > 0) return frozenRate;
+
+  const history = (APP_DATA.fxRateHistory || [])
+    .filter(record => String(record?.code || '').trim().toUpperCase() === normalized
+      && Number.isFinite(Number(record?.rate)) && Number(record.rate) > 0)
+    .map(record => ({ ...record, timestamp: Date.parse(record.observedAt || record.createdAt || '') }))
+    .filter(record => Number.isFinite(record.timestamp))
+    .sort((left, right) => left.timestamp - right.timestamp);
+  const anchor = Date.parse(item?.saleFxRateObservedAt || item?.saleDate || '');
+  if (history.length && Number.isFinite(anchor)) {
+    const preceding = history.filter(record => record.timestamp <= anchor);
+    return Number((preceding[preceding.length - 1] || history[0]).rate);
+  }
+  return getInventoryCurrentPurchaseRate(normalized);
+}
+
+function formatInventoryActualSaleRate(item, currency = getInventoryActualSaleCurrency(item) === 'JPY' ? 'USD' : getInventoryActualSaleCurrency(item)) {
+  if (!item?.saleDate) return '—';
+  const rate = getInventoryActualSaleTimeRate(item, currency);
+  if (!Number.isFinite(rate)) return '—';
+  return `1 ${currency} = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
+function getInventoryActualSalePriceAmount(item, currency = _invSaleCurrency) {
+  if (!item?.saleDate) return null;
+  const originalCurrency = getInventoryActualSaleCurrency(item);
+  if (currency === originalCurrency) return Number(item.actualSalePrice) || 0;
+  const jpy = Number(item.actualSalePriceJpy) || 0;
+  return currency === 'JPY' ? jpy : Math.round(jpy / getInventoryActualSaleTimeRate(item, currency));
+}
+
+function isInventoryOriginalSaleCurrency(item, currency = _invSaleCurrency) {
+  return Boolean(item?.saleDate) && getInventoryActualSaleCurrency(item) === currency;
+}
+
+function formatInventoryActualSalePrice(item, currency = getInventoryActualSaleCurrency(item)) {
+  const amount = getInventoryActualSalePriceAmount(item, currency);
+  if (amount === null) return '—';
+  if (currency === 'USD') return formatSalePrice(amount);
+  if (currency === 'HKD') return `HK$${amount.toLocaleString('en-US')}`;
+  if (currency === 'EUR') return `€${amount.toLocaleString('en-US')}`;
+  return formatPrice(amount);
+}
+
+function getInventoryActualGrossMarginPercent(item) {
+  const salePriceJPY = Number(item?.actualSalePriceJpy) || 0;
+  if (!item?.saleDate || !(salePriceJPY > 0)) return null;
+  const costJPY = getInventoryPurchaseCostAtRegisteredRate(item, 'JPY');
+  return ((salePriceJPY - costJPY) / salePriceJPY) * 100;
+}
+
+function formatInventoryActualGrossMargin(item) {
+  const margin = getInventoryActualGrossMarginPercent(item);
+  if (!Number.isFinite(margin)) return '—';
+  return `${margin.toLocaleString('ja-JP', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`;
+}
+
 /** JPY基準の仕入金額を、選択中の表示通貨で整形する */
 function formatInventoryPurchasePrice(itemOrAmount, currency = _invPurchaseCurrency) {
   const item = itemOrAmount && typeof itemOrAmount === 'object' ? itemOrAmount : null;
@@ -2156,11 +2233,10 @@ function formatItemDetailMoneyFromJPY(jpyAmount, currency) {
 }
 
 function formatItemDetailPurchasePrice(item, currency = _itemDetailCurrency) {
-  const currentCostJPY = getInventoryPurchaseCostJPY(
-    item,
-    getInventoryCurrentPurchaseRate(getInventoryPurchaseCurrency(item)),
+  return formatInventoryCostAmount(
+    getInventoryPurchaseCostAtRegisteredRate(item, currency),
+    currency,
   );
-  return formatItemDetailMoneyFromJPY(currentCostJPY, currency);
 }
 
 function formatItemDetailSalePrice(item, currency = _itemDetailCurrency) {
@@ -2174,10 +2250,17 @@ function getItemDetailCurrentRateNote() {
   return `現在レート：1 USD = ¥${usdRate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} / 1 HKD = ¥${hkdRate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
 }
 
+/** 商品詳細の原価に適用している、仕入日時点の固定レートを表示する */
+function getItemDetailPurchaseRateNote(item) {
+  const usdRate = getInventoryPurchaseTimeRate(item, 'USD');
+  const hkdRate = getInventoryPurchaseTimeRate(item, 'HKD');
+  return `仕入レート：1 USD = ¥${usdRate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })} / 1 HKD = ¥${hkdRate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+}
+
 function renderItemDetailPriceControl(priceType, item) {
   const isPurchase = priceType === 'purchase';
   const selectedCurrency = _itemDetailCurrency;
-  const label = isPurchase ? '原価（現在レート）' : '売価';
+  const label = isPurchase ? '原価（仕入レート）' : '想定売価';
   const value = isPurchase
     ? formatItemDetailPurchasePrice(item, selectedCurrency)
     : formatItemDetailSalePrice(item, selectedCurrency);
@@ -2188,7 +2271,7 @@ function renderItemDetailPriceControl(priceType, item) {
       <div class="detail-label">${label}</div>
       <div class="detail-value item-detail-price-control">
         <strong class="item-detail-price-amount" id="item-detail-${priceType}-value" style="color:${color};">${value}</strong>
-        <div class="item-detail-currency-switch" role="group" aria-label="原価（現在レート）と売価の連動表示通貨">
+        <div class="item-detail-currency-switch" role="group" aria-label="原価（仕入レート）と想定売価の連動表示通貨">
           ${['JPY', 'USD', 'HKD'].map(currency => `
             <button type="button" class="item-detail-currency-btn ${currency === selectedCurrency ? 'active' : ''}"
               data-currency="${currency}" aria-label="${label}を${currency}で表示"
@@ -2196,12 +2279,12 @@ function renderItemDetailPriceControl(priceType, item) {
               onclick="switchItemDetailPriceCurrency('${priceType}','${currency}')">${buttonLabels[currency]}</button>
           `).join('')}
         </div>
-        <span class="item-detail-price-rate">${getItemDetailCurrentRateNote()}</span>
+        <span class="item-detail-price-rate">${isPurchase ? getItemDetailPurchaseRateNote(item) : getItemDetailCurrentRateNote()}</span>
       </div>
     </div>`;
 }
 
-/** 商品詳細の原価（現在レート）と売価を同じ通貨へ連動切り替えする */
+/** 商品詳細の原価（仕入レート）と売価を同じ通貨へ連動切り替えする */
 function switchItemDetailPriceCurrency(priceType, currency) {
   if (!['JPY', 'USD', 'HKD'].includes(currency)) return;
   if (!['purchase', 'sale'].includes(priceType)) return;
@@ -2226,13 +2309,16 @@ function _invSyncPriceCurrencyUI() {
   const rate = getInventoryUsdRate();
   const hkdRate = getInventoryCurrentPurchaseRate('HKD');
   const rateTitle = `現在レート: 1 USD = ¥${rate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / 1 HKD = ¥${hkdRate.toLocaleString('ja-JP', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
-  const purchaseTimeTitle = '3項目を連動して切り替えます。仕入時原価と仕入レートは、商品ごとの仕入日時点レートで換算します';
+  const purchaseTimeTitle = '原価・想定売価・売価を連動して切り替えます。仕入時原価は商品ごとの仕入日時点レート、売価は売上時レートで換算します';
+  const saleTimeTitle = '原価・想定売価と連動します。売価は売上時レートで換算し、売上時の入力通貨と一致する金額を青色で表示します';
   const purchaseTimeHeading = document.getElementById('inv-purchase-time-heading');
   if (purchaseTimeHeading) purchaseTimeHeading.textContent = `原価（仕入時レート・${_invPurchaseTimeCurrency}）`;
   const currentPurchaseHeading = document.getElementById('inv-purchase-current-heading');
   if (currentPurchaseHeading) currentPurchaseHeading.textContent = `原価（現在レート・${_invCurrentPurchaseCurrency}）`;
   const saleHeading = document.getElementById('inv-sale-heading');
-  if (saleHeading) saleHeading.textContent = `売価（${_invSaleCurrency}）`;
+  if (saleHeading) saleHeading.textContent = `想定売価（${_invSaleCurrency}）`;
+  const actualSaleHeading = document.getElementById('inv-actual-sale-heading');
+  if (actualSaleHeading) actualSaleHeading.textContent = `売価（売上時レート・${_invSaleCurrency}）`;
 
   [
     ['inv-purchase-time-jpy', _invPurchaseTimeCurrency === 'JPY', purchaseTimeTitle],
@@ -2244,6 +2330,9 @@ function _invSyncPriceCurrencyUI() {
     ['inv-sale-jpy', _invSaleCurrency === 'JPY', rateTitle],
     ['inv-sale-usd', _invSaleCurrency === 'USD', rateTitle],
     ['inv-sale-hkd', _invSaleCurrency === 'HKD', rateTitle],
+    ['inv-actual-sale-jpy', _invSaleCurrency === 'JPY', saleTimeTitle],
+    ['inv-actual-sale-usd', _invSaleCurrency === 'USD', saleTimeTitle],
+    ['inv-actual-sale-hkd', _invSaleCurrency === 'HKD', saleTimeTitle],
   ].forEach(([id, active, title]) => {
     const button = document.getElementById(id);
     if (!button) return;
@@ -2256,7 +2345,7 @@ function _invSyncPriceCurrencyUI() {
   if (note) note.textContent = `チェックを外した項目は非表示になります / ${rateTitle}`;
 }
 
-/** 在庫一覧の仕入時原価・現在原価・売価を同じ通貨へ連動切り替えする */
+/** 在庫一覧の原価・想定売価・売価を同じ通貨へ連動切り替えする */
 function switchInventoryLinkedCurrency(currency) {
   if (!['JPY', 'USD', 'HKD'].includes(currency)) return;
   _invPurchaseCurrency = currency;
@@ -2268,9 +2357,9 @@ function switchInventoryLinkedCurrency(currency) {
   if (_invSearched) renderInventoryTable();
 }
 
-/** 旧呼び出し互換。どの価格列から操作しても3項目を連動させる */
+/** どの価格列から操作しても4項目を連動させる */
 function switchInventoryPriceCurrency(priceType, currency) {
-  if (!['purchase', 'sale'].includes(priceType)) return;
+  if (!['purchase', 'sale', 'actual-sale'].includes(priceType)) return;
   switchInventoryLinkedCurrency(currency);
 }
 
@@ -2351,6 +2440,7 @@ function init_inventory() {
   _invAccRenderTrigger();        // トリガー表示を初期化
   _invSyncPriceCurrencyUI();
   _invSyncStatusSortUI();
+  _invSyncGrossMarginSortUI();
   _invApplyColumnVisibility();
   _setupInventorySearchLayout();
   const searchPanel = document.getElementById('inv-search-panel');
@@ -2400,12 +2490,51 @@ function _setupInventorySearchLayout() {
 
 /** ステータス列の並べ替えを「昇順→降順→解除」の順で切り替える */
 function toggleInventoryStatusSort() {
+  _invGrossMarginSort = 'none';
+  _invSyncGrossMarginSortUI();
   _invStatusSort = _invStatusSort === 'none'
     ? 'ascending'
     : (_invStatusSort === 'ascending' ? 'descending' : 'none');
   inventoryPage = 1;
   _invSyncStatusSortUI();
   if (_invSearched) renderInventoryTable();
+}
+
+function toggleInventoryGrossMarginSort() {
+  _invGrossMarginSort = _invGrossMarginSort === 'none' ? 'ascending'
+    : (_invGrossMarginSort === 'ascending' ? 'descending' : 'none');
+  _invStatusSort = 'none';
+  inventoryPage = 1;
+  _invSyncStatusSortUI();
+  _invSyncGrossMarginSortUI();
+  if (_invSearched) renderInventoryTable();
+}
+
+function _invSyncGrossMarginSortUI() {
+  const heading = document.getElementById('inv-gross-margin-sort-th');
+  const button = document.getElementById('inv-gross-margin-sort-btn');
+  const icon = document.getElementById('inv-gross-margin-sort-icon');
+  if (heading) heading.setAttribute('aria-sort', _invGrossMarginSort);
+  if (icon) icon.className = 'fa-solid ' + (_invGrossMarginSort === 'ascending' ? 'fa-sort-up'
+    : _invGrossMarginSort === 'descending' ? 'fa-sort-down' : 'fa-sort');
+  const label = _invGrossMarginSort === 'ascending' ? '昇順（低い順）'
+    : _invGrossMarginSort === 'descending' ? '降順（高い順）' : '元の登録順';
+  if (button) {
+    button.setAttribute('aria-label', '粗利率：' + label + '。クリックして並べ替えを切り替える');
+    button.title = '現在：' + label;
+  }
+}
+
+function sortInventoryByGrossMargin(items, direction) {
+  if (direction === 'none') return items;
+  return items.map((item, index) => ({ item, index, margin: getInventoryActualGrossMarginPercent(item) }))
+    .sort((a, b) => {
+      const validA = Number.isFinite(a.margin), validB = Number.isFinite(b.margin);
+      // Unsold products and other unavailable margins always stay at the end.
+      if (validA !== validB) return validA ? -1 : 1;
+      return (validA ? (a.margin - b.margin) * (direction === 'ascending' ? 1 : -1) : 0)
+        || a.index - b.index;
+    }).map(entry => entry.item);
 }
 
 /** ステータス列ヘッダーの表示とアクセシビリティ属性を同期する */
@@ -2904,6 +3033,7 @@ function renderInventoryTable() {
   const f = _getInvFilters();
 
   let filtered = APP_DATA.inventory.filter(item => _matchesInventoryFilters(item, f));
+  filtered = sortInventoryByGrossMargin(filtered, _invGrossMarginSort);
 
   if (_invStatusSort !== 'none') {
     filtered = filtered
@@ -2936,10 +3066,15 @@ function renderInventoryTable() {
     tbody.innerHTML = paged.map(item => {
       const skuVal = item.sku || '—';
       const purchaseCurrencyMatch = isInventoryOriginalPurchaseCurrency(item);
+      const saleCurrencyMatch = isInventoryOriginalSaleCurrency(item);
       const grossMargin = getInventoryGrossMarginPercent(item);
       const grossMarginColor = !Number.isFinite(grossMargin)
         ? 'var(--text-muted)'
         : grossMargin < 0 ? 'var(--danger)' : 'var(--success)';
+      const actualGrossMargin = getInventoryActualGrossMarginPercent(item);
+      const actualGrossMarginColor = !Number.isFinite(actualGrossMargin)
+        ? 'var(--text-muted)'
+        : actualGrossMargin < 0 ? 'var(--danger)' : 'var(--success)';
       // 付属品: 「・」区切り1行、maxwidth固定でCSS省略
       const accText = (item.accessories && item.accessories.length > 0)
         ? item.accessories.join('・')
@@ -2973,6 +3108,9 @@ function renderInventoryTable() {
           <td data-inv-col="staff" style="font-size:12px;">${item.staff  || '—'}</td>
           <td data-inv-col="salePrice" style="font-weight:bold;color:var(--success);">${item.salePrice ? formatInventorySalePrice(item.salePrice) : '—'}</td>
           <td data-inv-col="grossMargin" style="font-weight:bold;color:${grossMarginColor};white-space:nowrap;">${formatInventoryGrossMargin(item)}</td>
+          <td data-inv-col="saleRate" style="font-size:11px;white-space:nowrap;">${formatInventoryActualSaleRate(item, _invSaleCurrency)}</td>
+          <td data-inv-col="actualSalePrice" class="${saleCurrencyMatch ? 'inv-sale-currency-match' : ''}" style="font-weight:bold;white-space:nowrap;" title="${item.saleDate ? `売上時の入力通貨：${getInventoryActualSaleCurrency(item)} / ${saleCurrencyMatch ? '入力通貨で表示中' : `${_invSaleCurrency}へ売上時レート換算`}` : '売上未登録'}">${formatInventoryActualSalePrice(item, _invSaleCurrency)}</td>
+          <td data-inv-col="actualGrossMargin" style="font-weight:bold;color:${actualGrossMarginColor};white-space:nowrap;">${formatInventoryActualGrossMargin(item)}</td>
           <td data-inv-col="status">${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</td>
           <td data-inv-col="box">${_buildBoxBadge(item.boxNo)}</td>
           <td data-inv-col="shape">${APP_DATA.shapeRecords?.find(x => x.code === item.shape)?.name || '—'}</td>
@@ -3494,7 +3632,7 @@ function exportInventoryCSV() {
   const f = _getInvFilters();
   const filtered = APP_DATA.inventory.filter(item => _matchesInventoryFilters(item, f));
   const rows = [
-    ['管理番号','ブランド','モデル','型番','シリアル','SKU','仕入区分',`仕入レート（${_invPurchaseTimeCurrency}・仕入時）`,`原価（仕入時レート・${_invPurchaseTimeCurrency}）`,`原価（現在レート・${_invCurrentPurchaseCurrency}）`,'仕入先','バイヤー',`売価（${_invSaleCurrency}）`,'粗利率','仕入日','付属品','ステータス','BOX'],
+    ['管理番号','ブランド','モデル','型番','シリアル','SKU','仕入区分',`仕入レート（${_invPurchaseTimeCurrency}・仕入時）`,`原価（仕入時レート・${_invPurchaseTimeCurrency}）`,`原価（現在レート・${_invCurrentPurchaseCurrency}）`,'仕入先','バイヤー',`想定売価（${_invSaleCurrency}）`,'想定粗利率',`売上時レート（${_invSaleCurrency}）`,`売価（${_invSaleCurrency}）`,'粗利率','仕入日','付属品','ステータス','BOX'],
     ...filtered.map(i => {
       const grossMargin = getInventoryGrossMarginPercent(i);
       return [
@@ -3504,6 +3642,8 @@ function exportInventoryCSV() {
         getInventoryPurchaseCostAtCurrentRate(i, _invCurrentPurchaseCurrency),
         i.supplierName || getSupplierName(i.supplier), i.staff||'', getInventorySalePriceAmount(i.salePrice, _invSaleCurrency),
         Number.isFinite(grossMargin) ? Math.round(grossMargin * 10) / 10 : '',
+        formatInventoryActualSaleRate(i, _invSaleCurrency), getInventoryActualSalePriceAmount(i, _invSaleCurrency) ?? '',
+        Number.isFinite(getInventoryActualGrossMarginPercent(i)) ? Math.round(getInventoryActualGrossMarginPercent(i) * 10) / 10 : '',
         i.purchaseDate||'',
         (i.accessories||[]).join('・'),
         i.status||'', i.boxNo||''
@@ -3623,9 +3763,14 @@ function showItemDetail(code) {
       ${renderItemDetailPriceControl('purchase', item)}
       ${renderItemDetailPriceControl('sale', item)}
       <div class="detail-row item-detail-summary-field item-detail-gross-margin-row">
-        <div class="detail-label">粗利率</div>
+        <div class="detail-label">想定粗利率</div>
         <div class="detail-value"><strong class="item-detail-gross-margin-value" id="item-detail-gross-margin-value">${formatInventoryGrossMargin(item)}</strong></div>
       </div>
+      ${item.saleDate ? `
+      <div class="detail-row"><div class="detail-label">売上時レート</div><div class="detail-value">${formatInventoryActualSaleRate(item)}</div></div>
+      <div class="detail-row"><div class="detail-label">売価</div><div class="detail-value"><strong>${formatInventoryActualSalePrice(item)}</strong></div></div>
+      <div class="detail-row"><div class="detail-label">粗利率</div><div class="detail-value"><strong>${formatInventoryActualGrossMargin(item)}</strong></div></div>
+      ` : ''}
       <div class="detail-row item-detail-summary-field item-detail-status-row"><div class="detail-label">ステータス</div><div class="detail-value">${getStatusBadge(normalizeInventoryStatusLabel(item.status))}</div></div>
 
           <div class="detail-row"><div class="detail-label">マーキング</div><div class="detail-value item-detail-marking" title="${marking?.meaning || ''}">${marking?.name || '—'}</div></div>
@@ -6536,9 +6681,47 @@ function init_sales() {
 // =====================================================
 let currentSlipTab = 'purchase'; // 現在のタブ
 const SLIP_TAB_TYPES = [
-  'purchase', 'purchaseadjustment', 'shipping', 'consignment',
-  'sales', 'salesadjustment', 'salesreturn', 'purchasereturn',
+  'purchase', 'shipping', 'consignment', 'sales', 'adjustment',
+  'salesreturn', 'purchasereturn',
 ];
+
+function getAdjustmentSlipSource() {
+  const purchases = (APP_DATA.purchaseAdjustments || []).map(record => ({ ...record, _adjustmentType: 'purchase' }));
+  const sales = (APP_DATA.salesAdjustments || []).map(record => ({ ...record, _adjustmentType: 'sales' }));
+  const costs = (APP_DATA.costAdjustments || []).map(record => ({ ...record, _adjustmentType: 'cost' }));
+  return [...purchases, ...sales, ...costs];
+}
+
+function isPurchaseAdjustmentRecord(record) {
+  return record?._adjustmentType === 'purchase';
+}
+
+function isCostAdjustmentRecord(record) {
+  return record?._adjustmentType === 'cost';
+}
+
+function getCostAdjustmentPatternLabel(type) {
+  return ({
+    breakdown: '原価分け', disassemble: '原価分け', combine: '原価合わせ', swap: '原価合わせ',
+    direct_increase: '増額', direct_decrease: '減額',
+  })[type] || '原価調整';
+}
+
+function getAdjustmentRecordLabel(record) {
+  if (isCostAdjustmentRecord(record)) return `原価調整（${getCostAdjustmentPatternLabel(record.adjustmentType)}）`;
+  return isPurchaseAdjustmentRecord(record) ? '仕入調整' : '売上調整';
+}
+
+function getAdjustmentRecordTarget(record) {
+  if (isCostAdjustmentRecord(record)) return record.sourceProductCode || '—';
+  return isPurchaseAdjustmentRecord(record) ? getSupplierName(record.supplier) : getBuyerName(record.buyer);
+}
+
+function getAdjustmentRecordAmount(record) {
+  return isCostAdjustmentRecord(record)
+    ? Number(record.adjustedCostJpyMinor ?? record.sourceCostJpyMinor ?? 0)
+    : Number(record.adjustmentAmount ?? record.total ?? 0);
+}
 
 // =====================================================
 // ① タスク判定関数（カウント・絞り込み・再計算の共通ロジック）
@@ -6557,11 +6740,10 @@ function _refreshTaskCounts() {
   const _count = (list) => (list || []).filter(_isTaskItem).length;
   const counts = {
     purchase:       _count(APP_DATA.purchaseSlips),
-    purchaseadjustment: _count(APP_DATA.purchaseAdjustments),
     shipping:       _count(APP_DATA.shipments),
     consignment:    _count(APP_DATA.consignments),
     sales:          _count(APP_DATA.sales),
-    salesadjustment: _count(APP_DATA.salesAdjustments),
+    adjustment:     _count(APP_DATA.purchaseAdjustments) + _count(APP_DATA.salesAdjustments) + _count(APP_DATA.costAdjustments),
     salesreturn:    _count(APP_DATA.salesReturns),
     purchasereturn: _count(APP_DATA.purchaseReturns),
   };
@@ -6593,6 +6775,16 @@ function configureSlipStatusOptions(type, selectedValue = 'processing') {
 
 // ── タブ切替 ──
 function switchSlipTab(type) {
+  if (type === 'purchaseadjustment' || type === 'salesadjustment') type = 'adjustment';
+  if (type === 'adjustment' && window.__zaikoCurrentPage !== 'cost-adjustment-slips') {
+    navigateTo('cost-adjustment-slips');
+    return;
+  }
+  if (type !== 'adjustment' && window.__zaikoCurrentPage === 'cost-adjustment-slips') {
+    currentSlipTab = type;
+    navigateTo('sales-list');
+    return;
+  }
   currentSlipTab = type;
   // 旧一括発行ボタンが残っている画面から切り替えた場合も確実に撤去する。
   document.getElementById('prBulkInvoiceBtn')?.remove();
@@ -6619,6 +6811,7 @@ function switchSlipTab(type) {
 // ── バッジクリック：承認待ち+差戻し のある伝票のみ絞り込み表示 ──
 // ① カウントと絞り込みは完全に同じ filter 条件を使用する
 function switchSlipTabPending(type) {
+  if (type === 'purchaseadjustment' || type === 'salesadjustment') type = 'adjustment';
   currentSlipTab = type;
   document.getElementById('prBulkInvoiceBtn')?.remove();
   SLIP_TAB_TYPES.forEach(t => {
@@ -6638,7 +6831,7 @@ function switchSlipTabPending(type) {
   let data = [];
   if (type === 'purchase') {
     data = (APP_DATA.purchaseSlips || []).filter(_isTaskItem);
-  } else if (type === 'purchaseadjustment' || type === 'salesadjustment') {
+  } else if (type === 'adjustment') {
     data = getCurrentSlipSource(type).filter(_isTaskItem);
   } else if (type === 'shipping') {
     data = (APP_DATA.shipments || []).filter(_isTaskItem);
@@ -6699,7 +6892,7 @@ function rebuildSlipPartySelect(type) {
   const label = document.getElementById('slipFilterPartyLabel');
   if (!sel) return;
   sel.innerHTML = '<option value="">すべて</option>';
-  if (type === 'purchase' || type === 'purchaseadjustment') {
+  if (type === 'purchase') {
     if (label) label.innerHTML = '<i class="fa-solid fa-industry"></i> 仕入先';
     APP_DATA.suppliers.forEach(s => { sel.innerHTML += `<option value="${s.code}">${s.name}</option>`; });
   } else if (type === 'purchasereturn') {
@@ -6708,6 +6901,13 @@ function rebuildSlipPartySelect(type) {
   } else if (type === 'consignment') {
     if (label) label.innerHTML = '<i class="fa-solid fa-building"></i> 委託先';
     APP_DATA.buyers.forEach(b => { sel.innerHTML += `<option value="${b.code}">${b.name}</option>`; });
+  } else if (type === 'adjustment') {
+    if (label) label.innerHTML = '<i class="fa-solid fa-building"></i> 取引先';
+    [...(APP_DATA.suppliers || []), ...(APP_DATA.buyers || [])].forEach(party => {
+      if (!Array.from(sel.options).some(option => option.value === party.code)) {
+        sel.innerHTML += `<option value="${party.code}">${party.name}</option>`;
+      }
+    });
   } else {
     if (label) label.innerHTML = '<i class="fa-solid fa-building"></i> 取引先';
     APP_DATA.buyers.forEach(b => { sel.innerHTML += `<option value="${b.code}">${b.name}</option>`; });
@@ -6773,6 +6973,7 @@ function getSlipSearchStatus(record, tabType = currentSlipTab) {
 
   // 売上伝票は入金確認済みだけを処理済とする。
   if (tabType === 'sales') {
+    if (record?.documentType === 'sales_revision') return 'completed';
     return record?.paidAt ? 'completed' : 'processing';
   }
 
@@ -6872,11 +7073,10 @@ function matchesSlipStatusFilter(record, statusFilter, tabType = currentSlipTab)
 function getCurrentSlipSource(tabType = currentSlipTab) {
   const sources = {
     purchase: APP_DATA.purchaseSlips,
-    purchaseadjustment: APP_DATA.purchaseAdjustments,
     shipping: APP_DATA.shipments,
     consignment: APP_DATA.consignments,
     sales: APP_DATA.sales,
-    salesadjustment: APP_DATA.salesAdjustments,
+    adjustment: getAdjustmentSlipSource(),
     salesreturn: APP_DATA.salesReturns,
     purchasereturn: APP_DATA.purchaseReturns,
   };
@@ -6917,18 +7117,16 @@ function filterSlipList() {
       }
       return true;
     });
-  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
-    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+  } else if (currentSlipTab === 'adjustment') {
     data = getCurrentSlipSource(currentSlipTab).filter(record => {
       if (!matchesSlipStatusFilter(record, status, currentSlipTab)) return false;
       if (from && record.date < from) return false;
       if (to && record.date > to) return false;
-      const partyCode = isPurchaseAdjustment ? record.supplier : record.buyer;
+      const partyCode = isCostAdjustmentRecord(record) ? '' : (isPurchaseAdjustmentRecord(record) ? record.supplier : record.buyer);
       if (party && partyCode !== party) return false;
       if (keyword) {
-        const partyName = isPurchaseAdjustment ? getSupplierName(record.supplier) : getBuyerName(record.buyer);
-        const haystack = [record.id, partyName, record.note || '',
-          ...(record.items || record.lines || []).flatMap(item => [item.code, item.brand, item.model])]
+        const haystack = [record.id, getAdjustmentRecordLabel(record), getAdjustmentRecordTarget(record), record.note || '',
+          ...(record.items || record.lines || []).flatMap(item => [item.code, item.managementCode, item.brand, item.model])]
           .join(' ').toLowerCase();
         if (!haystack.includes(keyword)) return false;
       }
@@ -7043,29 +7241,26 @@ function renderSlipList(data) {
   // グローバルの _isTaskItem() を使用する（カウントと絞り込みで同一関数を共有）
   const _taskCountLocal = (list) => (list || []).filter(_isTaskItem).length;
   const countPurch   = _taskCountLocal(APP_DATA.purchaseSlips    || []);
-  const countPurchAdjustment = _taskCountLocal(APP_DATA.purchaseAdjustments || []);
   const countShip    = _taskCountLocal(APP_DATA.shipments        || []);
   const countConsign = _taskCountLocal(APP_DATA.consignments     || []);
   const countSales   = _taskCountLocal(APP_DATA.sales            || []);
-  const countSalesAdjustment = _taskCountLocal(APP_DATA.salesAdjustments || []);
+  const countAdjustment = _taskCountLocal(APP_DATA.purchaseAdjustments || []) + _taskCountLocal(APP_DATA.salesAdjustments || []) + _taskCountLocal(APP_DATA.costAdjustments || []);
   const countSRet    = _taskCountLocal(APP_DATA.salesReturns     || []);
   const countPRet    = _taskCountLocal(APP_DATA.purchaseReturns  || []);
 
   const elPurchase       = document.getElementById('sltab-count-purchase');
-  const elPurchaseAdjustment = document.getElementById('sltab-count-purchaseadjustment');
   const elShipping       = document.getElementById('sltab-count-shipping');
   const elConsignment    = document.getElementById('sltab-count-consignment');
   const elSales          = document.getElementById('sltab-count-sales');
-  const elSalesAdjustment = document.getElementById('sltab-count-salesadjustment');
+  const elAdjustment     = document.getElementById('sltab-count-adjustment');
   const elSalesReturn    = document.getElementById('sltab-count-salesreturn');
   const elPurchaseReturn = document.getElementById('sltab-count-purchasereturn');
 
   if (elPurchase)       { elPurchase.textContent       = countPurch; elPurchase.style.display       = countPurch > 0 ? '' : 'none'; }
-  if (elPurchaseAdjustment) { elPurchaseAdjustment.textContent = countPurchAdjustment; elPurchaseAdjustment.style.display = countPurchAdjustment > 0 ? '' : 'none'; }
   if (elShipping)       { elShipping.textContent       = countShip;  elShipping.style.display       = countShip  > 0 ? '' : 'none'; }
   if (elConsignment)    { elConsignment.textContent    = countConsign; elConsignment.style.display  = countConsign > 0 ? '' : 'none'; }
   if (elSales)          { elSales.textContent          = countSales; elSales.style.display          = countSales > 0 ? '' : 'none'; }
-  if (elSalesAdjustment) { elSalesAdjustment.textContent = countSalesAdjustment; elSalesAdjustment.style.display = countSalesAdjustment > 0 ? '' : 'none'; }
+  if (elAdjustment)     { elAdjustment.textContent = countAdjustment; elAdjustment.style.display = countAdjustment > 0 ? '' : 'none'; }
   if (elSalesReturn)    { elSalesReturn.textContent    = countSRet;  elSalesReturn.style.display    = countSRet  > 0 ? '' : 'none'; }
   if (elPurchaseReturn) { elPurchaseReturn.textContent = countPRet;  elPurchaseReturn.style.display = countPRet  > 0 ? '' : 'none'; }
 
@@ -7090,14 +7285,18 @@ function renderSlipList(data) {
 
   let totalAmt = 0, totalItems = 0, revisedCount = 0;
   let purchaseTotalJPY = 0;
+  let adjustmentPurchaseTotal = 0, adjustmentSalesTotal = 0, adjustmentCostTotal = 0;
   if (currentSlipTab === 'purchase') {
     data.forEach(slip => {
       purchaseTotalJPY += getPurchaseSlipGrandTotalJPY(slip);
       totalItems += (slip.lines || []).length;
     });
-  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
+  } else if (currentSlipTab === 'adjustment') {
     data.forEach(record => {
-      totalAmt += Number(record.adjustmentAmount ?? record.total ?? 0);
+      const adjustmentAmount = getAdjustmentRecordAmount(record);
+      if (isCostAdjustmentRecord(record)) adjustmentCostTotal += adjustmentAmount;
+      else if (isPurchaseAdjustmentRecord(record)) adjustmentPurchaseTotal += adjustmentAmount;
+      else adjustmentSalesTotal += adjustmentAmount;
       totalItems += (record.items || record.lines || []).length;
       if ((record.revisions || []).length) revisedCount++;
     });
@@ -7136,21 +7335,22 @@ function renderSlipList(data) {
       : (statusValue === 'unpaid' ? '未払いの表示件数 / DB全件数'
         : (statusValue === 'completed' ? '処理済の表示件数 / DB全件数' : '表示件数 / DB全件数'));
   }
-  const summaryUsesUSD = ['shipping', 'sales', 'salesadjustment', 'salesreturn'].includes(currentSlipTab);
+  const summaryUsesUSD = ['shipping', 'sales', 'salesreturn'].includes(currentSlipTab);
   const summaryTotalLabel = document.getElementById('slipSummaryTotalLabel');
   if (summaryTotalLabel) {
     summaryTotalLabel.textContent = currentSlipTab === 'purchase'
       ? '合計金額（仕入登録時レート換算・JPY）'
-      : (currentSlipTab === 'purchaseadjustment' ? '合計調整額（JPY）'
-        : (currentSlipTab === 'salesadjustment' ? '合計調整額'
-          : (currentSlipTab === 'consignment' ? '合計金額（委託登録時固定・JPY）' : '合計金額')));
+      : (currentSlipTab === 'adjustment' ? '合計調整額'
+        : (currentSlipTab === 'consignment' ? '合計金額（委託登録時固定・JPY）' : '合計金額'));
     summaryTotalLabel.title = currentSlipTab === 'purchase'
       ? '海外仕入は仕入登録時に固定保存したUSD/JPYレートで円換算します。発行・再発行では変更されません。'
       : '';
   }
   document.getElementById('slipSummaryTotal').textContent = currentSlipTab === 'purchase'
     ? formatPrice(purchaseTotalJPY)
-    : (currentSlipTab === 'consignment' ? formatPrice(totalAmt) : (summaryUsesUSD ? formatSalePrice(totalAmt) : formatPrice(totalAmt)));
+    : (currentSlipTab === 'adjustment'
+      ? `仕入 ${formatPrice(adjustmentPurchaseTotal)} / 売上 ${formatSalePrice(adjustmentSalesTotal)} / 原価 ${formatPrice(adjustmentCostTotal)}`
+      : (currentSlipTab === 'consignment' ? formatPrice(totalAmt) : (summaryUsesUSD ? formatSalePrice(totalAmt) : formatPrice(totalAmt))));
   document.getElementById('slipSummaryItems').textContent   = `${totalItems}点`;
   document.getElementById('slipSummaryRevised').textContent = `${revisedCount}件`;
 
@@ -7185,11 +7385,10 @@ function renderSlipList(data) {
       <th style="width:120px;text-align:center;">支払日付</th>
       <th style="width:92px;text-align:center;">操作</th>
     </tr>`;
-  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
-    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+  } else if (currentSlipTab === 'adjustment') {
     head.innerHTML = `<tr>
-      <th>${isPurchaseAdjustment ? '仕入調整伝票番号' : '売上調整伝票番号'}</th>
-      <th>調整日</th><th>${isPurchaseAdjustment ? '仕入先' : '販売先'}</th>
+      <th>調整伝票番号</th><th>区分</th>
+      <th>調整日</th><th>取引先／対象商品</th>
       <th style="text-align:center;">点数</th><th style="text-align:right;">調整額</th>
       <th>備考</th><th>ステータス</th><th style="width:72px;text-align:center;">操作</th>
     </tr>`;
@@ -7421,23 +7620,25 @@ function buildSlipRow(row) {
     </tr>`;
 
   // ──────────────────────────────────────
-  // 仕入調整伝票 / 売上調整伝票
+  // 調整伝票（仕入・売上を統合表示）
   // ──────────────────────────────────────
-  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
-    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+  } else if (currentSlipTab === 'adjustment') {
+    const isPurchaseAdjustment = isPurchaseAdjustmentRecord(row);
+    const isCostAdjustment = isCostAdjustmentRecord(row);
     const adjustmentLines = row.items || row.lines || [];
-    const adjustmentAmount = Number(row.adjustmentAmount ?? row.total ?? 0);
-    const partyName = isPurchaseAdjustment ? getSupplierName(row.supplier) : getBuyerName(row.buyer);
+    const adjustmentAmount = getAdjustmentRecordAmount(row);
+    const partyName = getAdjustmentRecordTarget(row);
     const status = String(row.status || '処理中');
-    return `<tr class="slip-list-row">
+    return `<tr class="slip-list-row" ${isCostAdjustment ? `onclick="openCostAdjustmentSlipDetail('${_escStrHtml(row.id)}')"` : ''}>
       <td><code style="font-size:12px;font-weight:bold;">${_escHtml(row.id || '—')}</code></td>
+      <td><span class="status-badge">${_escHtml(getAdjustmentRecordLabel(row))}</span></td>
       <td style="white-space:nowrap;">${_escHtml(row.date || '—')}</td>
       <td>${_escHtml(partyName || '—')}</td>
       <td style="text-align:center;">${adjustmentLines.length}点</td>
-      <td style="text-align:right;font-weight:bold;">${isPurchaseAdjustment ? formatPrice(adjustmentAmount) : formatSalePrice(adjustmentAmount)}</td>
+      <td style="text-align:right;font-weight:bold;">${isPurchaseAdjustment || isCostAdjustment ? formatPrice(adjustmentAmount) : formatSalePrice(adjustmentAmount)}</td>
       <td>${_escHtml(row.note || '—')}</td>
-      <td>${_slipStatusBadge(status, row.id, currentSlipTab)}</td>
-      <td style="text-align:center;color:var(--text-muted);">—</td>
+      <td>${_slipStatusBadge(status, row.id, isCostAdjustment ? 'costadjustment' : (isPurchaseAdjustment ? 'purchaseadjustment' : 'salesadjustment'))}</td>
+      <td style="text-align:center;">${isCostAdjustment ? `<button type="button" class="btn btn-sm btn-outline-secondary" onclick="event.stopPropagation();openCostAdjustmentSlipDetail('${_escStrHtml(row.id)}')" title="原価調整伝票を表示"><i class="fas fa-eye"></i></button>` : '—'}</td>
     </tr>`;
 
   // ──────────────────────────────────────
@@ -7563,6 +7764,18 @@ function buildSlipRow(row) {
   // 売上伝票
   // ──────────────────────────────────────
   } else {
+    if (row.documentType === 'sales_revision') {
+      return `<tr id="sl-row-${row.id}" class="slip-list-row" onclick="openSlipDetail('sales','${row.id}')">
+        <td><code style="font-size:12px;font-weight:bold;">${row.id}</code><div style="font-size:11px;color:var(--text-muted);">売上修正伝票</div></td>
+        <td>${row.date || '—'}</td><td>${getBuyerName(row.buyer)}</td>
+        <td style="text-align:center;">${row.items?.length || 0}点</td>
+        <td style="text-align:right;font-weight:bold;color:var(--primary);">${formatSalesSlipListAmount(row)}</td>
+        <td style="font-size:12px;">${_escHtml(row.reason || row.note || '—')}</td>
+        <td>${_slipStatusBadge('処理済', row.id, 'sales')}</td>
+        <td style="text-align:center;">—</td><td style="text-align:center;">—</td>
+        <td style="text-align:center;">—</td><td style="text-align:center;">—</td><td style="text-align:center;">—</td>
+      </tr>`;
+    }
     const paymentStatus = row.paidAt ? '処理済' : '処理中';
     const stBadge = _slipStatusBadge(paymentStatus, row.id, 'sales');
     const canIssue = canIssueSaleSlip();
@@ -9139,17 +9352,20 @@ function exportSlipCSV() {
     rows = [['管理番号','仕入日','ブランド','モデル','仕入先','バイヤー','原価','ステータス','修正回数']];
     data.forEach(item => rows.push([item.code, item.purchaseDate, item.brand, item.model,
       item.supplierName || getSupplierName(item.supplier), item.staff||'', item.purchasePrice, normalizeInventoryStatusLabel(item.status), (item.revisions||[]).length]));
-  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
-    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
-    rows = [[isPurchaseAdjustment ? '仕入調整伝票番号' : '売上調整伝票番号', '調整日',
-      isPurchaseAdjustment ? '仕入先' : '販売先', '点数', '調整額', '備考', 'ステータス']];
-    data.forEach(record => rows.push([
-      record.id, record.date,
-      isPurchaseAdjustment ? getSupplierName(record.supplier) : getBuyerName(record.buyer),
-      (record.items || record.lines || []).length,
-      record.adjustmentAmount ?? record.total ?? 0,
-      record.note || '', record.status || '処理中',
-    ]));
+  } else if (currentSlipTab === 'adjustment') {
+    rows = [['調整伝票番号', '区分', '調整日', '取引先', '点数', '調整額', '通貨', '備考', 'ステータス']];
+    data.forEach(record => {
+      const isPurchaseAdjustment = isPurchaseAdjustmentRecord(record);
+      const isCostAdjustment = isCostAdjustmentRecord(record);
+      rows.push([
+        record.id, getAdjustmentRecordLabel(record), record.date,
+        getAdjustmentRecordTarget(record),
+        (record.items || record.lines || []).length,
+        getAdjustmentRecordAmount(record),
+        isPurchaseAdjustment || isCostAdjustment ? 'JPY' : 'USD',
+        record.note || '', record.status || '処理中',
+      ]);
+    });
   } else if (currentSlipTab === 'shipping') {
     // 選択中の伝票があればその伝票のみ、なければ全件
     const exportData = _shSelectedIds.size > 0
@@ -9226,18 +9442,16 @@ function getFilteredSlipData() {
       }
       return true;
     });
-  } else if (currentSlipTab === 'purchaseadjustment' || currentSlipTab === 'salesadjustment') {
-    const isPurchaseAdjustment = currentSlipTab === 'purchaseadjustment';
+  } else if (currentSlipTab === 'adjustment') {
     return getCurrentSlipSource(currentSlipTab).filter(record => {
       if (!matchesSlipStatusFilter(record, status, currentSlipTab)) return false;
       if (from && record.date < from) return false;
       if (to && record.date > to) return false;
-      const partyCode = isPurchaseAdjustment ? record.supplier : record.buyer;
+      const partyCode = isCostAdjustmentRecord(record) ? '' : (isPurchaseAdjustmentRecord(record) ? record.supplier : record.buyer);
       if (party && partyCode !== party) return false;
       if (keyword) {
-        const partyName = isPurchaseAdjustment ? getSupplierName(record.supplier) : getBuyerName(record.buyer);
-        const haystack = [record.id, partyName, record.note || '',
-          ...(record.items || record.lines || []).flatMap(item => [item.code, item.brand, item.model])]
+        const haystack = [record.id, getAdjustmentRecordLabel(record), getAdjustmentRecordTarget(record), record.note || '',
+          ...(record.items || record.lines || []).flatMap(item => [item.code, item.managementCode, item.brand, item.model])]
           .join(' ').toLowerCase();
         if (!haystack.includes(keyword)) return false;
       }
@@ -9279,6 +9493,61 @@ function getFilteredSlipData() {
 // =====================================================
 // 伝票詳細モーダル
 // =====================================================
+function openCostAdjustmentSlipDetail(id) {
+  const record = (APP_DATA.costAdjustments || []).find(item => item.id === id);
+  const modal = document.getElementById('slipDetailOverlay');
+  if (!record || !modal) return;
+  const pattern = getCostAdjustmentPatternLabel(record.adjustmentType);
+  const isDirect = /^direct_/.test(record.adjustmentType || '');
+  const lines = record.lines || [];
+  document.getElementById('slipDetailTitle').textContent = '原価調整伝票';
+  document.getElementById('slipDetailIcon').innerHTML = '<i class="fa-solid fa-scale-balanced"></i>';
+  document.getElementById('slipDetailHeaderSub').innerHTML = `
+    <span class="sdhs-id"><i class="fa-solid fa-barcode"></i> ${_escHtml(record.id)}</span>
+    <span class="sdhs-divider"></span>
+    <span class="sdhs-date"><i class="fa-regular fa-calendar"></i> ${_escHtml(record.date || '—')}</span>
+    <span class="sdhs-divider"></span>
+    <span class="sdhs-party"><i class="fa-solid fa-box"></i> ${_escHtml(record.sourceProductCode || '—')}</span>`;
+  document.getElementById('slipDetailBody').innerHTML = `
+    <div class="slip-detail-meta">
+      ${metaRow('<i class="fa-solid fa-file-invoice"></i> 伝票番号', `<code style="font-size:13px;font-weight:bold;">${_escHtml(record.id)}</code>`)}
+      ${metaRow('<i class="fa-solid fa-layer-group"></i> 調整区分', `<span class="status-badge">${_escHtml(pattern)}</span>`)}
+      ${metaRow('<i class="fa-regular fa-calendar"></i> 調整日', _escHtml(record.date || '—'))}
+      ${metaRow('<i class="fa-solid fa-box"></i> 対象商品', _escHtml(record.sourceProductCode || '—'))}
+      ${metaRow('<i class="fa-solid fa-tag"></i> 商品情報', _escHtml([record.sourceBrand, record.sourceModel].filter(Boolean).join(' / ') || '—'))}
+      ${metaRow('<i class="fa-solid fa-coins"></i> 調整前原価', `<strong>${formatPrice(record.sourceCostJpyMinor || 0)}</strong>`)}
+      ${metaRow('<i class="fa-solid fa-calculator"></i> 調整後・配分原価', `<strong style="color:var(--primary);">${formatPrice(record.adjustedCostJpyMinor || 0)}</strong>`)}
+      ${metaRow('<i class="fa-solid fa-circle-check"></i> ステータス', _slipStatusBadge(record.status || '処理済', record.id, 'costadjustment'))}
+    </div>
+    <div class="slip-detail-items">
+      <div class="sdi-heading"><i class="fa-solid fa-list"></i> 原価調整明細 <span style="font-size:11px;color:var(--text-muted);font-weight:normal;">${lines.length}件</span></div>
+      <div class="slip-detail-table-scroll">
+        <table class="data-table">
+          <thead><tr><th>No.</th><th>種別</th><th>管理番号</th><th>商品ステータス</th>${isDirect
+            ? '<th style="text-align:right;">調整前原価</th><th style="text-align:right;">調整額</th><th style="text-align:right;">調整後原価</th>'
+            : '<th style="text-align:right;">配分原価</th>'}<th>備考</th></tr></thead>
+          <tbody>${lines.map(line => `<tr>
+            <td>${line.position || '—'}</td><td>${line.kind === 'part' ? 'パーツ' : '商品'}</td>
+            <td><code>${_escHtml(line.code || '—')}</code></td>
+            <td>${_escHtml((APP_DATA.inventory || []).find(product => product.code === line.code)?.status || '—')}</td>
+            ${isDirect ? `<td style="text-align:right;">${formatPrice(line.previousCostJpyMinor || 0)}</td>
+              <td style="text-align:right;color:${line.direction === 'decrease' ? 'var(--danger)' : 'var(--success)'};font-weight:bold;">${line.direction === 'decrease' ? '−' : '+'}${formatPrice(line.adjustmentAmountJpyMinor || 0)}</td>
+              <td style="text-align:right;font-weight:bold;">${formatPrice(line.adjustedCostJpyMinor || 0)}</td>`
+              : `<td style="text-align:right;font-weight:bold;">${formatPrice(line.allocatedCostJpyMinor || 0)}</td>`}
+            <td>${_escHtml(line.note || '—')}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>
+    <div class="slip-detail-note"><strong><i class="fa-solid fa-note-sticky"></i> 備考</strong><div>${_escHtml(record.note || '—')}</div></div>`;
+  document.getElementById('slipDetailFooter').innerHTML = `
+    <div><button type="button" class="btn btn-primary" onclick="openCostAdjustmentSlipScanner('${_escStrHtml(record.id)}')"><i class="fa-solid fa-qrcode"></i> 商品QRを読み取る</button></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button type="button" class="btn btn-outline" onclick="openSavedSlipDocument('costadjustment','${_escStrHtml(record.id)}')"><i class="fa-solid fa-eye"></i> 伝票をプレビューで見る</button>
+      <button type="button" class="btn btn-outline" onclick="closeSlipDetail()"><i class="fa-solid fa-xmark"></i> 閉じる</button>
+    </div>`;
+  modal.classList.remove('hidden');
+}
+
 function openSlipDetail(type, id) {
   let record = null;
   if (type === 'purchase') record = (APP_DATA.purchaseSlips || []).find(s => s.id === id);
@@ -9290,7 +9559,9 @@ function openSlipDetail(type, id) {
   const modal = document.getElementById('slipDetailOverlay');
   if (!modal) return;
 
-  const typeLabel = { purchase:'仕入伝票', shipping:'出荷伝票', consignment:'委託伝票', sales:'売上伝票' }[type];
+  const typeLabel = type === 'sales' && record.documentType === 'sales_revision'
+    ? '売上修正伝票'
+    : { purchase:'仕入伝票', shipping:'出荷伝票', consignment:'委託伝票', sales:'売上伝票' }[type];
   const typeIcon  = { purchase:'fa-file-import', shipping:'fa-truck', consignment:'fa-handshake', sales:'fa-yen-sign' }[type];
   document.getElementById('slipDetailTitle').textContent = typeLabel;
   document.getElementById('slipDetailIcon').innerHTML = `<i class="fa-solid ${typeIcon}"></i>`;
@@ -9493,6 +9764,30 @@ function buildSlipDetailBody(type, rec) {
           }).join('')}</tbody>
         </table>
       </div>`;
+  } else if (rec.documentType === 'sales_revision') {
+    const currency = _salesChangeCurrency(rec);
+    const decrease = rec.adjustmentDirection === 'decrease';
+    const signedDisplay = amount => `${amount < 0 ? '−' : amount > 0 ? '+' : ''}${formatSalesEntryDisplayValue(Math.abs(amount), currency)}`;
+    const taxable = rec.taxMode === 'taxable';
+    metaHtml = `
+      <div class="slip-detail-meta">
+        ${metaRow('<i class="fa-solid fa-file-pen"></i> 売上修正伝票番号', `<code style="font-size:13px;">${rec.id}</code>`)}
+        ${metaRow('<i class="fa-solid fa-link"></i> 元売上伝票番号', `<code>${rec.sourceSlipNumber || '—'}</code>`)}
+        ${metaRow('<i class="fa-regular fa-calendar"></i> 修正日', rec.date || '—')}
+        ${metaRow('<i class="fa-solid fa-building"></i> 販売先', `<b>${getBuyerName(rec.buyer)}</b>`)}
+        ${metaRow('<i class="fa-solid fa-arrow-right-arrow-left"></i> 区分', rec.adjustmentDirection === 'mixed' ? '増額・減額' : decrease ? '減額' : '増額')}
+        ${metaRow('<i class="fa-solid fa-note-sticky"></i> 理由', _escStrHtml(rec.reason || rec.note || '—').replace(/\n/g, '<br>'))}
+      </div>`;
+    itemsHtml = `
+      <hr class="appr-detail-divider">
+      <div class="appr-detail-content-title"><i class="fa-solid fa-list-check"></i> 商品明細（${(rec.items || []).length}点）</div>
+      <table class="appr-items-table"><thead><tr><th>商品管理番号</th><th>増額／減額</th><th>ブランド</th><th>モデル</th><th>理由・説明</th></tr></thead>
+      <tbody>${(rec.items || []).map(item => `<tr><td><code>${item.code || '—'}</code></td>
+        <td style="font-weight:bold;">${signedDisplay(((item.direction || rec.adjustmentDirection) === 'decrease' ? -1 : 1) * Math.abs(Number(item.adjustmentAmount || item.inputAmount) || 0))}</td>
+        <td>${_escStrHtml(item.brand || '—')}</td><td>${_escStrHtml(item.model || '—')}</td><td style="white-space:pre-wrap;">${_escStrHtml(item.reason || rec.reason || rec.note || '—')}</td></tr>`).join('')}
+        ${taxable ? `<tr><td>調整小計（税抜）</td><td>${signedDisplay(Number(rec.displaySubtotalMinor) || 0)}</td><td colspan="3"></td></tr><tr><td>消費税（${Number(rec.taxRateBasisPoints) / 100}%）</td><td>${signedDisplay(Number(rec.displayTaxAmountMinor) || 0)}</td><td colspan="3"></td></tr>` : ''}
+        <tr class="appr-items-total"><td style="text-align:right;">${taxable ? '調整金額合計（税込）' : '調整金額合計'}</td><td style="font-weight:bold;">${signedDisplay(Number(rec.displayTotalMinor) || 0)}</td><td colspan="3"></td></tr>
+      </tbody></table>`;
   } else {
     const buyer = APP_DATA.buyers.find(b => b.code === rec.buyer);
     const displayCurrency = getSalesRecordCurrency(rec);
@@ -9616,7 +9911,7 @@ function buildSlipDetailFooter(type, rec) {
 
   // ゲスト（guest ロール）以外は常に修正ボタンを表示
   const isGuest_ = typeof isGuest === 'function' && isGuest();
-  const reviseBtn = !isGuest_
+  const reviseBtn = !isGuest_ && rec.documentType !== 'sales_revision'
     ? `<button class="btn btn-warning" style="display:flex;align-items:center;gap:6px;"
          onclick="openSlipRevise('${type}','${recId}')">
          <i class="fa-solid fa-pen-to-square"></i> 伝票修正
@@ -9632,14 +9927,14 @@ function buildSlipDetailFooter(type, rec) {
     : '';
 
   // 売上伝票のみ「売上返品を起票」ボタンを表示
-  const salesReturnBtn = (type === 'sales' && !isGuest_)
+  const salesReturnBtn = (type === 'sales' && !isGuest_ && rec.documentType !== 'sales_revision')
     ? `<button class="btn btn-danger" style="display:flex;align-items:center;gap:6px;"
          onclick="openSalesReturnModal('${recId}')">
          <i class="fa-solid fa-rotate-left"></i> 売上返品を起票
        </button>`
     : '';
 
-  const documentLabel = { purchase: '仕入伝票', shipping: '出荷伝票', consignment: '委託伝票', sales: '請求書' }[type] || '伝票';
+  const documentLabel = rec.documentType === 'sales_revision' ? '売上修正伝票' : ({ purchase: '仕入伝票', shipping: '出荷伝票', consignment: '委託伝票', sales: '請求書' }[type] || '伝票');
   const documentBtn = `
     <button class="btn btn-primary" style="display:flex;align-items:center;gap:6px;"
       onclick="openSavedSlipDocument('${type}','${recId}')">
@@ -9650,6 +9945,13 @@ function buildSlipDetailFooter(type, rec) {
     ? `<button class="btn btn-outline" style="display:flex;align-items:center;gap:6px;"
          onclick="openShipmentReturnScanner('${rec._id || recId}')">
          <i class="fa-solid fa-qrcode"></i> 返却QRスキャン
+       </button>`
+    : '';
+
+  const salesChangeBtn = type === 'sales' && !isGuest_ && rec.documentType !== 'sales_revision'
+    ? `<button class="btn btn-warning" style="display:flex;align-items:center;gap:6px;"
+         onclick="openSalesChangeModal('${recId}')">
+         <i class="fa-solid fa-arrow-right-arrow-left"></i> 売上変更
        </button>`
     : '';
 
@@ -9674,6 +9976,7 @@ function buildSlipDetailFooter(type, rec) {
         <i class="fa-solid fa-xmark"></i> 閉じる
       </button>
       ${documentBtn}
+      ${salesChangeBtn}
       ${reviseBtn}
       ${purchaseReturnBtn}
       ${salesReturnBtn}
@@ -9691,7 +9994,242 @@ function _getSavedSlipDocumentRecord(type, id) {
   if (type === 'shipping') return (APP_DATA.shipments || []).find(record => record.id === id) || null;
   if (type === 'consignment') return (APP_DATA.consignments || []).find(record => record.id === id) || null;
   if (type === 'sales') return (APP_DATA.sales || []).find(record => record.id === id) || null;
+  if (type === 'costadjustment') return (APP_DATA.costAdjustments || []).find(record => record.id === id) || null;
   return null;
+}
+
+function _salesChangeCurrency(record) {
+  const currency = String(record?.inputCurrency || record?.currency || 'USD').toUpperCase();
+  return ['JPY', 'USD', 'HKD', 'EUR'].includes(currency) ? currency : 'USD';
+}
+
+function _salesAdjustmentLineTax(amount, record) {
+  if (record?.taxMode !== 'taxable') return 0;
+  const rate = Number(record.taxRateBasisPoints) || 0;
+  return Math.sign(amount) * Math.round(Math.abs(amount) * rate / 10000);
+}
+
+function _salesChangeAmount(record, item) {
+  const currency = _salesChangeCurrency(record);
+  const original = (item?.inputCurrency || item?.currency) === currency && Number.isFinite(Number(item?.inputAmount))
+    ? Number(item.inputAmount) : Number(item?.salePrice) || 0;
+  const priorAdjustments = (APP_DATA.sales || []).filter(candidate => candidate.documentType === 'sales_revision'
+    && ['confirmed', '処理済', '確定'].includes(candidate.status)
+    && ((record._id && candidate.sourceSaleId === record._id) || candidate.sourceSlipNumber === record.id));
+  return priorAdjustments.reduce((amount, adjustment) => amount + (adjustment.items || [])
+    .filter(line => item?._id && line.sourceSaleLineId === item._id)
+    .reduce((sum, line) => sum + ((line.direction || adjustment.adjustmentDirection) === 'decrease' ? -1 : 1)
+      * Math.abs(Number(line.adjustmentAmount) || 0), 0), original);
+}
+
+function openSalesChangeModal(slipId) {
+  const record = (APP_DATA.sales || []).find(candidate => candidate.id === slipId && candidate.documentType !== 'sales_revision');
+  if (!record) return showToast('error', '売上変更', '元の売上伝票が見つかりません');
+  document.getElementById('salesChangeOverlay')?.remove();
+  const currency = _salesChangeCurrency(record);
+  const overlay = document.createElement('div');
+  overlay.id = 'salesChangeOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.style.zIndex = '2600';
+  overlay.dataset.slipId = record.id;
+  overlay.dataset.adjustmentDate = getLocalDateISO();
+  overlay.innerHTML = `<div class="modal sales-change-modal" role="dialog" aria-modal="true" aria-labelledby="sales-change-title">
+    <div class="modal-header"><div><h3 id="sales-change-title"><i class="fa-solid fa-file-pen"></i> 売上修正伝票</h3><small>元売上伝票 ${_escStrHtml(record.id)}</small></div>
+      <button class="modal-close" onclick="closeSalesChangeModal()">&times;</button></div>
+    <div class="modal-body">
+      <div id="sales-change-direction-group" class="sales-change-direction-group" role="group" aria-label="増額／減額">
+        <label class="form-label" for="sales-change-date">修正日（売上変更を開始した日）</label>
+        <input id="sales-change-date" class="form-control" type="date" value="${overlay.dataset.adjustmentDate}" readonly>
+        <label class="form-label">増額／減額（一括設定）</label>
+        <div class="sales-change-direction-buttons">
+          <label class="btn btn-outline"><input type="radio" name="sales-change-direction" value="increase" onchange="applySalesChangeDirection(this.value)"> ＋ 増額</label>
+          <label class="btn btn-outline"><input type="radio" name="sales-change-direction" value="decrease" onchange="applySalesChangeDirection(this.value)"> − 減額</label>
+        </div>
+        <p class="sales-change-help">上のボタンで全商品の増減を一括設定できます。各商品の「増減」で個別に変更できます。変更金額には、現在売価に調整金額を反映した結果を表示します。</p>
+      </div>
+      <div class="revise-section-title"><i class="fa-solid fa-list-check"></i> 変更する商品を選択</div>
+      <div class="sales-change-table-scroll" tabindex="0" role="region" aria-label="商品ごとの売上調整明細。横にスクロールできます">
+      <table class="appr-items-table sales-change-table"><thead><tr><th>選択</th><th>管理番号</th><th>商品</th><th>現在売価（${currency}）</th><th>増減 <span class="required-badge">必須</span></th><th>調整金額（${currency}）<span class="required-badge">必須</span></th><th>変更金額（${currency}）</th><th>理由・説明 <span class="required-badge">必須</span></th></tr></thead>
+        <tbody>${(record.items || []).map((item, index) => `<tr>
+          <td><input type="checkbox" id="sales-change-check-${index}" aria-label="${_escStrHtml(item.code || index + 1)}を選択" onchange="updateSalesChangeState()"></td>
+          <td><code>${_escStrHtml(item.code || '—')}</code></td><td>${_escStrHtml(item.brand || '—')} ${_escStrHtml(item.model || '')}</td>
+          <td class="sales-change-money">${formatSalesEntryDisplayValue(_salesChangeAmount(record, item), currency)}</td>
+          <td><select class="form-control" id="sales-change-line-direction-${index}" aria-label="${_escStrHtml(item.code || index + 1)}の増減" disabled required onchange="updateSalesChangeState()"><option value="">選択</option><option value="increase">＋ 増額</option><option value="decrease">− 減額</option></select></td>
+          <td><input class="form-control" id="sales-change-amount-${index}" aria-label="${_escStrHtml(item.code || index + 1)}の調整金額（${currency}）" inputmode="numeric" disabled placeholder="0" required
+            oninput="priceFormatHandler(this);updateSalesChangeState()" onblur="priceFormatHandler(this);updateSalesChangeState()"></td>
+          <td><output class="sales-change-result" id="sales-change-result-${index}" aria-live="polite">—</output></td>
+          <td><textarea class="form-control" id="sales-change-reason-${index}" aria-label="${_escStrHtml(item.code || index + 1)}の理由・説明" rows="2" maxlength="1000" disabled required
+            oninput="updateSalesChangeState()" placeholder="この商品の調整理由"></textarea></td>
+        </tr>`).join('')}</tbody></table></div>
+      <div id="sales-change-tax-summary" class="sales-change-help" aria-live="polite"></div>
+      <p id="sales-change-error" class="sales-change-error" role="status"></p>
+    </div>
+    <div class="modal-footer" style="flex-wrap:wrap;"><button class="btn btn-outline" onclick="closeSalesChangeModal()">キャンセル</button>
+      <button class="btn btn-primary" id="sales-change-save" disabled><i class="fa-solid fa-file-circle-plus"></i> 売上修正伝票を作成</button></div>
+  </div>`;
+  document.body.appendChild(overlay);
+  document.getElementById('sales-change-save').addEventListener('click', () => submitSalesChange(record.id));
+}
+
+function closeSalesChangeModal() { document.getElementById('salesChangeOverlay')?.remove(); }
+
+function applySalesChangeDirection(direction) {
+  const overlay = document.getElementById('salesChangeOverlay');
+  if (!overlay || overlay.dataset.saving === 'true' || !['increase', 'decrease'].includes(direction)) return;
+  overlay.dataset.bulkDirection = direction;
+  overlay.querySelectorAll('select[id^="sales-change-line-direction-"]').forEach(select => { select.value = direction; });
+  updateSalesChangeState();
+}
+
+function updateSalesChangeState() {
+  const overlay = document.getElementById('salesChangeOverlay');
+  if (!overlay) return false;
+  const record = (APP_DATA.sales || []).find(candidate => candidate.id === overlay.dataset.slipId && candidate.documentType !== 'sales_revision');
+  if (!record) return false;
+  let selectedCount = 0;
+  let valid = true;
+  let adjustmentSubtotal = 0;
+  let adjustmentTax = 0;
+  let negativeResult = false;
+  overlay.querySelectorAll('input[id^="sales-change-check-"]').forEach(check => {
+    const index = Number(check.id.replace('sales-change-check-', ''));
+    const amount = document.getElementById(`sales-change-amount-${index}`);
+    const reason = document.getElementById(`sales-change-reason-${index}`);
+    const lineDirection = document.getElementById(`sales-change-line-direction-${index}`);
+    const direction = lineDirection.value;
+    const result = document.getElementById(`sales-change-result-${index}`);
+    amount.disabled = reason.disabled = lineDirection.disabled = !check.checked || overlay.dataset.saving === 'true';
+    check.disabled = overlay.dataset.saving === 'true';
+    result.textContent = '—';
+    result.classList.remove('invalid');
+    amount.removeAttribute('aria-invalid');
+    if (!check.checked) return;
+    selectedCount += 1;
+    const adjustment = getPriceValue(amount);
+    const finalAmount = _salesChangeAmount(record, record.items[index]) + (direction === 'decrease' ? -adjustment : adjustment);
+    const amountValid = Number.isSafeInteger(adjustment) && adjustment > 0 && /^[\d,]+$/.test(amount.value.trim());
+    if (direction && amountValid) {
+      const signedAdjustment = direction === 'decrease' ? -adjustment : adjustment;
+      adjustmentSubtotal += signedAdjustment;
+      adjustmentTax += _salesAdjustmentLineTax(signedAdjustment, record);
+      result.textContent = formatSalesEntryDisplayValue(finalAmount, _salesChangeCurrency(record));
+      result.classList.toggle('invalid', finalAmount < 0);
+      if (finalAmount < 0) { amount.setAttribute('aria-invalid', 'true'); negativeResult = true; }
+    }
+    valid = valid && ['increase', 'decrease'].includes(direction) && amountValid && Number.isSafeInteger(finalAmount) && finalAmount >= 0
+      && Boolean(reason.value.trim()) && [...reason.value.trim()].length <= 1000;
+  });
+  overlay.querySelectorAll('input[name="sales-change-direction"]').forEach(radio => {
+    const directions = [...overlay.querySelectorAll('select[id^="sales-change-line-direction-"]')].map(select => select.value);
+    radio.checked = directions.length > 0 && directions.every(direction => direction === radio.value);
+    radio.closest('label')?.classList.toggle('active', radio.checked);
+    radio.disabled = overlay.dataset.saving === 'true';
+  });
+  document.getElementById('sales-change-error').textContent = negativeResult ? '変更金額が0未満になる減額はできません。調整金額を確認してください。' : '';
+  const taxSummary = document.getElementById('sales-change-tax-summary');
+  if (taxSummary) {
+    const display = amount => `${amount < 0 ? '−' : amount > 0 ? '+' : ''}${formatSalesEntryDisplayValue(Math.abs(amount), _salesChangeCurrency(record))}`;
+    taxSummary.textContent = record.taxMode === 'taxable'
+      ? `調整金額は税抜です。調整小計（税抜）：${display(adjustmentSubtotal)} ／ 消費税（${Number(record.taxRateBasisPoints) / 100}%）：${display(adjustmentTax)} ／ 調整金額合計（税込）：${display(adjustmentSubtotal + adjustmentTax)}` : '';
+  }
+  valid = valid && selectedCount > 0 && overlay.dataset.saving !== 'true';
+  const save = document.getElementById('sales-change-save');
+  if (save) save.disabled = !valid;
+  return valid;
+}
+
+async function submitSalesChange(slipId) {
+  const record = (APP_DATA.sales || []).find(candidate => candidate.id === slipId && candidate.documentType !== 'sales_revision');
+  if (!record || !window.ZaikoAPI?.createSalesAdjustment) return showToast('error', '作成できません', '売上修正伝票APIを利用できません');
+  const overlay = document.getElementById('salesChangeOverlay');
+  if (!overlay || overlay.dataset.slipId !== slipId || !updateSalesChangeState()) return;
+  const lines = (record.items || []).map((item, index) => ({ item, index }))
+    .filter(({ index }) => document.getElementById(`sales-change-check-${index}`)?.checked)
+    .map(({ item, index }) => ({ saleLineId: item._id, adjustmentAmountMinor: getPriceValue(document.getElementById(`sales-change-amount-${index}`)),
+      direction: document.getElementById(`sales-change-line-direction-${index}`).value,
+      reason: document.getElementById(`sales-change-reason-${index}`).value.trim() }));
+  const direction = lines.every(line => line.direction === lines[0].direction) ? lines[0].direction : 'mixed';
+  overlay.dataset.saving = 'true';
+  updateSalesChangeState();
+  try {
+    const created = await window.ZaikoAPI.createSalesAdjustment(record, { adjustmentDate: overlay.dataset.adjustmentDate, direction, lines });
+    closeSalesChangeModal();
+    closeSlipDetail();
+    refreshLinkedBusinessViews({ source: 'sales-adjustment-created' });
+    showToast('success', '売上修正伝票を作成しました', created?.slipNumber || '売上伝票一覧へ追加しました');
+  } catch (error) {
+    showToast('error', '売上修正伝票を作成できませんでした', error?.message || '入力内容を確認してください');
+    overlay.dataset.saving = 'false';
+    updateSalesChangeState();
+  }
+}
+
+function buildCostAdjustmentRecordTemplateHTML(slip) {
+  const isDirect = /^direct_/.test(slip?.adjustmentType || '');
+  const items = (slip?.lines || []).map((line, index) => {
+    const product = (APP_DATA.inventory || []).find(record => record.code === line.code) || {};
+    const amount = isDirect ? Number(line.adjustedCostJpyMinor) || 0 : Number(line.allocatedCostJpyMinor) || 0;
+    const detail = [
+      `種別：${line.kind === 'part' ? 'パーツ' : '商品'}`,
+      `商品ステータス：${product.status || '—'}`,
+      isDirect ? `調整前原価：${formatPrice(line.previousCostJpyMinor || 0)}` : '',
+      isDirect ? `調整額：${line.direction === 'decrease' ? '−' : '+'}${formatPrice(line.adjustmentAmountJpyMinor || 0)}` : '',
+      line.note ? `備考：${line.note}` : '',
+    ].filter(Boolean).join('\n');
+    return { no: line.position || index + 1, detail, amount, code: line.code || '' };
+  });
+  const note = [
+    `調整区分：${getCostAdjustmentPatternLabel(slip?.adjustmentType)}`,
+    slip?.sourceProductCode ? `対象商品：${slip.sourceProductCode}` : '',
+    slip?.note || '',
+  ].filter(Boolean).join('\n');
+  return buildTemplateStyleSlipDocument({
+    title: '原価調整伝票',
+    slipId: slip?.id,
+    transactionDate: slip?.date,
+    transactionDateLabel: '調整日',
+    counterpartyLabel: '管理区分',
+    counterparty: { name: '社内管理' },
+    items,
+    note,
+    formatAmount: amount => formatPrice(amount),
+    currencyLabel: 'JPY（円）',
+    taxMode: 'none',
+    includeBank: false,
+    summaryMessage: '下記の通り原価調整を記録します。',
+    amountCaption: '調整後・配分原価合計',
+    itemCountCaption: '明細数',
+    issuedAt: slip?.confirmedAt || null,
+    issuedDateLabel: '確定日時',
+    detailColumnLabel: '調整内容',
+  });
+}
+
+function buildSalesAdjustmentRecordTemplateHTML(slip) {
+  const currency = _salesChangeCurrency(slip);
+  const formatAmount = amount => `${amount < 0 ? '−' : amount > 0 ? '+' : ''}${formatSalesEntryDisplayValue(Math.abs(amount), currency)}`;
+  const buyer = (APP_DATA.buyers || []).find(record => record.code === slip.buyer)
+    || { name: getBuyerName(slip.buyer) || '（販売先未設定）' };
+  return buildTemplateStyleSlipDocument({
+    title: '売上修正伝票', slipId: slip.id,
+    transactionDate: slip.date, transactionDateLabel: '修正日',
+    counterpartyLabel: '販売先', counterparty: buyer,
+    items: (slip.items || []).map((line, index) => ({
+      no: index + 1, code: line.code || '',
+      detail: [
+        [line.brand, line.model].filter(Boolean).join(' / '),
+        `初期売価：${line.beforeSalePrice != null && Number.isFinite(line.beforeSalePrice) ? formatSalesEntryDisplayValue(line.beforeSalePrice, currency) : '—'} → 変更売価：${line.afterSalePrice != null && Number.isFinite(line.afterSalePrice) ? formatSalesEntryDisplayValue(line.afterSalePrice, currency) : '—'}`,
+        line.reason ? `${(line.direction || slip.adjustmentDirection) === 'decrease' ? '減額理由' : '増額理由'}：${line.reason}` : '',
+      ].filter(Boolean).join('\n'),
+      amount: ((line.direction || slip.adjustmentDirection) === 'decrease' ? -1 : 1) * Math.abs(Number(line.adjustmentAmount) || 0),
+      taxAmount: _salesAdjustmentLineTax(((line.direction || slip.adjustmentDirection) === 'decrease' ? -1 : 1) * Math.abs(Number(line.adjustmentAmount) || 0), slip),
+    })),
+    note: `売上伝票:${slip.sourceSlipNumber || '—'}における金額修正`,
+    formatAmount, currencyLabel: currency === 'JPY' ? 'JPY（円）' : currency,
+    taxMode: slip.taxMode === 'taxable' ? 'standard' : 'none', taxRateBasisPoints: Number(slip.taxRateBasisPoints) || 0, includeBank: false,
+    summaryMessage: '下記の通り売上金額を修正します。',
+    amountCaption: slip.taxMode === 'taxable' ? '調整金額合計（税込）' : '調整金額合計', itemCountCaption: '変更商品数', detailColumnLabel: '変更内容',
+  });
 }
 
 function _getSavedSlipDocumentMeta(type, record) {
@@ -9703,6 +10241,12 @@ function _getSavedSlipDocumentMeta(type, record) {
   }
   if (type === 'consignment') {
     return { title: '委託伝票', filenameLabel: '委託伝票', html: buildConsignmentRecordTemplateHTML(record) };
+  }
+  if (type === 'costadjustment') {
+    return { title: '原価調整伝票', filenameLabel: '原価調整伝票', html: buildCostAdjustmentRecordTemplateHTML(record) };
+  }
+  if (type === 'sales' && record.documentType === 'sales_revision') {
+    return { title: '売上修正伝票', filenameLabel: '売上修正伝票', html: buildSalesAdjustmentRecordTemplateHTML(record) };
   }
   return { title: '請求書（売上伝票）', filenameLabel: '請求書', html: buildSalesRecordTemplateHTML(record) };
 }
@@ -11429,6 +11973,7 @@ function openSlipRevise(type, id) {
   const typeLabel = { purchase:'仕入伝票', shipping:'出荷伝票', sales:'売上伝票' }[type];
   document.getElementById('slipReviseTarget').textContent = `${typeLabel}　${id}`;
   document.getElementById('slipReviseNote').value = '';
+  updateSlipReviseSaveState();
 
   // タイプ別フィールドを描画
   document.getElementById('slipReviseFields').innerHTML = buildReviseFields(type, rec);
@@ -11543,6 +12088,13 @@ function buildReviseFields(type, rec) {
       </div>`;
 
   } else { // sales
+    const displayCurrency = getSalesRecordCurrency(rec);
+    const revisionAmount = item => {
+      const inputCurrency = item?.inputCurrency || item?.currency;
+      const inputAmount = Number(item?.inputAmount);
+      if (inputCurrency === displayCurrency && Number.isFinite(inputAmount)) return inputAmount;
+      return Number(item?.salePrice) || 0;
+    };
     const itemsHtml = (rec.items||[]).map((it, idx) => `
       <div class="revise-item-row" id="rv-sale-item-${idx}">
         <span class="revise-item-num">${idx+1}</span>
@@ -11552,8 +12104,8 @@ function buildReviseFields(type, rec) {
           id="rv-sale-brand-${idx}" value="${it.brand||''}">
         <input class="form-control" style="flex:1;font-size:12px;" placeholder="モデル"
           id="rv-sale-model-${idx}" value="${it.model||''}">
-        <input type="text" inputmode="numeric" class="form-control" style="width:110px;font-size:12px;" placeholder="販売金額（USD）"
-          id="rv-sale-price-${idx}" value="${formatPriceInput(it.salePrice||0)}" data-raw-value="${it.salePrice||0}"
+        <input type="text" inputmode="numeric" class="form-control" style="width:110px;font-size:12px;" placeholder="売価（${displayCurrency}）"
+          id="rv-sale-price-${idx}" value="${formatPriceInput(revisionAmount(it))}" data-raw-value="${revisionAmount(it)}"
           oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)">
       </div>`).join('');
     return `
@@ -11577,7 +12129,7 @@ function buildReviseFields(type, rec) {
         <span style="flex:1.2;font-size:11px;color:var(--text-muted);">商品コード</span>
         <span style="flex:1;font-size:11px;color:var(--text-muted);">ブランド</span>
         <span style="flex:1;font-size:11px;color:var(--text-muted);">モデル</span>
-        <span style="width:110px;font-size:11px;color:var(--text-muted);">販売金額（USD）</span>
+        <span style="width:110px;font-size:11px;color:var(--text-muted);">売価（${displayCurrency}）</span>
       </div>
       <div id="rv-sale-items">${itemsHtml}</div>
       <div class="form-group" style="margin-top:10px;">
@@ -11603,7 +12155,38 @@ function closeSlipRevise() {
   document.getElementById('slipReviseOverlay')?.classList.add('hidden');
 }
 
-function submitSlipRevise() {
+function updateSlipReviseSaveState() {
+  const button = document.getElementById('slipReviseSaveButton');
+  if (button) button.disabled = !String(document.getElementById('slipReviseNote')?.value || '').trim();
+}
+
+function _purchaseRevisionPayload(record, reason) {
+  const staffName = _rv('rv-staff') || '';
+  const staffCode = APP_DATA.staffRecords?.find(staff => staff.name === staffName || staff.displayName === staffName)?.code
+    || (staffName === record.staff ? record.staffCode : staffName);
+  return {
+    purchaseDate: _rv('rv-purchaseDate'), supplierCode: _rv('rv-supplier') || '', staffCode: staffCode || '',
+    notes: _rv('rv-pu-note') || '', reason,
+    lines: (record.lines || []).map((line, index) => ({
+      id: line._id, sku: _rv(`rv-pu-sku-${index}`) || '',
+      unitCostMinor: getPriceValue(document.getElementById(`rv-pu-pp-${index}`)),
+      baseSalePriceMinor: getPriceValue(document.getElementById(`rv-pu-sp-${index}`)),
+    })),
+  };
+}
+
+function _salesRevisionPayload(record, reason) {
+  return {
+    saleDate: _rv('rv-saleDate'), buyerCode: _rv('rv-buyer') || '',
+    notes: _rv('rv-note') || '', reason,
+    lines: (record.items || []).map((line, index) => ({
+      id: line._id,
+      unitPriceMinor: getPriceValue(document.getElementById(`rv-sale-price-${index}`)),
+    })),
+  };
+}
+
+async function submitSlipRevise() {
   const id   = document.getElementById('slipReviseId').value;
   const type = document.getElementById('slipReviseType').value;
   const memo = document.getElementById('slipReviseNote').value.trim();
@@ -11613,6 +12196,59 @@ function submitSlipRevise() {
   else if (type === 'shipping') record = APP_DATA.shipments.find(s => s.id === id);
   else                          record = APP_DATA.sales.find(s => s.id === id);
   if (!record) { showToast('error', 'エラー', '対象伝票が見つかりません'); return; }
+  if (!memo) {
+    showToast('error', '保存理由が必要です', '変更理由を入力してから保存してください');
+    document.getElementById('slipReviseNote')?.focus();
+    return false;
+  }
+
+  if (type === 'purchase' && record.apiManaged) {
+    if (!window.ZaikoAPI?.revisePurchaseSlip) {
+      showToast('error', '保存できません', 'DBの仕入伝票修正APIを利用できません。画面を再読み込みしてください');
+      return false;
+    }
+    const button = document.getElementById('slipReviseSaveButton');
+    if (button?.dataset.saving === 'true') return false;
+    if (button) { button.dataset.saving = 'true'; button.disabled = true; }
+    try {
+      await window.ZaikoAPI.revisePurchaseSlip(record, _purchaseRevisionPayload(record, memo));
+      closeSlipRevise();
+      refreshLinkedBusinessViews({ source: 'purchase-slip-revision-db' });
+      if (!document.getElementById('slipDetailOverlay')?.classList.contains('hidden')) openSlipDetail(type, id);
+      showToast('success', '仕入伝票を保存しました', `保存理由を伝票の備考と対象商品の社内コメントに記録しました：${id}`);
+      return true;
+    } catch (error) {
+      showToast('error', '仕入伝票を保存できませんでした', error?.message || '修正内容を確認してください');
+      return false;
+    } finally {
+      if (button) delete button.dataset.saving;
+      updateSlipReviseSaveState();
+    }
+  }
+
+  if (type === 'sales' && record.apiManaged) {
+    if (!window.ZaikoAPI?.reviseSaleSlip) {
+      showToast('error', '保存できません', 'DBの売上伝票修正APIを利用できません。画面を再読み込みしてください');
+      return false;
+    }
+    const button = document.getElementById('slipReviseSaveButton');
+    if (button?.dataset.saving === 'true') return false;
+    if (button) { button.dataset.saving = 'true'; button.disabled = true; }
+    try {
+      await window.ZaikoAPI.reviseSaleSlip(record, _salesRevisionPayload(record, memo));
+      closeSlipRevise();
+      refreshLinkedBusinessViews({ source: 'sales-slip-revision-db' });
+      if (!document.getElementById('slipDetailOverlay')?.classList.contains('hidden')) openSlipDetail(type, id);
+      showToast('success', '売上伝票を保存しました', `保存理由を売上伝票の備考と対象商品の社内コメントに記録しました：${id}`);
+      return true;
+    } catch (error) {
+      showToast('error', '売上伝票を保存できませんでした', error?.message || '修正内容を確認してください');
+      return false;
+    } finally {
+      if (button) delete button.dataset.saving;
+      updateSlipReviseSaveState();
+    }
+  }
 
   // API管理伝票は作業者が直接書き換えず、管理者が修正する。
   // ローカル伝票は下の既存承認申請フローを利用する。
@@ -11676,6 +12312,7 @@ function submitSlipRevise() {
     }
 
   } else { // sales
+    const displayCurrency = getSalesRecordCurrency(record);
     chk('売上日',   record.date,  _rv('rv-saleDate'),  v => { record.date  = v; });
     chk('販売先',   getBuyerName(record.buyer), getBuyerName(_rv('rv-buyer')),
       () => { record.buyer = _rv('rv-buyer'); });
@@ -11687,12 +12324,25 @@ function submitSlipRevise() {
       chk(`明細${idx+1}ブランド`, it.brand,   _rv(`rv-sale-brand-${idx}`),  v => { it.brand    = v; });
       chk(`明細${idx+1}モデル`,  it.model,    _rv(`rv-sale-model-${idx}`),  v => { it.model    = v; });
       const newP = getPriceValue(document.getElementById(`rv-sale-price-${idx}`));
-      chk(`明細${idx+1}販売金額（USD）`, it.salePrice, newP, v => { it.salePrice = parseInt(v)||0; });
+      const oldP = (it.inputCurrency || it.currency) === displayCurrency && Number.isFinite(Number(it.inputAmount))
+        ? Number(it.inputAmount) : Number(it.salePrice) || 0;
+      chk(`明細${idx+1}売価（${displayCurrency}）`, oldP, newP, v => {
+        it.inputAmount = parseInt(v) || 0;
+        it.inputCurrency = displayCurrency;
+        it.currency = displayCurrency;
+        it.salePrice = displayCurrency === 'JPY'
+          ? Math.round(it.inputAmount / getSalesRegistrationFXRate(record))
+          : it.inputAmount;
+      });
       newTotal += getPriceValue(document.getElementById(`rv-sale-price-${idx}`));
     });
-    if (record.total !== newTotal) {
-      diffs.push({ field: '合計金額', before: formatPrice(record.total), after: formatPrice(newTotal) });
-      record.total = newTotal;
+    const oldDisplayTotal = Number(record.displaySubtotalMinor ?? record.total) || 0;
+    if (oldDisplayTotal !== newTotal) {
+      diffs.push({ field: `合計金額（${displayCurrency}）`, before: formatPrice(oldDisplayTotal), after: formatPrice(newTotal) });
+      record.displaySubtotalMinor = newTotal;
+      record.total = displayCurrency === 'JPY'
+        ? Math.round(newTotal / getSalesRegistrationFXRate(record))
+        : newTotal;
     }
   }
 
@@ -11717,6 +12367,15 @@ function submitSlipRevise() {
     if (!record.revisions) record.revisions = [];
     if (isAdmin()) revEntry.approverName = currentUser()?.name || '管理者';
     record.revisions.push(revEntry);
+    const reasonLine = `修正理由: ${memo}`;
+    record.note = [String(record.note || '').trim(), reasonLine].filter(Boolean).join('\n');
+    const revisedCodes = type === 'purchase'
+      ? (record.lines || []).map(line => line.code)
+      : (record.items || []).map(item => item.code);
+    revisedCodes.forEach(code => {
+      const product = (APP_DATA.inventory || []).find(item => item.code === code);
+      if (product) product.comment = [String(product.comment || '').trim(), `${id} ${reasonLine}`].filter(Boolean).join('\n');
+    });
     applyBusinessRecordState(type, record);
     closeSlipRevise();
     refreshLinkedBusinessViews({ source: `${type}-slip-revision` });
@@ -11761,6 +12420,8 @@ function exportSalesCSV()      { exportSlipCSV(); }
 // =====================================================
 let _barcodeMode     = null;  // 'pr' | 'sr' | 'shipping' | 'purchase-arrival' | 'shipment-return' | 'consignment-return' | 'stocktake' | 'inventory-search' | 'product-registration' | 'cost-adjustment' | 'sales-adjustment'
 let _purchaseArrivalSlipId = null;
+let _costAdjustmentScanSlipId = null;
+let _costAdjustmentScanPending = false;
 let _shipmentReturnSlipId = null;
 let _consignmentReturnSlipId = null;
 let _barcodeStream   = null;  // MediaStream
@@ -11792,7 +12453,8 @@ function openBarcodeScanner(mode) {
     shipping: '出荷登録の商品管理番号をQRコードから連続読取',
     consignment: '委託登録の商品管理番号をQRコードから連続読取',
     sales: '売上登録の商品管理番号をQRコードから連続読取',
-	'purchase-arrival': '仕入伝票の商品を入荷QRコードから連続読取',
+    'purchase-arrival': '仕入伝票の商品を入荷QRコードから連続読取',
+    'cost-adjustment-slip': '原価調整伝票の商品をQRコードから連続読取',
     'shipment-return': '出荷伝票の商品を返却QRコードから連続読取',
     'consignment-return': '委託伝票の商品を返却QRコードから連続読取',
     stocktake: '棚卸用QRコードを読み取る',
@@ -11937,6 +12599,10 @@ function _onBarcodeDetected(rawCode) {
 	_handlePurchaseArrivalScan(code, { status, lastEl, codeEl, countEl });
 	return;
   }
+  if (_barcodeMode === 'cost-adjustment-slip') {
+    _handleCostAdjustmentSlipScan(code, { status, lastEl, codeEl, countEl });
+    return;
+  }
   if (_barcodeMode === 'consignment-return') {
     _handleConsignmentReturnScan(code, { status, lastEl, codeEl, countEl });
     return;
@@ -11989,7 +12655,7 @@ function _onBarcodeDetected(rawCode) {
     },
     'cost-adjustment': {
       inputId: 'ca-product-code',
-      toastTitle: '原価調整の商品を読み取りました',
+      toastTitle: '原価管理の商品を読み取りました',
       toastMessage: item => `管理番号 ${item.code} の商品情報を反映しました`,
     },
   };
@@ -12108,6 +12774,8 @@ function closeBarcodeScanner() {
   _barcodeMode = null;
 	_purchaseArrivalSlipId = null;
 	_purchaseArrivalScanPending = false;
+  _costAdjustmentScanSlipId = null;
+  _costAdjustmentScanPending = false;
   _shipmentReturnSlipId = null;
   _shipmentReturnScanPending = false;
   _consignmentReturnSlipId = null;
@@ -12117,6 +12785,44 @@ function closeBarcodeScanner() {
 function openPurchaseArrivalScanner(purchaseID) {
   _purchaseArrivalSlipId = purchaseID;
   openBarcodeScanner('purchase-arrival');
+}
+
+function openCostAdjustmentSlipScanner(slipNumber) {
+  _costAdjustmentScanSlipId = slipNumber;
+  openBarcodeScanner('cost-adjustment-slip');
+}
+
+async function _handleCostAdjustmentSlipScan(code, elements) {
+  const { status, lastEl, codeEl, countEl } = elements;
+  if (_costAdjustmentScanPending) return;
+  const slip = (APP_DATA.costAdjustments || []).find(record => record.id === _costAdjustmentScanSlipId);
+  if (!slip || !window.ZaikoAPI?.scanCostAdjustmentProduct) {
+    if (status) { status.textContent = '対象の原価調整伝票が見つかりません。開き直してください。'; status.style.color = '#dc2626'; }
+    return;
+  }
+  _costAdjustmentScanPending = true;
+  try {
+    const result = await window.ZaikoAPI.scanCostAdjustmentProduct(slip, code);
+    const label = result.inventoryStatus === 'in_stock' ? '在庫中' : '原価調整済';
+    if (codeEl) codeEl.textContent = code;
+    if (lastEl) lastEl.style.display = '';
+    if (result.result === 'scanned') {
+      _barcodeScanCount++;
+      if (countEl) countEl.textContent = String(_barcodeScanCount);
+      if (status) { status.textContent = `✓ ${code}（伝票上原価 ${formatPrice(result.slipCostJpyMinor)}）を「${label}」へ変更しました。次の商品を読み取れます。`; status.style.color = '#16a34a'; }
+      showToast('success', '原価調整伝票のQR読取が完了しました', `${code} を「${label}」へ変更しました。`);
+    } else if (status) {
+      status.textContent = `${code} はすでに「${label}」です。`;
+      status.style.color = '#f59e0b';
+    }
+    openCostAdjustmentSlipDetail(slip.id);
+    refreshSlipList();
+  } catch (error) {
+    if (status) { status.textContent = error.message || '原価調整伝票の読取に失敗しました。'; status.style.color = error.status === 404 || error.status === 409 ? '#f59e0b' : '#dc2626'; }
+    setTimeout(() => { if (_barcodeLastCode === code) _barcodeLastCode = ''; }, 1500);
+  } finally {
+    _costAdjustmentScanPending = false;
+  }
 }
 
 async function _handlePurchaseArrivalScan(code, elements) {
@@ -12734,6 +13440,7 @@ function buildTemplateStyleSlipDocument(options) {
     formatAmount = amount => formatPrice(amount),
     currencyLabel = 'JPY（円）',
     taxMode = 'none',
+    taxRateBasisPoints = 1000,
     includeBank = false,
     summaryMessage = '下記の通りご案内いたします。',
     amountCaption = '合計金額',
@@ -12755,9 +13462,8 @@ function buildTemplateStyleSlipDocument(options) {
   const taxFree = taxMode === 'exempt';
   const taxable = taxMode === 'standard';
   const outOfScope = taxMode === 'out_of_scope';
-  const taxAmount = taxable
-    ? safeItems.reduce((sum, item) => sum + Math.floor((Number(item.amount) || 0) * 0.1), 0)
-    : 0;
+  const itemTaxAmount = item => taxable ? (Number.isFinite(item.taxAmount) ? item.taxAmount : Math.floor((Number(item.amount) || 0) * taxRateBasisPoints / 10000)) : 0;
+  const taxAmount = safeItems.reduce((sum, item) => sum + itemTaxAmount(item), 0);
   const grandTotal = subtotal + taxAmount;
   const issuedDate = issuedAt
     ? formatPurchaseIssuedAt(issuedAt)
@@ -12766,8 +13472,8 @@ function buildTemplateStyleSlipDocument(options) {
   const partyAddress = counterparty?.address || '';
   const partyContact = counterparty?.contact || '';
   const partyInvoice = counterparty?.invoice || '';
-  const taxLabel = taxFree ? '免税（0%）' : (taxable ? '消費税（10%）' : (outOfScope ? '対象外' : '税対象外'));
-  const itemTaxLabel = taxFree ? '免税（0%）' : (taxable ? '消費税（10%）' : (outOfScope ? '対象外' : '—'));
+  const taxLabel = taxFree ? '免税（0%）' : (taxable ? `消費税（${taxRateBasisPoints / 100}%）` : (outOfScope ? '対象外' : '税対象外'));
+  const itemTaxLabel = taxFree ? '免税（0%）' : (taxable ? `消費税（${taxRateBasisPoints / 100}%）` : (outOfScope ? '対象外' : '—'));
   const chunkSize = 18;
   const chunks = [];
   for (let index = 0; index < safeItems.length; index += chunkSize) {
@@ -12830,7 +13536,7 @@ function buildTemplateStyleSlipDocument(options) {
     const blankCount = Math.max(0, 12 - chunk.length);
     const rows = chunk.map((item, index) => {
       const amount = Number(item.amount) || 0;
-      const rowTax = taxable ? Math.floor(amount * 0.1) : 0;
+      const rowTax = itemTaxAmount(item);
       return `
         <tr>
           <td class="tpl-cell-number">${item.no || chunkIndex * chunkSize + index + 1}</td>
@@ -18132,7 +18838,7 @@ function renderStaffPerf() {
       staffMap[name].buyTotal += item.purchasePrice || 0;
     }
     // 在庫中・取置中の在庫額（期間問わず）
-    if (['在庫中', '取置中'].includes(item.status)) {
+    if (['在庫中', '取置中'].includes(item.status) && !item.inventoryValuationExcluded) {
       staffMap[name].stockCount++;
       staffMap[name].stockTotal += item.purchasePrice || 0;
     }
@@ -18924,10 +19630,10 @@ function toggleMarketNavGroup() {
   return setMarketNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
 }
 
-function setInventoryNavGroupExpanded(expanded) {
-  const group = document.getElementById('inventoryNavGroup');
-  const toggle = document.getElementById('inventoryNavToggle');
-  const submenu = document.getElementById('inventoryNavSubmenu');
+function setCostManagementNavGroupExpanded(expanded) {
+  const group = document.getElementById('costManagementNavGroup');
+  const toggle = document.getElementById('costManagementNavToggle');
+  const submenu = document.getElementById('costManagementNavSubmenu');
   if (!group || !toggle || !submenu) return false;
   const shouldExpand = Boolean(expanded);
   group.classList.toggle('expanded', shouldExpand);
@@ -18936,34 +19642,18 @@ function setInventoryNavGroupExpanded(expanded) {
   return shouldExpand;
 }
 
-function toggleInventoryNavGroup() {
-  const toggle = document.getElementById('inventoryNavToggle');
-  return setInventoryNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
-}
-
-function setAdjustmentEntryNavGroupExpanded(expanded) {
-  const group = document.getElementById('adjustmentEntryNavGroup');
-  const toggle = document.getElementById('adjustmentEntryNavToggle');
-  const submenu = document.getElementById('adjustmentEntryNavSubmenu');
-  if (!group || !toggle || !submenu) return false;
-  const shouldExpand = Boolean(expanded);
-  group.classList.toggle('expanded', shouldExpand);
-  toggle.setAttribute('aria-expanded', String(shouldExpand));
-  submenu.hidden = !shouldExpand;
-  return shouldExpand;
-}
-
-function toggleAdjustmentEntryNavGroup() {
-  const toggle = document.getElementById('adjustmentEntryNavToggle');
-  return setAdjustmentEntryNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
+function toggleCostManagementNavGroup() {
+  const toggle = document.getElementById('costManagementNavToggle');
+  return setCostManagementNavGroupExpanded(toggle?.getAttribute('aria-expanded') !== 'true');
 }
 
 // =====================================================
 // 原価調整ワークスペース
 // =====================================================
 const COST_ADJUSTMENT_MODES = {
-  breakdown: '崩し',
-  combine: '結合',
+  breakdown: '原価分け',
+  combine: '原価合わせ',
+  adjustment: '原価調整',
 };
 
 let _costAdjustmentState = {
@@ -19079,6 +19769,7 @@ function costAdjustmentRenderProduct(item) {
 }
 
 function costAdjustmentResetBreakdownWorkspace() {
+  _costAdjustmentState.breakdownStartedDate = null;
   _costAdjustmentState.breakdownActive = false;
   _costAdjustmentState.breakdownDraft = null;
   _costAdjustmentState.combineActive = false;
@@ -19100,6 +19791,7 @@ function costAdjustmentRenderBreakdownWorkspace() {
   const guide = document.getElementById('ca-breakdown-drop-guide');
   const summary = document.getElementById('ca-product-summary');
   const startButton = document.getElementById('ca-start-button');
+  const resetButton = document.getElementById('ca-reset-button');
   const result = document.getElementById('ca-breakdown-result');
   const partEntry = document.querySelector('#ca-parts-panel .ca-part-entry');
   const partInput = document.getElementById('ca-part-code');
@@ -19107,7 +19799,7 @@ function costAdjustmentRenderBreakdownWorkspace() {
 
   panel?.classList.toggle('ca-breakdown-active', active);
   panel?.classList.toggle('ca-combine-active', combineActive);
-  if (title) title.textContent = active ? '崩し作業スペース' : 'パーツBOX';
+  if (title) title.textContent = active ? '原価分け作業スペース' : 'BOX';
   if (subtitle) subtitle.textContent = active
     ? '対象商品を丸ごとドラッグ＆ドロップ'
     : (combineActive ? 'パーツを左の対象商品へドラッグ＆ドロップ' : '4列×5段・ドラッグ移動対応');
@@ -19131,16 +19823,21 @@ function costAdjustmentRenderBreakdownWorkspace() {
     startButton.innerHTML = '<i class="fa-solid fa-play"></i> 原価調整開始';
     _costAdjustmentUpdateStartButton();
   }
+  if (resetButton) {
+    const finalized = Boolean(_costAdjustmentState.breakdownDraft?.finalized || _costAdjustmentState.combineDraft?.finalized);
+    resetButton.hidden = !workflowActive || finalized;
+    resetButton.disabled = _costAdjustmentState.finalizing;
+  }
   if (result) {
     const draft = _costAdjustmentState.breakdownDraft;
     result.hidden = !active || !draft;
     result.innerHTML = draft ? `
-      <strong><i class="fa-solid fa-box-open"></i> ${_escHtml(draft.code)} の崩し内容</strong>
-      <span>商品 <b>${draft.productCount}</b> 点</span>
-      <span>パーツ <b>${draft.partCount}</b> 点</span>` : '';
+      <strong><i class="fa-solid fa-box-open"></i> ${_escHtml(draft.code)} の原価分け内容</strong>
+      <span>分裂後の商品 <b>${draft.productCount}</b> 個</span>` : '';
   }
   costAdjustmentRenderCombineDiff();
   costAdjustmentRenderAllocationSummary();
+  costAdjustmentRenderSplitSlip();
   return workflowActive;
 }
 
@@ -19172,6 +19869,16 @@ function costAdjustmentLoadProduct(codeValue) {
     return false;
   }
 
+  const itemStatus = normalizeInventoryStatusLabel(item.status);
+  if (itemStatus !== '在庫中' || item.inventoryValuationExcluded) {
+    if (feedback) {
+      feedback.textContent = `${item.code} は原価管理の対象外です`;
+      feedback.className = 'ca-input-feedback error';
+    }
+    if (typeof showToast === 'function') showToast('error', '商品を読み込めません', '原価管理に使用できるのは在庫中の商品だけです');
+    return false;
+  }
+
   _costAdjustmentState.product = item;
   _costAdjustmentState.stageItems = [];
   costAdjustmentResetBreakdownWorkspace();
@@ -19190,7 +19897,7 @@ function costAdjustmentLoadProduct(codeValue) {
 
 function costAdjustmentAddPart(codeValue) {
   if ((_costAdjustmentState.breakdownActive && _costAdjustmentState.breakdownDraft) || _costAdjustmentState.combineActive) {
-    if (typeof showToast === 'function') showToast('info', '崩し内容は確定済みです', '確定後の枠にはパーツを追加できません');
+    if (typeof showToast === 'function') showToast('info', '原価分け内容は確定済みです', '確定後の枠にはパーツを追加できません');
     return false;
   }
   const input = document.getElementById('ca-part-code');
@@ -19210,7 +19917,7 @@ function costAdjustmentAddPart(codeValue) {
 
   const emptyIndex = _costAdjustmentState.partSlots.findIndex(item => !item);
   if (emptyIndex < 0) {
-    if (typeof showToast === 'function') showToast('error', 'パーツBOXがいっぱいです', '中央へ移動して空きを作ってください');
+    if (typeof showToast === 'function') showToast('error', 'BOXがいっぱいです', '中央へ移動して空きを作ってください');
     return false;
   }
 
@@ -19369,6 +20076,79 @@ function _costAdjustmentAllocationState() {
   };
 }
 
+function _costAdjustmentUpdateSplitSlipTotals() {
+  const summary = _costAdjustmentAllocationState();
+  const total = document.getElementById('ca-split-slip-total');
+  const status = document.getElementById('ca-split-slip-status');
+  if (total) total.textContent = `¥${summary.allocated.toLocaleString('ja-JP')}`;
+  if (status) {
+    if (!summary.allCompleted) status.textContent = `未入力 ${summary.items.filter(item => item?.completed !== true && item?.amountEntered !== true).length}件`;
+    else if (summary.exact) status.textContent = '元商品の原価と完全一致しました';
+    else {
+      const difference = summary.target - summary.allocated;
+      status.textContent = difference > 0
+        ? `元商品の原価まで残り ¥${difference.toLocaleString('ja-JP')}`
+        : `元商品の原価を ¥${Math.abs(difference).toLocaleString('ja-JP')} 超過しています`;
+    }
+    status.classList.toggle('is-ready', summary.allCompleted && summary.exact);
+  }
+  return summary;
+}
+
+function costAdjustmentRenderSplitSlip() {
+  const section = document.getElementById('ca-split-slip');
+  const lines = document.getElementById('ca-split-slip-lines');
+  const draft = _costAdjustmentState.mode === 'breakdown' ? _costAdjustmentState.breakdownDraft : null;
+  if (!section || !lines) return false;
+  section.hidden = !draft;
+  if (!draft) {
+    lines.innerHTML = '';
+    return false;
+  }
+  const title = document.getElementById('ca-split-slip-title');
+  const badge = section.querySelector('.ca-split-slip-badge');
+  const help = section.querySelector('.ca-split-slip-heading small');
+  if (title) title.innerHTML = '<i class="fa-solid fa-file-invoice-dollar"></i> 原価調整伝票';
+  if (badge) badge.textContent = draft.slipNumber || '明細';
+  if (help) help.textContent = draft.finalized
+    ? `備考：原価分け｜確定済み（開始日 ${draft.adjustmentDate}）`
+    : '備考：原価分け｜分裂後の商品ごとに原価を入力してください';
+  const historicalSourceCost = Math.max(0, Number(draft.targetCostJpyMinor || 0));
+  const sourceRow = `
+    <tr class="ca-split-source-row">
+      <td>対象</td>
+      <td><strong>${_escHtml(draft.sourceProductCode || _costAdjustmentState.product?.code || '—')}</strong></td>
+      <td>${_escHtml(_costAdjustmentState.product?.sku || '—')}</td>
+      <td>対象商品（原価分け前）</td>
+      <td><strong>¥0</strong><small>元原価 ¥${historicalSourceCost.toLocaleString('ja-JP')} は履歴保持・現在在庫集計対象外</small></td>
+    </tr>`;
+  lines.innerHTML = sourceRow + (draft.items || []).map((item, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td><strong>${_escHtml(item.managementCode || '採番予定')}</strong></td>
+      <td>${_escHtml(item.sku || '—')}</td>
+      <td>商品</td>
+      <td><input type="number" class="form-control ca-split-cost-input" min="0" step="1"
+        aria-label="${index + 1}件目の原価" placeholder="0"
+        value="${item.amountEntered === true || item.completed === true ? Math.max(0, Number(item.allocatedCostJpyMinor || 0)) : ''}" ${draft.finalized ? 'disabled' : ''}
+        oninput="costAdjustmentUpdateSplitLineAmount(${index}, this.value)"></td>
+    </tr>`).join('');
+  _costAdjustmentUpdateSplitSlipTotals();
+  return true;
+}
+
+function costAdjustmentUpdateSplitLineAmount(index, rawValue) {
+  const item = _costAdjustmentState.breakdownDraft?.items?.[Number(index)];
+  if (!item || item.kind !== 'product') return false;
+  const raw = String(rawValue ?? '').trim();
+  const amount = Number(raw);
+  item.amountEntered = raw !== '' && Number.isFinite(amount) && amount >= 0;
+  item.allocatedCostJpyMinor = item.amountEntered ? Math.round(amount) : 0;
+  costAdjustmentRenderAllocationSummary();
+  _costAdjustmentUpdateSplitSlipTotals();
+  return item.amountEntered;
+}
+
 function costAdjustmentRenderAllocationSummary() {
   if (_costAdjustmentState.mode === 'combine') {
     const draft = _costAdjustmentState.combineDraft;
@@ -19419,7 +20199,7 @@ function costAdjustmentRenderAllocationSummary() {
   if (source) source.textContent = `¥${summary.target.toLocaleString('ja-JP')}`;
   if (allocated) allocated.textContent = `¥${summary.allocated.toLocaleString('ja-JP')}`;
   if (balance) {
-    if (!draft) balance.textContent = '崩し内容を確定してください';
+    if (!draft) balance.textContent = '原価分け内容を確定してください';
     else if (summary.finalized) balance.textContent = '原価調整を確定しました';
     else if (!summary.allCompleted) balance.textContent = `未編集 ${summary.items.filter(item => !item?.completed).length}件`;
     else if (!summary.exact) {
@@ -19433,6 +20213,12 @@ function costAdjustmentRenderAllocationSummary() {
   }
   if (button) {
     button.disabled = !summary.ready || _costAdjustmentState.finalizing;
+    button.setAttribute('aria-disabled', String(button.disabled));
+    button.title = summary.ready
+      ? '分裂後の商品の原価合計が対象商品の原価と一致しています'
+      : (!summary.allCompleted
+        ? '分裂後のすべての商品を編集してください'
+        : '分裂後の商品の原価合計を対象商品の原価と完全一致させてください');
     button.innerHTML = summary.finalized
       ? '<i class="fa-solid fa-circle-check"></i> 原価調整確定済み'
       : (_costAdjustmentState.finalizing
@@ -19473,7 +20259,7 @@ function costAdjustmentRenderPartGrid() {
       if (item?.kind === 'product') {
         const ordinal = index + 1;
         return `<button type="button" class="ca-part-slot ca-breakdown-product-slot${complete ? ' ca-breakdown-output-complete' : ''}" role="gridcell" data-slot-label="${index + 1}"
-          aria-label="崩し後の商品 ${ordinal}点目を編集" onclick="costAdjustmentOpenItemEditor(${index})">
+          aria-label="原価分け後の商品 ${ordinal}点目を編集" onclick="costAdjustmentOpenItemEditor(${index})">
           <div class="ca-breakdown-count-token ca-breakdown-product-token">
             <i class="fa-solid fa-box"></i><span>商品</span><strong>${ordinal}</strong>
           </div>
@@ -19484,7 +20270,7 @@ function costAdjustmentRenderPartGrid() {
       if (item?.kind === 'part') {
         const ordinal = index - draft.productCount + 1;
         return `<button type="button" class="ca-part-slot ca-breakdown-part-slot${complete ? ' ca-breakdown-output-complete' : ''}" role="gridcell" data-slot-label="${index + 1}"
-          aria-label="崩し後のパーツ ${ordinal}点目を編集" onclick="costAdjustmentOpenItemEditor(${index})">
+          aria-label="原価分け後のパーツ ${ordinal}点目を編集" onclick="costAdjustmentOpenItemEditor(${index})">
           <div class="ca-breakdown-count-token ca-breakdown-part-token">
             <i class="fa-solid fa-puzzle-piece"></i><span>パーツ</span><strong>${ordinal}</strong>
           </div>
@@ -19604,12 +20390,10 @@ function costAdjustmentOpenBreakdownModal() {
   const modal = document.getElementById('costAdjustmentBreakdownModal');
   const productName = document.getElementById('ca-breakdown-product-name');
   const productCount = document.getElementById('ca-breakdown-product-count');
-  const partCount = document.getElementById('ca-breakdown-part-count');
   const error = document.getElementById('ca-breakdown-modal-error');
   if (!modal) return false;
   if (productName) productName.textContent = `${item.code}｜${item.brand || '—'} ${item.model || ''}`.trim();
-  if (productCount) productCount.value = String(_costAdjustmentState.breakdownDraft?.productCount || 1);
-  if (partCount) partCount.value = String(_costAdjustmentState.breakdownDraft?.partCount || 1);
+  if (productCount) productCount.value = String(_costAdjustmentState.breakdownDraft?.productCount || 2);
   if (error) error.textContent = '';
   modal.classList.remove('hidden');
   setTimeout(() => productCount?.focus(), 0);
@@ -19623,61 +20407,37 @@ function costAdjustmentCloseBreakdownModal() {
 
 function costAdjustmentConfirmBreakdown() {
   const productCount = Number(document.getElementById('ca-breakdown-product-count')?.value);
-  const partCount = Number(document.getElementById('ca-breakdown-part-count')?.value);
   const error = document.getElementById('ca-breakdown-modal-error');
-  if (!Number.isInteger(productCount) || productCount < 1 || !Number.isInteger(partCount) || partCount < 1) {
-    if (error) error.textContent = '商品点数とパーツ点数は、どちらも1以上の整数で入力してください。';
+  if (!Number.isInteger(productCount) || productCount < 2) {
+    if (error) error.textContent = '分裂後の商品個数は、2以上の整数で入力してください。';
     return false;
   }
-  if (productCount + partCount > 20) {
-    if (error) error.textContent = '商品点数とパーツ点数の合計は、4×5枠に収まる20点以内で入力してください。';
+  if (productCount > 20) {
+    if (error) error.textContent = '分裂後の商品個数は、4×5枠に収まる20個以内で入力してください。';
     return false;
   }
   const source = _costAdjustmentState.product;
-  const adjustmentDate = getLocalDateISO();
+  const adjustmentDate = _costAdjustmentState.breakdownStartedDate || getLocalDateISO();
   const productCodes = _costAdjustmentPredictCodes('product', productCount, adjustmentDate);
-  const partCodes = _costAdjustmentPredictCodes('part', partCount, adjustmentDate);
-  const sourceBrandCode = (APP_DATA.brandRecords || []).find(record => record.name === source.brand)?.code || source.brandCode || '';
-  const sourceComment = `対象商品管理番号: ${source.code}`;
+  const sourceComment = `原価管理番号: ${source.code}`;
   const productItems = Array.from({ length: productCount }, (_, index) => ({
     position: index + 1,
     kind: 'product',
     managementCode: productCodes[index],
-    sku: source.sku || '',
+    sku: '',
     allocatedCostJpyMinor: 0,
     completed: false,
     product: {
-      brandCode: sourceBrandCode,
-      modelName: source.model || '',
-      referenceNumber: source.ref || '',
+      brandCode: '',
+      modelName: '',
+      referenceNumber: '',
       serialNumber: '',
-      materialCode: source.material || '',
-      movementCode: source.movement || '',
-      conditionCode: source.condition || '',
-      beltMaterial: source.beltMaterial || source.belt || '',
-      dial: source.dial || '',
-      accessories: Array.isArray(source.accessories) ? [...source.accessories] : [],
-      salePriceUsdMinor: Math.max(0, Number(source.salePriceUsdMinor || source.salePrice || 0)),
-      notes: source.notes || source.note || '',
-      internalComment: sourceComment,
-    },
-  }));
-  const partItems = Array.from({ length: partCount }, (_, index) => ({
-    position: productCount + index + 1,
-    kind: 'part',
-    managementCode: partCodes[index],
-    sku: source.sku || '',
-    allocatedCostJpyMinor: 0,
-    completed: false,
-    part: {
-      brandCode: sourceBrandCode,
-      modelName: source.model || '',
-      referenceNumber: source.ref || '',
-      partNameCode: '',
-      detailText: '',
-      detailMasterType: '',
-      detailMasterCode: '',
-      braceletQuantity: null,
+      materialCode: '',
+      movementCode: '',
+      conditionCode: '',
+      beltMaterial: '',
+      dial: '',
+      accessories: [],
       salePriceUsdMinor: 0,
       notes: '',
       internalComment: sourceComment,
@@ -19686,10 +20446,10 @@ function costAdjustmentConfirmBreakdown() {
   _costAdjustmentState.breakdownDraft = {
     code: source.code,
     productCount,
-    partCount,
+    partCount: 0,
     adjustmentDate,
     targetCostJpyMinor: Math.max(0, Number(source.purchasePrice || source.costJPY || 0)),
-    items: [...productItems, ...partItems],
+    items: productItems,
     finalized: false,
   };
   _costAdjustmentState.partSlots = Array(20).fill(null);
@@ -19698,7 +20458,7 @@ function costAdjustmentConfirmBreakdown() {
   costAdjustmentRenderPartGrid();
   costAdjustmentRenderStage();
   costAdjustmentCloseBreakdownModal();
-  if (typeof showToast === 'function') showToast('success', '崩し内容を確定しました', `商品 ${productCount}点・パーツ ${partCount}点`);
+  if (typeof showToast === 'function') showToast('success', '原価分け内容を確定しました', `商品を ${productCount}個に分けました`);
   return true;
 }
 
@@ -19720,10 +20480,43 @@ function _costAdjustmentSetPrice(id, value) {
 }
 
 function _costAdjustmentSourceComment(value = '') {
-  const prefix = `対象商品管理番号: ${_costAdjustmentState.product?.code || ''}`;
-  const extra = String(value || '').trim();
-  if (!extra || extra === prefix) return prefix;
-  return extra.includes(prefix) ? extra : `${prefix}\n${extra}`;
+  const prefix = `原価管理番号: ${_costAdjustmentState.product?.code || ''}`;
+  const extras = String(value || '').split('\n').map(line => line.trim()).filter(line => line
+    && !line.startsWith('対象商品管理番号:') && !line.startsWith('原価管理番号:'));
+  return [prefix, ...extras].join('\n');
+}
+
+function _costAdjustmentEditorComment(value = '') {
+  if (_costAdjustmentState.mode !== 'combine') return _costAdjustmentSourceComment(value);
+  const seenSlips = new Set();
+  return String(value || '').split('\n').map(line => line.trim()).filter(line => {
+    if (!line || line.startsWith('対象商品管理番号:') || line.startsWith('原価管理番号:')) return false;
+    const match = line.match(/^(?:原価調整伝票番号|調整伝票番号):\s*(.+)$/u);
+    if (!match) return true;
+    const slip = match[1].trim();
+    if (!slip || seenSlips.has(slip)) return false;
+    seenSlips.add(slip);
+    return true;
+  }).map(line => {
+    const match = line.match(/^(?:原価調整伝票番号|調整伝票番号):\s*(.+)$/u);
+    return match ? `調整伝票番号: ${match[1].trim()}` : line;
+  }).join('\n');
+}
+
+function _costAdjustmentConfirmedComment(value = '', slipNumber = '') {
+  const sourceComment = _costAdjustmentEditorComment(value);
+  if (_costAdjustmentState.mode === 'combine') {
+    const lines = sourceComment.split('\n').filter(Boolean);
+    const slipLines = lines.filter(line => line.startsWith('調整伝票番号:'));
+    const extras = lines.filter(line => !line.startsWith('調整伝票番号:'));
+    const slip = String(slipNumber || '').trim();
+    if (slip && !slipLines.some(line => line === `調整伝票番号: ${slip}`)) slipLines.push(`調整伝票番号: ${slip}`);
+    return [...slipLines, ...extras].join('\n');
+  }
+  const extras = sourceComment.split('\n').filter(line => !line.startsWith('原価調整伝票番号:') && !line.startsWith('調整伝票番号:'));
+  const slip = String(slipNumber || '').trim();
+  if (slip) extras.splice(_costAdjustmentState.mode === 'combine' ? 0 : 1, 0, `調整伝票番号: ${slip}`);
+  return extras.join('\n');
 }
 
 function costAdjustmentOpenItemEditor(index) {
@@ -19737,6 +20530,12 @@ function costAdjustmentOpenItemEditor(index) {
   document.getElementById('ca-item-editor-index').value = String(index);
   document.getElementById('ca-item-code').value = item.managementCode || '確定時に採番';
   document.getElementById('ca-item-sku').value = item.sku || '';
+  const costInput = document.getElementById('ca-item-cost');
+  if (costInput) {
+    costInput.readOnly = false;
+    costInput.removeAttribute('aria-readonly');
+    costInput.removeAttribute('title');
+  }
   _costAdjustmentSetPrice('ca-item-cost', item.allocatedCostJpyMinor || 0);
   const caption = document.getElementById('ca-item-editor-caption');
   if (caption) caption.textContent = `${productMode ? '商品' : 'パーツ'} ${Number(index) + 1}｜原価調整日 ${draft.adjustmentDate}`;
@@ -19771,7 +20570,14 @@ function costAdjustmentOpenItemEditor(index) {
   });
   _costAdjustmentSetPrice(productMode ? 'ca-edit-product-sale' : 'ca-edit-part-sale', detail?.salePriceUsdMinor || 0);
   document.getElementById('ca-item-notes').value = detail?.notes || '';
-  document.getElementById('ca-item-comment').value = _costAdjustmentSourceComment(detail?.internalComment);
+  const combineMode = _costAdjustmentState.mode === 'combine';
+  const commentLabel = document.getElementById('ca-item-comment-label');
+  const commentHelp = document.getElementById('ca-item-comment-help');
+  if (commentLabel) commentLabel.innerHTML = `${combineMode ? 'コメント' : '原価管理番号'} <span class="internal-only-label"><i class="fa-solid fa-lock"></i> 社内専用</span>`;
+  if (commentHelp) commentHelp.textContent = combineMode
+    ? '原価合わせ元を表示し、原価調整確定後に調整伝票番号を追記します。'
+    : '元商品の原価管理番号を自動記載し、確定後に調整伝票番号を追記します。';
+  document.getElementById('ca-item-comment').value = _costAdjustmentEditorComment(detail?.internalComment);
   const error = document.getElementById('ca-item-editor-error');
   if (error) error.textContent = '';
   if (!productMode) costAdjustmentPartNameChanged(detail);
@@ -19833,7 +20639,7 @@ function costAdjustmentCompleteItemEdit() {
       accessories: [...(document.getElementById('ca-edit-product-accessories')?.selectedOptions || [])].map(option => option.value),
       salePriceUsdMinor: getPriceValue(document.getElementById('ca-edit-product-sale')),
       notes: String(document.getElementById('ca-item-notes')?.value || '').trim(),
-      internalComment: _costAdjustmentSourceComment(document.getElementById('ca-item-comment')?.value),
+      internalComment: _costAdjustmentEditorComment(document.getElementById('ca-item-comment')?.value),
     };
   } else {
     const partMeta = costAdjustmentPartNameChanged();
@@ -19862,13 +20668,15 @@ function costAdjustmentCompleteItemEdit() {
       braceletQuantity,
       salePriceUsdMinor: getPriceValue(document.getElementById('ca-edit-part-sale')),
       notes: String(document.getElementById('ca-item-notes')?.value || '').trim(),
-      internalComment: _costAdjustmentSourceComment(document.getElementById('ca-item-comment')?.value),
+      internalComment: _costAdjustmentEditorComment(document.getElementById('ca-item-comment')?.value),
     };
   }
   item.allocatedCostJpyMinor = allocatedCostJpyMinor;
+  item.amountEntered = true;
   item.completed = true;
   costAdjustmentCloseItemEditor();
   costAdjustmentRenderPartGrid();
+  costAdjustmentRenderSplitSlip();
   const allocation = costAdjustmentRenderAllocationSummary();
   if (typeof showToast === 'function') {
     showToast(allocation.ready ? 'success' : 'info', '明細を更新しました', allocation.ready ? '原価が完全一致しました。確定できます。' : '残りの明細と配賦原価を確認してください。');
@@ -19959,15 +20767,24 @@ async function costAdjustmentFinalize() {
       if (item) item.managementCode = output.managementCode || item.managementCode;
     });
     draft.finalized = true;
-    source.status = '崩し済み';
-    source.purchasePrice = 0;
+    draft.slipNumber = result?.slipNumber || result?.id || '';
+    draft.items.forEach(item => {
+      const detail = item.kind === 'product' ? item.product : item.part;
+      if (detail) detail.internalComment = _costAdjustmentConfirmedComment(detail.internalComment, draft.slipNumber);
+    });
+    draft.adjustmentDate = result?.adjustmentDate || '';
+    draft.sourceProductCode = result?.sourceProductCode || source.code || '';
+    source.status = '原価調整中';
+    source.inventoryValuationExcluded = true;
+    source.inventoryValuationExclusionReason = 'cost_split_source';
     _costAdjustmentState.product = (APP_DATA.inventory || []).find(item => item._id === source._id) || source;
-    _costAdjustmentState.product.status = '崩し済み';
-    _costAdjustmentState.product.purchasePrice = 0;
+    _costAdjustmentState.product.status = '原価調整中';
+    _costAdjustmentState.product.inventoryValuationExcluded = true;
+    _costAdjustmentState.product.inventoryValuationExclusionReason = 'cost_split_source';
     costAdjustmentRenderProduct(_costAdjustmentState.product);
     costAdjustmentRenderPartGrid();
     costAdjustmentRenderBreakdownWorkspace();
-    if (typeof showToast === 'function') showToast('success', '原価調整を確定しました', `${draft.productCount}商品・${draft.partCount}パーツを原価調整中として登録しました`);
+    if (typeof showToast === 'function') showToast('success', '原価調整済み伝票を発行しました', `${draft.slipNumber || '原価調整伝票'}：元原価を履歴として保持し、対象商品を現在在庫集計から除外しました。分けられた${draft.productCount}商品は原価調整中です`);
     return true;
   } catch (error) {
     if (typeof showToast === 'function') showToast('error', '原価調整を確定できませんでした', error?.message || '入力内容を確認してください');
@@ -20026,7 +20843,7 @@ function _costAdjustmentMove(payload, target, targetIndex) {
     }
   } else if (target === 'slot' && Number.isInteger(targetIndex) && targetIndex >= 0 && targetIndex < 20) {
     if (payload.source === 'attribute') {
-      if (typeof showToast === 'function') showToast('info', '商品属性は中央へ配置してください', 'パーツBOXにはパーツ管理番号を保管します');
+      if (typeof showToast === 'function') showToast('info', '商品属性は中央へ配置してください', 'BOXには管理番号を保管します');
       return false;
     }
     if (payload.source === 'slot') {
@@ -20065,6 +20882,7 @@ function costAdjustmentClearStage() {
 }
 
 async function costAdjustmentStart() {
+  const clickedDate = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' });
   if (!_costAdjustmentState.product) {
     if (typeof showToast === 'function') showToast('error', '対象商品が未選択です', '商品管理番号またはタグから商品を読み込んでください');
     return false;
@@ -20073,7 +20891,7 @@ async function costAdjustmentStart() {
     ? _costAdjustmentState.partSlots.filter(item => item?.type === 'part' && item?.part).map(item => item.part)
     : [];
   if (_costAdjustmentState.mode === 'combine' && combineParts.length === 0) {
-    if (typeof showToast === 'function') showToast('error', '結合するパーツが未選択です', 'パーツ管理番号を読み込んでパーツBOXに表示してください');
+    if (typeof showToast === 'function') showToast('error', '結合するパーツが未選択です', 'パーツ管理番号を読み込んでBOXに表示してください');
     return false;
   }
   const startButton = document.getElementById('ca-start-button');
@@ -20083,7 +20901,9 @@ async function costAdjustmentStart() {
     const originalProduct = _costAdjustmentCloneProduct(item);
     const partIds = combineParts.map(part => part.id || part._id).filter(Boolean);
     if (item._id && window.ZaikoAPI?.startProductCostAdjustment) {
-      await window.ZaikoAPI.startProductCostAdjustment(item, { mode: _costAdjustmentState.mode, partIds });
+      const started = await window.ZaikoAPI.startProductCostAdjustment(item, { mode: _costAdjustmentState.mode, partIds });
+      _costAdjustmentState.breakdownStartedDate = started?.costAdjustmentStartedAt
+        ? new Date(started.costAdjustmentStartedAt).toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }) : clickedDate;
       _costAdjustmentState.product = (APP_DATA.inventory || []).find(candidate => candidate._id === item._id) || item;
     }
     _costAdjustmentState.product.status = '原価調整中';
@@ -20102,6 +20922,7 @@ async function costAdjustmentStart() {
       costAdjustmentRenderProduct(_costAdjustmentState.combineDraft.preview);
     } else {
       _costAdjustmentState.breakdownActive = true;
+      _costAdjustmentState.breakdownStartedDate ||= clickedDate;
       costAdjustmentRenderProduct(_costAdjustmentState.product);
     }
     costAdjustmentRenderBreakdownWorkspace();
@@ -20118,6 +20939,45 @@ async function costAdjustmentStart() {
   }
 }
 
+async function costAdjustmentResetCurrent() {
+  const mode = _costAdjustmentState.mode;
+  const draftInputs = _costAdjustmentState.breakdownDraft?.inputs;
+  const products = mode === 'combine' && Array.isArray(draftInputs)
+    ? draftInputs
+    : [_costAdjustmentState.product].filter(Boolean);
+  if (products.length === 0 || !_costAdjustmentState.breakdownActive && !_costAdjustmentState.combineActive) return false;
+  if (!window.confirm(`${COST_ADJUSTMENT_MODES[mode]}の開始後に行った今回の作業だけをリセットします。よろしいですか？`)) return false;
+  const button = document.getElementById('ca-reset-button');
+  if (button) button.disabled = true;
+  try {
+    if (!window.ZaikoAPI?.resetCostAdjustmentStart) throw new Error('DB接続を確認してください');
+    await window.ZaikoAPI.resetCostAdjustmentStart(products);
+    if (typeof window.costMergeAfterReset === 'function') window.costMergeAfterReset();
+    _costAdjustmentState.product = null;
+    _costAdjustmentState.stageItems = [];
+    _costAdjustmentState.partSlots = Array(20).fill(null);
+    costAdjustmentResetBreakdownWorkspace();
+    const input = document.getElementById('ca-product-code');
+    if (input) input.value = '';
+    const details = document.getElementById('ca-product-details');
+    const placeholder = document.getElementById('ca-product-placeholder');
+    if (details) details.hidden = true;
+    if (placeholder) placeholder.hidden = false;
+    const feedback = document.getElementById('ca-product-feedback');
+    if (feedback) {
+      feedback.textContent = '開始前の状態へ戻しました。正しい管理番号を入力してください';
+      feedback.className = 'ca-input-feedback success';
+    }
+    if (typeof showToast === 'function') showToast('success', '原価管理作業をリセットしました', 'ステータス・売価・社内コメントを開始前へ戻しました');
+    return true;
+  } catch (error) {
+    if (typeof showToast === 'function') showToast('error', '作業をリセットできませんでした', error?.message || '確定済みの作業は戻せません');
+    return false;
+  } finally {
+    costAdjustmentRenderBreakdownWorkspace();
+  }
+}
+
 
 function syncMarketNavGroup(page) {
   const group = document.getElementById('marketNavGroup');
@@ -20126,18 +20986,30 @@ function syncMarketNavGroup(page) {
   setMarketNavGroupExpanded(isMarketPage);
 }
 
-function syncInventoryNavGroup(page) {
-  const group = document.getElementById('inventoryNavGroup');
-  const isInventoryPage = page === 'inventory' || page === 'parts-management';
-  group?.classList.toggle('has-active', isInventoryPage);
-  setInventoryNavGroupExpanded(isInventoryPage);
+function syncCostManagementNavGroup(page) {
+  const group = document.getElementById('costManagementNavGroup');
+  const active = page === 'cost-adjustment' || page === 'cost-adjustment-slips';
+  group?.classList.toggle('has-active', active);
+  setCostManagementNavGroupExpanded(active);
 }
 
-function syncAdjustmentEntryNavGroup(page) {
-  const group = document.getElementById('adjustmentEntryNavGroup');
-  const isAdjustmentEntryPage = page === 'sales-adjustment-entry' || page === 'purchase-adjustment-entry';
-  group?.classList.toggle('has-active', isAdjustmentEntryPage);
-  setAdjustmentEntryNavGroupExpanded(isAdjustmentEntryPage);
+// One list and one set of filters serve both destinations. The card is moved,
+// never copied, so adjustment slips cannot appear in the accounting list.
+function mountSlipListForPage(page) {
+  if (page !== 'sales-list' && page !== 'cost-adjustment-slips') return;
+  const card = document.getElementById('sharedSlipListCard');
+  const destination = document.getElementById(`page-${page}`);
+  if (!card || !destination) return;
+  if (card.parentElement !== destination) destination.prepend(card);
+  const adjustmentPage = page === 'cost-adjustment-slips';
+  const tabs = card.querySelector('.slip-type-tabs');
+  if (tabs) tabs.style.display = adjustmentPage ? 'none' : '';
+  const title = document.getElementById('sharedSlipListTitle');
+  if (title) title.innerHTML = adjustmentPage
+    ? '<i class="fa-solid fa-file-pen"></i> 調整伝票'
+    : '<i class="fa-solid fa-table-list"></i> 伝票一覧';
+  if (adjustmentPage) switchSlipTab('adjustment');
+  else if (currentSlipTab === 'adjustment') switchSlipTab('purchase');
 }
 
 const _navOrig = navigateTo;
@@ -20175,8 +21047,7 @@ window.navigateTo = function(page) {
     el.classList.toggle('active', el.dataset.page === activeKey);
   });
   syncMarketNavGroup(page);
-  syncInventoryNavGroup(page);
-  syncAdjustmentEntryNavGroup(page);
+  syncCostManagementNavGroup(page);
   document.querySelectorAll('.page-panel').forEach(el => {
     el.classList.add('hidden');
   });
@@ -20187,6 +21058,7 @@ window.navigateTo = function(page) {
   if (target) {
     target.classList.remove('hidden');
     window.__zaikoCurrentPage = page;
+    mountSlipListForPage(page);
     // 初期化
     const initFn = {
       'dashboard': init_dashboard,
@@ -20225,6 +21097,10 @@ window.navigateTo = function(page) {
         initSalesListFilter();
         filterSalesList();
       },
+      'cost-adjustment-slips': () => {
+        initSalesListFilter();
+        filterSalesList();
+      },
       'deleted-slips': () => {
         renderDeletedSlipArchive();
       },
@@ -20260,7 +21136,8 @@ window.navigateTo = function(page) {
     'market': '相場表',
     'market-entry': '相場登録',
     'purchase': '商品登録',
-    'cost-adjustment': '原価調整',
+    'cost-adjustment': '原価管理',
+    'cost-adjustment-slips': '調整伝票',
     'purchase-entry': '仕入登録',
     'sales': '売上登録',
     'shipping': '出荷登録',
@@ -20269,7 +21146,7 @@ window.navigateTo = function(page) {
     'purchase-adjustment-entry': '仕入調整登録',
     'master': 'マスタ登録',
     'performance': '実績管理',
-    'inventory': '商品管理',
+    'inventory': '在庫管理',
     'parts-management': 'パーツ管理',
     'purchase-list': '購入一覧',
     'sales-list': '伝票一覧',
