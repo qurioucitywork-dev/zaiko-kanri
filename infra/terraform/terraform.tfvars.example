@@ -1,0 +1,10 @@
+aws_region         = "ap-northeast-1"
+environment        = "staging"
+vpc_id             = "vpc-xxxxxxxx"
+public_subnet_ids  = ["subnet-public-a", "subnet-public-c"]
+private_subnet_ids = ["subnet-private-a", "subnet-private-c"]
+container_image    = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/zaiko-kanri@sha256:replace-me"
+
+# PostgreSQL cutoverが完了するまでfalseを維持する。
+enable_ecs_service = false
+deletion_protection = true

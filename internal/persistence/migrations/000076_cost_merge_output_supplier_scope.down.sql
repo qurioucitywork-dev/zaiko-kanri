@@ -1,0 +1,1 @@
+-- Irreversible data correction: source suppliers are restored from immutable purchase slips.

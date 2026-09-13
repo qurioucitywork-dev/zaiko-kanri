@@ -1,0 +1,2 @@
+ALTER TABLE sales_slips DROP COLUMN IF EXISTS paid_by;
+ALTER TABLE sales_slips DROP COLUMN IF EXISTS paid_at;

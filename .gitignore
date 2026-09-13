@@ -1,19 +1,47 @@
 # Local development tools and generated state
 /.tooling/
+/.pnpm-store/
 /.data/
 /.tmp/
+/tmp/
 /bin/
 /.backups/
+/output/
+/.gocache/
+/.logs/
+/.runtime/
+/.cloudflared-logs/
+/.codex/
+/.tmp-gocache/
+/.tmp-go-cache/
+/.tmp-customs-csv/
+/.tmp-cloudflared-*.log
+/.tmp-server*.log
 
 # Local configuration
 .env
+.env.local
+.env.*.local
 
 # Test and coverage output
 coverage.out
 *.test
+__pycache__/
+*.py[cod]
+/scripts/build_flow_review.py
 
 # Editor and operating-system files
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Frontend dependencies (built assets under internal/web/react-dist are committed)
+/frontend/node_modules/
+/frontend/.pnpm-store/
+
+# Terraform local state
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars

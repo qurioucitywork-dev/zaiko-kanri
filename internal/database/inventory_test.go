@@ -42,6 +42,38 @@ func singleInput(date, sku, serial string) SingleProductInput {
 	}
 }
 
+func TestSeedInventoryPreviewUsesAndMigratesUSDPrices(t *testing.T) {
+	store := testStore(t)
+	ctx := context.Background()
+	if err := store.SeedInventoryPreview(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var id, currency string
+	var price int64
+	if err := store.db.QueryRow(`
+		SELECT id,base_sale_price_minor,base_sale_currency
+		FROM products WHERE organization_id='org_preview' LIMIT 1`).Scan(&id, &price, &currency); err != nil {
+		t.Fatal(err)
+	}
+	if price != 7613 || currency != "USD" {
+		t.Fatalf("seed sale price=%d %s want 7613 USD", price, currency)
+	}
+	if _, err := store.db.Exec(`
+		UPDATE products SET base_sale_price_minor=1180000,base_sale_currency='JPY' WHERE id=?`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SeedInventoryPreview(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRow(`
+		SELECT base_sale_price_minor,base_sale_currency FROM products WHERE id=?`, id).Scan(&price, &currency); err != nil {
+		t.Fatal(err)
+	}
+	if price != 7613 || currency != "USD" {
+		t.Fatalf("migrated sale price=%d %s want 7613 USD", price, currency)
+	}
+}
+
 func TestConfirmPurchaseGeneratesQuantityAndIsIdempotent(t *testing.T) {
 	store := inventoryStore(t)
 	ctx := context.Background()
@@ -57,7 +89,7 @@ func TestConfirmPurchaseGeneratesQuantityAndIsIdempotent(t *testing.T) {
 		t.Fatalf("generated=%d want=3", len(result.Products))
 	}
 	for index, product := range result.Products {
-		want := "20260801" + []string{"001", "002", "003"}[index]
+		want := "010826" + []string{"0001", "0002", "0003"}[index]
 		if product.ProductCode != want || product.InventoryStatus != "purchasing" {
 			t.Fatalf("product=%+v want code=%s purchasing", product, want)
 		}
@@ -171,17 +203,17 @@ func TestCancelledProductCodeIsNotReused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.ProductCode != "20260805001" || second.ProductCode != "20260805002" {
+	if first.ProductCode != "0508260001" || second.ProductCode != "0508260002" {
 		t.Fatalf("codes were reused: %s %s", first.ProductCode, second.ProductCode)
 	}
 }
 
-func TestThousandthProductReturnsBusinessError(t *testing.T) {
+func TestTenThousandthProductReturnsBusinessError(t *testing.T) {
 	store := inventoryStore(t)
 	ctx := context.Background()
 	if _, err := store.db.Exec(`
 		INSERT INTO product_code_sequences(organization_id,purchase_date,last_sequence)
-		VALUES('org_preview','2026-08-06',999)`); err != nil {
+		VALUES('org_preview','2026-08-06',9999)`); err != nil {
 		t.Fatal(err)
 	}
 	_, err := store.CreateSingleProduct(ctx, singleInput("2026-08-06", "", "LIMIT"))

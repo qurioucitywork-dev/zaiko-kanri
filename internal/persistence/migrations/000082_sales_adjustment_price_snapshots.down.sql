@@ -1,0 +1,2 @@
+ALTER TABLE sales_adjustment_lines DROP COLUMN after_sale_price_minor;
+ALTER TABLE sales_adjustment_lines DROP COLUMN before_sale_price_minor;

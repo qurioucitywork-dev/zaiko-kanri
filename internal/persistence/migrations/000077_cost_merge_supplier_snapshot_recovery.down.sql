@@ -1,0 +1,1 @@
+-- Irreversible data correction: source suppliers are recovered from immutable merge snapshots.

@@ -58,7 +58,7 @@ func (s *Server) saleCreate(w http.ResponseWriter, r *http.Request) {
 		CustomerName: r.FormValue("customer_name"), Notes: r.FormValue("notes"), CreatedBy: user.ID,
 		Lines: []database.SalesLineInput{{
 			ProductID: r.FormValue("product_id"), Quantity: quantity,
-			UnitPriceMinor: price, Currency: r.FormValue("currency"),
+			UnitPriceMinor: price, Currency: "USD",
 		}},
 	})
 	if err != nil {
@@ -95,7 +95,7 @@ func (s *Server) saleConfirm(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		http.Redirect(w, r, "/approvals?notice="+url.QueryEscape("売上確定を承認申請しました。"), http.StatusSeeOther)
+		http.Redirect(w, r, "/sales/"+r.PathValue("id")+"?notice="+url.QueryEscape("売上確定を承認申請しました。管理者の判断をお待ちください。"), http.StatusSeeOther)
 		return
 	}
 	sale, err := s.store.ConfirmSale(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID)
@@ -119,7 +119,7 @@ func (s *Server) saleCancel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		http.Redirect(w, r, "/approvals?notice="+url.QueryEscape("売上取消を承認申請しました。"), http.StatusSeeOther)
+		http.Redirect(w, r, "/sales/"+r.PathValue("id")+"?notice="+url.QueryEscape("売上取消を承認申請しました。管理者の判断をお待ちください。"), http.StatusSeeOther)
 		return
 	}
 	if err := s.store.CancelSale(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, reason); err != nil {
@@ -222,7 +222,7 @@ func (s *Server) shipmentCancel(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
-		http.Redirect(w, r, "/approvals?notice="+url.QueryEscape("出荷取消を承認申請しました。"), http.StatusSeeOther)
+		http.Redirect(w, r, "/shipments/"+r.PathValue("id")+"?notice="+url.QueryEscape("出荷取消を承認申請しました。管理者の判断をお待ちください。"), http.StatusSeeOther)
 		return
 	}
 	if err := s.store.CancelShipment(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, reason); err != nil {

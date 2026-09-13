@@ -7,7 +7,7 @@
 <section class="metric-grid" aria-label="主要指標">
   <article class="metric"><span class="metric-icon blue">▣</span><div><small>有効在庫</small><strong>{{.Stats.Total}}</strong><p>在庫中 {{.Stats.InStock}}点</p></div></article>
   <article class="metric"><span class="metric-icon orange">▤</span><div><small>仕入中</small><strong>{{.Stats.Purchasing}}</strong><p>検品待ち商品</p></div></article>
-  <article class="metric"><span class="metric-icon green">¥</span><div><small>確定売上</small><strong>{{formatMoney .SalesTotalJPY "JPY"}}</strong><p>{{.SalesCount}}伝票</p></div></article>
+  <article class="metric"><span class="metric-icon green">$</span><div><small>確定売上（USD）</small><strong>{{formatMoney .SalesTotalUSD "USD"}}</strong><p>{{.SalesCount}}伝票</p></div></article>
   <article class="metric"><span class="metric-icon red">♡</span><div><small>購入依頼</small><strong>{{.RequestCount}}</strong><p>申請中</p></div></article>
 </section>
 

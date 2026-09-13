@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS dials;
+DROP TABLE IF EXISTS belt_materials;
