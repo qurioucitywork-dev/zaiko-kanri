@@ -11,6 +11,7 @@ export interface Env {
   WORKER_PASSWORD: string;
   PUBLIC_BASE_URL: string;
   ORGANIZATION_CODE: string;
+  APP_REVISION: string;
 }
 const PORT = 8080;
 // The existing Go process runs SMBC synchronization every 30 minutes. Cron keeps
@@ -63,9 +64,21 @@ export class ZaikoContainer extends DurableObject<Env> {
   }
   private async ensureReady(): Promise<void> {
     const container = this.ctx.container!;
+    if (!this.env.APP_REVISION) throw new Error("APP_REVISION is required");
+    const previousRevision = await this.ctx.storage.get<string>("app-revision");
+    if (container.running && previousRevision !== this.env.APP_REVISION) {
+      // Only the application process is restarted. Durable Object storage,
+      // Neon data and private R2 objects are preserved.
+      const stopped = container.monitor().then(() => true, () => true);
+      container.signal(15);
+      const exited = await Promise.race([stopped, scheduler.wait(15000).then(() => false)]);
+      if (!exited) await container.destroy();
+      console.info("Application process restarted for deployment revision");
+    }
     if (!container.running) {
       container.start({ image: container.images.base, instance: "basic", enableInternet: true, env: containerEnvironment(this.env) });
     }
+    await this.ctx.storage.put("app-revision", this.env.APP_REVISION);
     this.observeExit();
     await container.setInactivityTimeout(IDLE_MS);
     for (let attempt = 0; attempt < 90; attempt++) {
@@ -105,4 +118,5 @@ export default {
     if (!response.ok) throw new Error("Scheduled application health check failed");
   },
 } satisfies ExportedHandler<Env>;
+
 

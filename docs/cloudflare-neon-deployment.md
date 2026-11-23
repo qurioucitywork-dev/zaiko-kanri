@@ -55,6 +55,7 @@ pnpm --dir deploy/cloudflare exec wrangler deploy --dry-run
 | `name` | Worker 名 |
 | `r2_buckets[].bucket_name` | 専用の非公開画像保存先 |
 | `vars.PUBLIC_BASE_URL` | Worker の実際の HTTPS URL。仮の `REPLACE` は必ず変更 |
+| `vars.APP_REVISION` | 更新ごとに変更する識別子。build.ps1 がビルド成功後に更新。Secret だけを変更した場合も更新して再デプロイする |
 | `vars.ORGANIZATION_CODE` | この環境の組織コード。データ移行時は移行元と整合させる |
 
 以下は必ず `wrangler secret put` 等で登録し、設定ファイルへ直書きしません。
@@ -94,6 +95,8 @@ go run ./cmd/bootstrap-clean --audit
 
 `bootstrap-clean` は既にデータがある DB には変更を行わず終了します。業務データや従来のテストデータを自動移行しません。運用者アカウントは管理者ログイン後に必要な権限で追加してください。
 
+更新番号が変わった最初のアクセス時は、既存コンテナへ SIGTERM を送り終了を待ってから新しい設定で起動します。15 秒で終了しない場合はそのコンテナだけを停止します。Neon・R2・Durable Object の保存内容は消しません。入口の更新処理は自動再送しないため、起票中の更新は避けて実施してください。
+
 ## 今回の初回デプロイ確認
 
 - 専用 URL: https://qurioucity-zaiko-test.qurioucitywork.workers.dev
@@ -129,3 +132,4 @@ Cloudflare Access の社員向け制限、MFA、社内固定 IP / VPN 回線、�
 - Neon connection pooling: https://neon.com/docs/connect/connection-pooling
 
 2026-11-24 時点の Wrangler 4.166.0 / Workers 型 5.20261121.1 に固定し、TypeScript 検査と R2 ゲートウェイの認証・往復・入力制限テストを含めています。
+

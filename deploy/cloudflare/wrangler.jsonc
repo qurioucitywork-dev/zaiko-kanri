@@ -48,6 +48,7 @@
   },
   "vars": {
     "PUBLIC_BASE_URL": "https://qurioucity-zaiko-test.qurioucitywork.workers.dev",
-    "ORGANIZATION_CODE": "CLEAN"
+    "ORGANIZATION_CODE": "CLEAN",
+    "APP_REVISION": "2026-11-24-2"
   }
 }
