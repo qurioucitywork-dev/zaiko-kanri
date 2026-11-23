@@ -67,7 +67,7 @@ pnpm --dir deploy/cloudflare exec wrangler deploy --dry-run
 | `ADMIN_PASSWORD` | 初期管理者用の強固な 16 文字以上のパスワード |
 | `WORKER_PASSWORD` | 初期担当者用の別の強固な 16 文字以上のパスワード |
 
-パスワードは初期作成用です。既存ユーザーが存在する DB のパスワードを自動変更するものではありません。アプリは `ZAIKO_PUBLIC_DEMO_LOGIN=false`、HTTPS、Secure Cookie で起動します。
+これらの環境変数だけでは、本番モードにユーザーやテスト商品は作成されません。空の DB には後述の bootstrap-clean で初期管理者を作成します。既存ユーザーのパスワードを自動変更するものではありません。アプリは `ZAIKO_PUBLIC_DEMO_LOGIN=false`、HTTPS、Secure Cookie で起動します。
 
 ```powershell
 pnpm --dir deploy/cloudflare exec wrangler r2 bucket create qurioucity-zaiko-test-images
@@ -81,6 +81,28 @@ pnpm --dir deploy/cloudflare exec wrangler containers list
 ```
 
 Cloudflare 初回起動は数分かかることがあります。起動待ちは 503 + Retry-After で返し、取引を更新する HTTP リクエストを自動再送しません。Worker 自体は外部へ機密情報や接続文字列を返しません。
+
+## 空の検証 DB の初期化
+
+`ZAIKO_DATABASE_DRIVER=postgres`、`ZAIKO_DATABASE_URL`、`ZAIKO_DATABASE_MIGRATION_URL`、`ZAIKO_ENV=production`、`ZAIKO_COOKIE_SECURE=true`、`ZAIKO_PUBLIC_BASE_URL`、`ZAIKO_ORGANIZATION_CODE=CLEAN` を保護されたローカル環境から渡し、次の順で実行します。接続文字列やパスワードはコマンド引数へ書きません。
+
+```powershell
+go run ./cmd/migrate
+go run ./cmd/bootstrap-clean --password-file <保護された初期管理者パスワードファイル> --username admin
+go run ./cmd/bootstrap-clean --audit
+```
+
+`bootstrap-clean` は既にデータがある DB には変更を行わず終了します。業務データや従来のテストデータを自動移行しません。運用者アカウントは管理者ログイン後に必要な権限で追加してください。
+
+## 今回の初回デプロイ確認
+
+- 専用 URL: https://qurioucity-zaiko-test.qurioucitywork.workers.dev
+- Worker version: `479df2b8-eae7-493c-830a-8244def56e3e`
+- `/healthz`: 200、`/app/admin-reference/index.html`: 200
+- 未認証 `/api/v1/products`: 401、未認証 `/__storage/probe.jpg`: 404
+- TypeScript 検査、R2 ゲートウェイの 5 テスト成功。
+
+上記は初回接続と基本アクセス制御の確認結果です。全業務テストの完了を意味するものではありません。
 
 ## 運用テストと移行判定
 
