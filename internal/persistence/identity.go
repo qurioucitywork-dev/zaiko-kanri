@@ -61,6 +61,10 @@ func (r *Repository) CreateSession(ctx context.Context, user database.User, toke
 	})
 }
 
+// Only the informational activity timestamp is throttled. Every request still
+// reloads session expiry and the current user/organization authorization.
+const sessionActivityInterval = time.Minute
+
 func (r *Repository) Session(ctx context.Context, token string) (database.Session, error) {
 	var row struct {
 		TokenHash      string
@@ -74,10 +78,11 @@ func (r *Repository) Session(ctx context.Context, token string) (database.Sessio
 		Role           string
 		Active         bool
 		OrganizationOn bool
+		LastSeenAt     time.Time
 	}
 	tokenHash := database.TokenHash(token)
 	result := r.db.WithContext(ctx).Table("sessions AS s").
-		Select(`s.token_hash, s.csrf_token_hash, s.expires_at, u.id AS user_id,
+		Select(`s.token_hash, s.csrf_token_hash, s.expires_at, s.last_seen_at, u.id AS user_id,
 			u.organization_id, o.name AS organization, u.username, u.display_name,
 			u.role_key AS role, u.is_active AS active, o.is_active AS organization_on`).
 		Joins("JOIN users AS u ON u.id = s.user_id AND u.organization_id = s.organization_id").
@@ -87,12 +92,18 @@ func (r *Repository) Session(ctx context.Context, token string) (database.Sessio
 	if result.Error != nil {
 		return database.Session{}, errors.New("session not found")
 	}
-	if !row.Active || !row.OrganizationOn || !row.ExpiresAt.After(time.Now().UTC()) {
+	now := time.Now().UTC()
+	if !row.Active || !row.OrganizationOn || !row.ExpiresAt.After(now) {
 		_ = r.DeleteSession(ctx, token)
 		return database.Session{}, errors.New("session expired")
 	}
-	_ = r.db.WithContext(ctx).Table("sessions").Where("token_hash = ?", tokenHash).
-		Update("last_seen_at", time.Now().UTC()).Error
+	cutoff := now.Add(-sessionActivityInterval)
+	if row.LastSeenAt.Before(cutoff) {
+		// A single conditional UPDATE avoids a transaction/row lock for every
+		// parallel page request. The guard also handles concurrent stale reads.
+		_ = r.db.WithContext(ctx).Exec(`UPDATE sessions SET last_seen_at = ?
+			WHERE token_hash = ? AND last_seen_at < ?`, now, tokenHash, cutoff).Error
+	}
 	return database.Session{
 		TokenHash: row.TokenHash, CSRFTokenHash: row.CSRFTokenHash, ExpiresAt: row.ExpiresAt,
 		User: database.User{
@@ -110,21 +121,14 @@ func (r *Repository) HasPermission(ctx context.Context, user database.User, perm
 	if !user.Active {
 		return false
 	}
-	var override struct{ Effect string }
-	result := r.db.WithContext(ctx).Table("user_permissions").Select("effect").
-		Where("user_id = ? AND permission_key = ?", user.ID, permission).Take(&override)
-	if result.Error == nil {
-		return override.Effect == "allow"
-	}
-	if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return false
-	}
-	var count int64
-	if err := r.db.WithContext(ctx).Table("role_permissions").
-		Where("role_key = ? AND permission_key = ?", user.Role, permission).Count(&count).Error; err != nil {
-		return false
-	}
-	return count > 0
+	// Explicit user overrides win, including deny. Keep authorization live in
+	// the database while resolving both sources in one network round trip.
+	var allowed bool
+	err := r.db.WithContext(ctx).Raw(`SELECT COALESCE(
+		(SELECT effect = 'allow' FROM user_permissions WHERE user_id = ? AND permission_key = ?),
+		EXISTS(SELECT 1 FROM role_permissions WHERE role_key = ? AND permission_key = ?)
+	) AS allowed`, user.ID, permission, user.Role, permission).Scan(&allowed).Error
+	return err == nil && allowed
 }
 
 func (r *Repository) WriteAudit(ctx context.Context, entry database.AuditEntry) error {

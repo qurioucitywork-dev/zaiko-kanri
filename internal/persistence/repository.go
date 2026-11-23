@@ -265,29 +265,35 @@ func (r *Repository) Dashboard(ctx context.Context, organizationID string, month
 	return result, nil
 }
 
+// These counters share the exact same eligible inventory set. Aggregate them
+// together so a remote database needs one read instead of four serial reads.
+func loadDashboardInventoryCounts(db *gorm.DB, organizationID string, result *Dashboard) error {
+	var counts struct {
+		TotalProducts, PurchasingProducts, InStockProducts, ReservedProducts int64
+	}
+	err := db.Raw(`SELECT
+		COUNT(*) FILTER (WHERE inventory_status IN ('purchasing','in_stock','reserved','return_pending')) AS total_products,
+		COUNT(*) FILTER (WHERE inventory_status='purchasing') AS purchasing_products,
+		COUNT(*) FILTER (WHERE inventory_status='in_stock') AS in_stock_products,
+		COUNT(*) FILTER (WHERE inventory_status='reserved') AS reserved_products
+		FROM products
+		WHERE organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE
+		AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id
+		AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID).Scan(&counts).Error
+	if err != nil {
+		return err
+	}
+	result.TotalProducts = counts.TotalProducts
+	result.PurchasingProducts = counts.PurchasingProducts
+	result.InStockProducts = counts.InStockProducts
+	result.ReservedProducts = counts.ReservedProducts
+	return nil
+}
+
 func (r *Repository) dashboardPostgres(ctx context.Context, organizationID string, months int) (Dashboard, error) {
 	var result Dashboard
 	db := r.db.WithContext(ctx)
-	active := db.Table("products").Where(
-		`organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE
-		 AND inventory_status IN ('purchasing','in_stock','reserved','return_pending')
-		 AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID)
-	if err := active.Count(&result.TotalProducts).Error; err != nil {
-		return result, err
-	}
-	if err := db.Table("products").Where(`organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE AND inventory_status='purchasing'
-		AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID).
-		Count(&result.PurchasingProducts).Error; err != nil {
-		return result, err
-	}
-	if err := db.Table("products").Where(`organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE AND inventory_status='in_stock'
-		AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID).
-		Count(&result.InStockProducts).Error; err != nil {
-		return result, err
-	}
-	if err := db.Table("products").Where(`organization_id=? AND deleted_at IS NULL AND inventory_valuation_excluded=FALSE AND inventory_status='reserved'
-		AND NOT EXISTS (SELECT 1 FROM cost_adjustments ca WHERE ca.source_product_id=products.id AND ca.adjustment_type='breakdown' AND ca.status='confirmed')`, organizationID).
-		Count(&result.ReservedProducts).Error; err != nil {
+	if err := loadDashboardInventoryCounts(db, organizationID, &result); err != nil {
 		return result, err
 	}
 

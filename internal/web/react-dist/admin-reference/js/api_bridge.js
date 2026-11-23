@@ -19,7 +19,7 @@
     return Number.isFinite(value) && value > 0 ? value : NaN;
   }
   const state = {
-    csrfToken: '', user: null, hydrated: false, loading: false, company: null, latestRate: null,
+    csrfToken: '', user: null, hydrated: false, dashboardReady: false, loading: false, company: null, latestRate: null,
     lastError: null, lastLoadedAt: '', retryCount: 0, databaseDriver: '',
   };
   const transientStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
@@ -50,6 +50,22 @@
   })[String(value || '')] || String(value || '承認申請');
 
   const wait = milliseconds => new Promise(resolve => window.setTimeout(resolve, milliseconds));
+  // Limit database read pressure. Queue time must not consume the network timeout.
+  const readQueue = [];
+  let activeReads = 0;
+  const MAX_CONCURRENT_READS = 8;
+  async function acquireReadSlot() {
+    if (activeReads >= MAX_CONCURRENT_READS) await new Promise(resolve => readQueue.push(resolve));
+    else activeReads += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const next = readQueue.shift();
+      if (next) next();
+      else activeReads -= 1;
+    };
+  }
 
   function retryAfterMilliseconds(response) {
     const value = response.headers.get('Retry-After');
@@ -69,6 +85,10 @@
   }
 
   async function request(path, options = {}) {
+    if (state.user && !state.hydrated && !['GET', 'HEAD'].includes(String(options.method || 'GET').toUpperCase())
+        && !['/auth/login', '/auth/logout'].includes(path)) {
+      throw Object.assign(new Error('初回データの読み込み完了後に操作してください。'), { code: 'initial_data_loading' });
+    }
     const operation = workerDocumentOperation(path, options.method || 'GET');
     if (typeof isWorker === 'function' && isWorker() && operation) {
       await request('/document-change-requests', {method:'POST',body:JSON.stringify({...operation,payload:JSON.parse(options.body || '{}')})});
@@ -87,6 +107,7 @@
     if (method !== 'GET' && method !== 'HEAD' && state.csrfToken) headers['X-CSRF-Token'] = state.csrfToken;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const releaseRead = ['GET', 'HEAD'].includes(method) ? await acquireReadSlot() : () => {};
       const controller = new AbortController();
       const externalSignal = fetchOptions.signal;
       const abortFromExternal = () => controller.abort(externalSignal.reason);
@@ -127,8 +148,10 @@
           : caught;
         if (!shouldRetryRequest(error, method, attempt, maxAttempts, externalSignal)) throw error;
         const backoff = Number(error?.retryAfterMs) || Math.min(4000, 350 * (2 ** (attempt - 1))) + Math.floor(Math.random() * 180);
+        releaseRead();
         await wait(backoff);
       } finally {
+        releaseRead();
         window.clearTimeout(timeout);
         if (externalSignal) externalSignal.removeEventListener('abort', abortFromExternal);
       }
@@ -771,6 +794,7 @@
     delete document.documentElement.dataset.adminAuthenticated;
     window.__adminPageAccess = null;
     state.hydrated = false;
+    state.dashboardReady = false;
     // Never retain another account's workspace snapshot after a role change.
     if (typeof APP_DATA !== 'undefined') {
       for (const [key, value] of Object.entries(APP_DATA)) {
@@ -784,24 +808,36 @@
   }
 
   async function hydrateAdminOnce() {
-    const me = await request('/auth/me');
+    const [me, health] = await Promise.all([request('/auth/me'), request('/health')]);
     state.csrfToken = me.csrfToken;
     state.user = me.user;
     if (typeof setSession === 'function') setSession(sessionPayload(me));
     enforceWorkspaceRole(me.user);
-    const health = await request('/health');
     state.databaseDriver = String(health?.database?.driver || '');
 
     const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials', 'product-shapes', 'markings', 'part-names'];
     const masterResults = {};
-    await Promise.all(masterKeys.map(async key => { masterResults[key] = await optional(`/masters/${key}`); }));
-    const [products, parts, partners, users, staff, purchases, deletedPurchases, market, boxes, requests, notifications, approvals, sales, shipments, consignments, returns, costAdjustments, settings, company, rates, dashboard] = await Promise.all([
-      fetchAllPages('/products?includeCancelled=true'), optional('/parts'), optional('/partners?includeInactive=true', { sqliteFallback: true }),
-      optional('/users?includeInactive=true'), optional('/purchase-staff'), fetchAllPages('/purchases'), fetchAllPagesWithFallback('/purchases-deleted'), optional('/market-prices?limit=1000'),
-      optional('/boxes', { sqliteFallback: true }), optional('/purchase-requests', { sqliteFallback: true }), optional('/notifications?limit=200&unread=true', { sqliteFallback: true }), optional('/approvals', { sqliteFallback: true }),
-      optional('/sales?limit=500', { sqliteFallback: true }), optional('/shipments?limit=500', { sqliteFallback: true }), optional('/consignments?limit=500', { sqliteFallback: true }), optional('/returns?limit=500', { sqliteFallback: true }), optional('/cost-adjustments?limit=500'),
-      optional('/settings', { sqliteFallback: true }), optional('/company', { sqliteFallback: true }), optional('/exchange-rates?limit=100', { sqliteFallback: true }), optional('/dashboard?months=24', { sqliteFallback: true }),
+    const mastersPromise = Promise.all(masterKeys.map(async key => { masterResults[key] = await optional(`/masters/${key}`); }));
+    // Dashboard aggregates come from every product and its transaction snapshots;
+    // document lines and image metadata are not needed for these numbers.
+    const corePromise = Promise.all([
+      mastersPromise, fetchAllPages('/products?includeCancelled=true'),
+      optional('/partners?includeInactive=true', { sqliteFallback: true }), optional('/purchase-staff'),
+      optional('/exchange-rates?limit=100', { sqliteFallback: true }),
     ]);
+    const secondaryPromise = Promise.all([
+      optional('/parts'), optional('/users?includeInactive=true'), fetchAllPages('/purchases'),
+      fetchAllPagesWithFallback('/purchases-deleted'), optional('/market-prices?limit=1000'),
+      optional('/boxes', { sqliteFallback: true }), optional('/purchase-requests', { sqliteFallback: true }),
+      optional('/notifications?limit=200&unread=true', { sqliteFallback: true }), optional('/approvals', { sqliteFallback: true }),
+      optional('/sales?limit=500', { sqliteFallback: true }), optional('/shipments?limit=500', { sqliteFallback: true }),
+      optional('/consignments?limit=500', { sqliteFallback: true }), optional('/returns?limit=500', { sqliteFallback: true }),
+      optional('/cost-adjustments?limit=500'), optional('/settings', { sqliteFallback: true }),
+      optional('/company', { sqliteFallback: true }), optional('/dashboard?months=24', { sqliteFallback: true }),
+    ]);
+    // The core is awaited first; still observe an early secondary rejection.
+    secondaryPromise.catch(() => {});
+    const [, products, partners, staff, rates] = await corePromise;
     // The endpoint mixes currencies in timestamp order. Selecting items[0] as
     // USD made a newly updated HKD rate (19.80) appear as USD/JPY.
     const latestRatesByCurrency = {};
@@ -815,29 +851,42 @@
     state.latestRate = latestRate;
     applyMasters(masterResults);
     applyPartners(partners?.items);
-    applyUsers(users?.items);
     applyPurchaseStaff(staff?.items);
     applyProducts(products?.items, masterResults, staff?.items, latestRate);
-    APP_DATA.parts = (parts?.items || []).map(item => ({ ...item, apiManaged: true }));
+    applyExchangeRates(rates);
+    if (!state.hydrated) {
+      state.dashboardReady = true;
+      showSyncStatus('loading', 'ダッシュボードを表示しました。伝票・画像の詳細を読み込んでいます…');
+      document.dispatchEvent(new CustomEvent('zaiko:dashboard-ready'));
+    }
 
-    await Promise.all((products?.items || []).filter(product => Number(product.imageCount) > 0).map(async product => {
+    const imagesPromise = Promise.all((products?.items || []).filter(product => Number(product.imageCount) > 0).map(async product => {
       const files = await optional(`/products/${encodeURIComponent(product.id)}/files`);
-      const item = APP_DATA.inventory.find(candidate => candidate._id === product.id);
-      if (item) {
-        item.imageFiles = (files?.items || []).map(file => ({ ...file }));
-        item.images = item.imageFiles.map(file => file.url);
-      }
+      return { productId: product.id, files: (files?.items || []).map(file => ({ ...file })) };
     }));
 
+    imagesPromise.catch(() => {});
+    const [parts, users, purchases, deletedPurchases, market, boxes, requests, notifications, approvals,
+      sales, shipments, consignments, returns, costAdjustments, settings, company, dashboard] = await secondaryPromise;
+    applyUsers(users?.items);
+    APP_DATA.parts = (parts?.items || []).map(item => ({ ...item, apiManaged: true }));
     const productByLine = new Map(APP_DATA.inventory.map(item => {
       const source = products?.items?.find(product => product.productCode === item.code);
       return [source?.purchaseSlipLineId, item];
     }));
-    const purchaseDetails = await withDetails('/purchases', purchases);
-    const saleDetails = await withDetails('/sales', sales);
-    const shipmentDetails = await withDetails('/shipments', shipments);
-    const consignmentDetails = await withDetails('/consignments', consignments);
-    const returnDetails = await withDetails('/returns', returns);
+    const [purchaseDetails, saleDetails, shipmentDetails, consignmentDetails, returnDetails, imageResults] = await Promise.all([
+      withDetails('/purchases', purchases), withDetails('/sales', sales), withDetails('/shipments', shipments),
+      withDetails('/consignments', consignments), withDetails('/returns', returns), imagesPromise,
+    ]);
+    // Apply only after all reads succeed. A late image request from a failed
+    // hydration must never overwrite a restored, previously complete snapshot.
+    for (const result of imageResults) {
+      const item = APP_DATA.inventory.find(candidate => candidate._id === result.productId);
+      if (item) {
+        item.imageFiles = result.files;
+        item.images = result.files.map(file => file.url);
+      }
+    }
     const purchaseViews = purchaseDetails.map(record => purchaseView(record, productByLine, latestRate, staff?.items || []));
     const reflectedPurchaseProducts = purchaseViews.reduce((total, slip) => total + (slip.lines || []).reduce(
       (lineTotal, line) => lineTotal + (Number(line.generatedProductCount) || 0), 0), 0);
@@ -1038,6 +1087,7 @@
         document.documentElement.dataset.apiConnected = 'false';
         showSyncStatus('error', previousSnapshot
           ? 'DBの最新情報を取得できません。直前の正常データを表示し、自動で再取得します。'
+          : state.dashboardReady ? 'ダッシュボードは取得済みです。伝票・画像の詳細を再取得しています。'
           : 'DB情報を取得できません。自動で再取得しています。');
         document.dispatchEvent(new CustomEvent('zaiko:data-hydrate-failed', { detail: { error: state.lastError } }));
         scheduleHydrationRetry(error);

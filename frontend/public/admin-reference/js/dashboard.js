@@ -244,6 +244,12 @@ function businessDashboardExportCsv() {
 
 function renderBusinessDashboard(now = new Date()) {
   const root=document.getElementById('page-dashboard');if(!root)return;
+  const apiState=window.ZaikoAPI?.state;
+  if(apiState && !apiState.hydrated && !apiState.dashboardReady) {
+    root.businessDashboardCsv=null;
+    root.innerHTML=`<section class="business-panel" role="status" aria-live="polite"><h2><i class="fa-solid ${apiState.lastError?'fa-triangle-exclamation':'fa-spinner fa-spin'}" aria-hidden="true"></i> ${apiState.lastError?'データを再取得しています':'ダッシュボードを読み込んでいます'}</h2><p>在庫・取引情報を確認しています。取得したデータから集計結果を表示します。</p></section>`;
+    return;
+  }
   businessDashboardState ||= businessDashboardDefaults(now);const f=businessDashboardState,rows=businessDashboardRows(),m=businessDashboardAggregate(rows,f,now),comparison=businessDashboardComparisons(rows,f,now),period=f.from===f.to?businessMonthLabel(f.from):`${businessMonthLabel(f.from)} ～ ${businessMonthLabel(f.to)}`;
   const columns=[['salesCount','売上件数'],['purchaseCount','仕入件数'],['inventoryCount','在庫件数'],['salesAmount','売上高'],['purchaseAmount','仕入高'],['inventoryAmount','在庫高'],['profit','粗利高'],['margin','粗利率']];
   const kpi=(key,label,icon,color)=>`<div class="business-kpi"><span class="business-kpi-icon ${color}"><i class="fa-solid ${icon}" aria-hidden="true"></i></span><div><span class="business-kpi-label">${label}</span><strong data-business-metric="${key}" class="${m[key]<0?'business-negative':''}">${businessDashboardMetric(key,m[key])}</strong>${businessDashboardComparisonHtml(key,comparison,f)}</div></div>`;
@@ -266,3 +272,6 @@ function renderBusinessDashboard(now = new Date()) {
   root.businessDashboardCsv = businessDashboardCaptureCsv(root, f);
 }
 document.addEventListener('zaiko:data-hydrated',()=>{if(document.getElementById('page-dashboard')?.classList.contains('hidden')===false)renderBusinessDashboard();});
+
+document.addEventListener('zaiko:dashboard-ready',()=>{if(typeof applyRoleUI==='function')applyRoleUI();if(document.getElementById('page-dashboard')?.classList.contains('hidden')===false)renderBusinessDashboard();});
+document.addEventListener('zaiko:data-hydrate-failed',()=>{if(document.getElementById('page-dashboard')?.classList.contains('hidden')===false)renderBusinessDashboard();});

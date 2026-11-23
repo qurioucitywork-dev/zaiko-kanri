@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { storageGateway } from "./storage-gateway";
+import { ContainerReadiness } from "./readiness";
 
 export interface Env {
   APP: DurableObjectNamespace<ZaikoContainer>;
@@ -13,6 +14,8 @@ export interface Env {
   ORGANIZATION_CODE: string;
   APP_REVISION: string;
   APP_INSTANCE_NAME?: string;
+  APP_LOCATION_HINT?: DurableObjectLocationHint;
+  SKIP_DATABASE_MIGRATIONS?: string;
 }
 const PORT = 8080;
 // The existing Go process runs SMBC synchronization every 30 minutes. Cron keeps
@@ -32,6 +35,7 @@ function containerEnvironment(env: Env): Record<string, string> {
     ZAIKO_ORGANIZATION_CODE: env.ORGANIZATION_CODE,
     ZAIKO_DATABASE_DRIVER: "postgres", ZAIKO_DATABASE_URL: env.DATABASE_URL,
     ZAIKO_DATABASE_MIGRATION_URL: env.DATABASE_MIGRATION_URL,
+    ZAIKO_SKIP_DATABASE_MIGRATIONS: env.SKIP_DATABASE_MIGRATIONS === "true" ? "true" : "false",
     ZAIKO_DATABASE_PATH: "/tmp/zaiko-compat.db", ZAIKO_UPLOAD_DIRECTORY: "/tmp/uploads",
     ZAIKO_STORAGE_DRIVER: "r2gateway", ZAIKO_R2_GATEWAY_URL: `${base.origin}/__storage`,
     ZAIKO_R2_GATEWAY_TOKEN: env.R2_GATEWAY_TOKEN,
@@ -42,7 +46,7 @@ function containerEnvironment(env: Env): Record<string, string> {
 }
 
 export class ZaikoContainer extends DurableObject<Env> {
-  private starting?: Promise<void>;
+  private readonly readiness = new ContainerReadiness();
   private monitoring?: Promise<void>;
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -52,8 +56,7 @@ export class ZaikoContainer extends DurableObject<Env> {
     }
   }
   async fetch(request: Request): Promise<Response> {
-    this.starting ??= this.ensureReady().finally(() => { this.starting = undefined; });
-    await this.starting;
+    await this.readiness.ensure(this.ctx.container!.running, () => this.ensureReady());
     const url = new URL(request.url);
     url.protocol = "http:";
     url.host = "container";
@@ -98,7 +101,7 @@ export class ZaikoContainer extends DurableObject<Env> {
     this.monitoring = this.ctx.container!.monitor()
       .then(() => { console.info("Application container stopped"); })
       .catch(() => { console.error("Application container exited unexpectedly"); })
-      .finally(() => { this.monitoring = undefined; });
+      .finally(() => { this.readiness.invalidate(); this.monitoring = undefined; });
     this.ctx.waitUntil(this.monitoring);
   }
 }
@@ -109,13 +112,13 @@ export default {
     if (url.pathname.startsWith("/__storage/")) return storageGateway(request, env);
     if (url.protocol !== "https:" && url.hostname !== "localhost") return Response.redirect(`https://${url.host}${url.pathname}${url.search}`, 308);
     try {
-      return await env.APP.getByName(env.APP_INSTANCE_NAME || "zaiko-singleton").fetch(request);
+      return await env.APP.getByName(env.APP_INSTANCE_NAME || "zaiko-singleton", { locationHint: env.APP_LOCATION_HINT || "apac" }).fetch(request);
     } catch {
       return new Response("アプリを起動しています。少し待って再度アクセスしてください。", { status: 503, headers: { "Retry-After": "10", "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
     }
   },
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    const response = await env.APP.getByName(env.APP_INSTANCE_NAME || "zaiko-singleton").fetch(new Request(`${env.PUBLIC_BASE_URL}/healthz`));
+    const response = await env.APP.getByName(env.APP_INSTANCE_NAME || "zaiko-singleton", { locationHint: env.APP_LOCATION_HINT || "apac" }).fetch(new Request(`${env.PUBLIC_BASE_URL}/healthz`));
     await response.body?.cancel();
     if (!response.ok) throw new Error("Scheduled application health check failed");
   },

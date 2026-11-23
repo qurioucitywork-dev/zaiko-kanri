@@ -1462,6 +1462,11 @@ document.addEventListener('DOMContentLoaded', async function () {
   initDesktopSidebarVisibility();
   observeUnifiedTerminology();
   observeSearchablePartnerSelects();
+  const todayDate = document.getElementById('todayDate');
+  if (todayDate) {
+    todayDate.textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date());
+  }
+  if (window.ZaikoAPI && typeof renderBusinessDashboard === 'function') renderBusinessDashboard();
   // REST接続時はGoのHttpOnly Cookie Sessionを正とする。sessionStorageは
   // 画面表示用の利用者情報だけを保持し、認証判定には使わない。
   if (!window.ZaikoAPI && typeof requireLogin === 'function' && !requireLogin()) return;
@@ -1479,18 +1484,16 @@ document.addEventListener('DOMContentLoaded', async function () {
       // API接続画面で静的サンプルを「全件」として残すと、仕入伝票と
       // 在庫の点数が別データ同士で比較される。障害時は業務データを空にし、
       // 復旧するまで明示的なエラーとして扱う。
-      ['inventory', 'purchaseSlips', 'sales', 'shipments', 'consignments', 'purchaseReturns', 'salesReturns']
-        .forEach(key => { APP_DATA[key] = []; });
+      if (!window.ZaikoAPI.state.dashboardReady) {
+        ['inventory', 'purchaseSlips', 'sales', 'shipments', 'consignments', 'purchaseReturns', 'salesReturns']
+          .forEach(key => { APP_DATA[key] = []; });
+      }
       window.setTimeout(() => {
         if (typeof showToast === 'function') {
           showToast('error', 'DBデータを取得できません', 'サンプル表示には切り替えていません。サーバー接続を確認して再読み込みしてください。');
         }
       }, 0);
     }
-  }
-  const todayDate = document.getElementById('todayDate');
-  if (todayDate) {
-    todayDate.textContent = new Intl.DateTimeFormat('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' }).format(new Date());
   }
   // ログイン切替をまたいだ承認済み操作を画面データへ再適用
   if (typeof replayApprovedApprovalOperations === 'function') replayApprovedApprovalOperations();
@@ -22916,6 +22919,10 @@ let _costNavigationPending = null;
 let _costNavigationReady = false;
 const _navOrig = navigateTo;
 window.navigateTo = function(page) {
+  if (window.ZaikoAPI?.state?.user && !window.ZaikoAPI.state.hydrated && page !== 'dashboard') {
+    showToast('info', 'データを読み込み中です', '伝票・画像の詳細を読み込んでいます。完了後に操作できます。');
+    return;
+  }
   // ── 権限ガード ──
   if (typeof canAccessPage === 'function' && !canAccessPage(page)) {
     showToast('error', 'アクセス拒否', 'この画面は管理者のみ利用できます');
