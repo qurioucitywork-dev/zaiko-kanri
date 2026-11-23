@@ -13,6 +13,13 @@ are unchanged. Do not turn this flag on for a database that has not been migrate
 
 Build the frontend and Linux binary with `./deploy/cloudflare/build.ps1`, which
 updates `APP_REVISION`. Then deploy the complete Worker and application image.
+Verify a release-specific application behavior or asset hash after deployment;
+a successful deployment and health response can still come from an older running
+container. During testing, an image-only update also needed a new
+`APP_INSTANCE_NAME` before the new binary was served. If the existing instance
+keeps the previous image, deploy with a new release-specific instance name while
+retaining the same database, R2 binding and secrets. The old instance receives no
+new scheduled requests and expires after its 40-minute inactivity timeout.
 If the database connection or its credentials change, change `APP_INSTANCE_NAME`
 to a new deployment-specific name and verify the organization and business record
 counts after login. A health response alone does not prove the intended database

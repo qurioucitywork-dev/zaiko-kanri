@@ -196,3 +196,48 @@ func TestPermissionSingleQueryPreservesLiveOverridePrecedence(t *testing.T) {
 		}
 	}
 }
+
+func TestPermissionDecisionsSingleQueryMatchesIndividualChecks(t *testing.T) {
+	repo, logs, _, _ := identityReadFixture(t)
+	user := database.User{ID: "user", OrganizationID: "org", Role: "worker", Active: true}
+	for _, statement := range []string{
+		`INSERT INTO role_permissions VALUES('worker','purchase.read')`,
+		`INSERT INTO user_permissions VALUES('user','products.read','deny')`,
+		`INSERT INTO user_permissions VALUES('user','settings.manage','allow')`,
+		`INSERT INTO user_permissions VALUES('other-user','purchase.read','deny')`,
+	} {
+		if err := repo.db.Exec(statement).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	logs.reset()
+	permissions, err := repo.PermissionDecisions(context.Background(), user)
+	if err != nil || logs.count() != 1 {
+		t.Fatalf("permissions error=%v queries=%d", err, logs.count())
+	}
+	for _, key := range []string{"products.read", "purchase.read", "settings.manage", "unknown"} {
+		if permissions[key] != repo.HasPermission(context.Background(), user, key) {
+			t.Fatalf("permission mismatch: %s", key)
+		}
+	}
+	if err := repo.db.Exec(`UPDATE user_permissions SET effect='deny' WHERE user_id='user' AND permission_key='settings.manage'`).Error; err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := repo.PermissionDecisions(context.Background(), user)
+	if err != nil || refreshed["settings.manage"] || !permissions["settings.manage"] {
+		t.Fatal("new request must reload permissions without mutating previous request snapshot")
+	}
+	user.Active = false
+	logs.reset()
+	disabled, err := repo.PermissionDecisions(context.Background(), user)
+	if err != nil || len(disabled) != 0 || logs.count() != 0 {
+		t.Fatal("disabled user received permissions")
+	}
+	user.Active = true
+	if err := repo.db.Exec(`DROP TABLE user_permissions`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if decisions, err := repo.PermissionDecisions(context.Background(), user); err == nil || len(decisions) != 0 {
+		t.Fatal("permission DB error must fail closed")
+	}
+}

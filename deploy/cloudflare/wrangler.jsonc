@@ -49,8 +49,8 @@
   "vars": {
     "PUBLIC_BASE_URL": "https://qurioucity-zaiko-test.qurioucitywork.workers.dev",
     "ORGANIZATION_CODE": "CLEAN",
-    "APP_REVISION": "2026-11-23T16:56:34Z",
-    "APP_INSTANCE_NAME": "zaiko-restored-perf-20261124",
+    "APP_REVISION": "2026-11-23T17:13:02Z",
+    "APP_INSTANCE_NAME": "zaiko-restored-batch-20261124",
     "SKIP_DATABASE_MIGRATIONS": "true",
     "APP_LOCATION_HINT": "apac-se"
   }

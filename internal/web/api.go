@@ -73,6 +73,7 @@ func (s *Server) apiHealth(w http.ResponseWriter, r *http.Request) {
 		"database": map[string]string{"driver": s.repository.Driver(), "orm": "GORM"},
 		"storage":  map[string]string{"driver": s.objects.Driver()},
 		"api":      "v1",
+		"features": map[string]bool{"readBatch": true},
 	})
 }
 
@@ -169,16 +170,24 @@ func canViewCancelledInventory(role, requested string) bool {
 
 func (s *Server) apiAuthenticated(permission string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie(sessionCookie)
-		if err != nil {
-			writeAPIError(w, http.StatusUnauthorized, "authentication_required", "ログインが必要です。")
-			return
-		}
-		session, err := s.apiSession(r.Context(), cookie.Value)
-		if err != nil {
-			http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
-			writeAPIError(w, http.StatusUnauthorized, "session_expired", "セッションの有効期限が切れました。")
-			return
+		// Only the server-created context of an allowlisted batch GET can reuse
+		// its outer request's authenticated session. HTTP headers cannot set it.
+		batch, trusted := readBatchAuthentication(r.Context())
+		var session database.Session
+		if trusted && r.Method == http.MethodGet {
+			session = batch.session
+		} else {
+			cookie, err := r.Cookie(sessionCookie)
+			if err != nil {
+				writeAPIError(w, http.StatusUnauthorized, "authentication_required", "ログインが必要です。")
+				return
+			}
+			session, err = s.apiSession(r.Context(), cookie.Value)
+			if err != nil {
+				http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
+				writeAPIError(w, http.StatusUnauthorized, "session_expired", "セッションの有効期限が切れました。")
+				return
+			}
 		}
 		if isUnsafe(r.Method) {
 			token := r.Header.Get("X-CSRF-Token")

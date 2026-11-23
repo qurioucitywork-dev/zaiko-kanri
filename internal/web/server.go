@@ -105,6 +105,7 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.HandleFunc("GET /api/v1/health", s.apiHealth)
 	mux.HandleFunc("POST /api/v1/auth/login", s.apiLogin)
 	mux.HandleFunc("POST /api/v1/auth/password-reset", s.apiPasswordResetComplete)
+	mux.Handle("POST /api/v1/read-batch", s.apiAuthenticated("", s.apiReadBatch(mux)))
 	mux.Handle("GET /api/v1/auth/me", s.apiAuthenticated("", http.HandlerFunc(s.apiMe)))
 	mux.Handle("POST /api/v1/auth/logout", s.apiAuthenticated("", http.HandlerFunc(s.apiLogout)))
 	mux.Handle("GET /api/v1/dashboard", s.apiAuthenticated("dashboard.read", http.HandlerFunc(s.apiDashboard)))

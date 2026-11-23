@@ -36,6 +36,9 @@ func (s *Server) apiDeleteSession(ctx context.Context, token string) error {
 }
 
 func (s *Server) apiHasPermission(ctx context.Context, user database.User, permission string) bool {
+	if batch, ok := readBatchAuthentication(ctx); ok && user.ID == batch.session.User.ID && user.OrganizationID == batch.session.User.OrganizationID && user.Role == batch.session.User.Role {
+		return user.Active && batch.permissions[permission]
+	}
 	if s.repository.Driver() == "postgres" {
 		return s.repository.HasPermission(ctx, user, permission)
 	}

@@ -2,18 +2,31 @@ package web
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"mime"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 )
 
 //go:embed react-dist
 var reactAssets embed.FS
+
+// Embedded assets cannot change during a process lifetime. Cache only their
+// validators; authenticated responses and business data never enter this map.
+var embeddedAssetETags sync.Map
+
+func staticContentETag(content []byte) string {
+	digest := sha256.Sum256(content)
+	// A weak validator remains valid when Cloudflare changes wire compression.
+	return `W/"` + hex.EncodeToString(digest[:]) + `"`
+}
 
 var legacyReactPages = map[string]string{
 	"products":          "inventory",
@@ -68,6 +81,11 @@ func serveEmbeddedAsset(w http.ResponseWriter, r *http.Request, assetPath string
 	}
 	if extension := path.Ext(assetPath); extension == ".html" || extension == ".js" || extension == ".css" {
 		w.Header().Set("Cache-Control", "no-cache")
+		cached, ok := embeddedAssetETags.Load(assetPath)
+		if !ok {
+			cached, _ = embeddedAssetETags.LoadOrStore(assetPath, staticContentETag(content))
+		}
+		w.Header().Set("ETag", cached.(string))
 	}
 	http.ServeContent(w, r, path.Base(assetPath), time.Time{}, bytes.NewReader(content))
 	return true

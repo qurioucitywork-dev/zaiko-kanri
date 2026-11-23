@@ -20,7 +20,7 @@
   }
   const state = {
     csrfToken: '', user: null, hydrated: false, dashboardReady: false, loading: false, company: null, latestRate: null,
-    lastError: null, lastLoadedAt: '', retryCount: 0, databaseDriver: '',
+    lastError: null, lastLoadedAt: '', retryCount: 0, databaseDriver: '', readBatchEnabled: false,
   };
   const transientStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
   const retryDelays = [1500, 5000, 15000, 30000, 60000];
@@ -65,6 +65,137 @@
       if (next) next();
       else activeReads -= 1;
     };
+  }
+
+  // Transport-only batching: logical GET results, errors and retries remain
+  // independent. Older servers keep the original individual GET path.
+  const batchReads = [];
+  let batchReadScheduled = false;
+  let batchReadSequence = 0;
+  let batchReadUnsupported = false;
+  const batchListQueries = {
+    '/dashboard':['months'], '/parts':[], '/products':['q','status','sort','page','pageSize','includeCancelled'],
+    '/partners':['includeInactive'], '/purchase-staff':[], '/exchange-rates':['limit'],
+    '/users':['includeInactive'], '/purchases':['page','pageSize','limit'], '/purchases-deleted':['page','pageSize'],
+    '/market-prices':['limit'], '/boxes':[], '/purchase-requests':['status'], '/notifications':['limit','unread'],
+    '/approvals':['status'], '/sales':['limit'], '/shipments':['limit'], '/consignments':['limit'],
+    '/returns':['limit'], '/cost-adjustments':['limit'], '/settings':[], '/company':[],
+  };
+  const batchMasterKinds = new Set(['brands','materials','movements','conditions','accessories','auctions','belt-materials','dials','product-shapes','markings','part-names']);
+  function readBatchLane(path, options) {
+    if (!state.readBatchEnabled || batchReadUnsupported || !state.csrfToken
+        || String(options.method || 'GET').toUpperCase() !== 'GET' || options.body
+        || Object.keys(options.headers || {}).some(key => key.toLowerCase() !== 'accept')) return null;
+    if (!path.startsWith('/') || path.startsWith('//') || path.includes('#') || path.includes('\\') || path.length > 2048) return null;
+    const parsed = new URL(path, window.location.origin);
+    if (parsed.pathname !== path.split('?')[0] || parsed.search.includes(';') || /%(?![0-9a-f]{2})/i.test(parsed.search)) return null;
+    let allowed = batchListQueries[parsed.pathname];
+    const master = parsed.pathname.match(/^\/masters\/([a-z-]+)$/);
+    if (master && batchMasterKinds.has(master[1])) allowed = [];
+    if (/^\/(purchases|purchases-deleted|sales|shipments|consignments|returns|products)\/[A-Za-z0-9_-]{1,128}$/.test(parsed.pathname)
+        || /^\/products\/[A-Za-z0-9_-]{1,128}\/files$/.test(parsed.pathname)) allowed = [];
+    const queryKeys=[...parsed.searchParams.keys()];
+    if (!allowed || queryKeys.some(key => !allowed.includes(key)) || new Set(queryKeys).size !== queryKeys.length
+        || [...parsed.searchParams.values()].some(value => new Blob([value]).size > 2048)) return null;
+    // A slow image/detail response must not hold a ready dashboard's core data.
+    if (/^\/products\/[A-Za-z0-9_-]{1,128}\/files$/.test(parsed.pathname)) return 'images';
+    return master || ['/products','/partners','/purchase-staff','/exchange-rates'].includes(parsed.pathname) ? 'core' : 'secondary';
+  }
+  function batchResponse(status, raw, headers = {}) {
+    return { status, ok: status >= 200 && status < 300, text: async () => raw,
+      headers: { get: name => {
+        if (typeof headers.get === 'function') return headers.get(name);
+        const key = Object.keys(headers).find(key => key.toLowerCase() === name.toLowerCase());
+        return key ? String(headers[key]) : null;
+      } } };
+  }
+  function invalidBatchResponse() {
+    return Object.assign(new Error('まとめて取得したDB応答を読み取れませんでした。'), { code: 'invalid_json_response' });
+  }
+  function settleBatchRead(entry, error, response) {
+    if (entry.settled) return;
+    entry.settled = true;
+    entry.options.signal?.removeEventListener('abort', entry.onAbort);
+    if (error) entry.reject(error); else entry.resolve(response);
+  }
+  async function dispatchReadBatch(entries) {
+    entries = entries.filter(entry => !entry.settled);
+    if (!entries.length) return;
+    const controller = new AbortController();
+    for (const entry of entries) entry.cancelGroup = () => {
+      if (entries.every(item => item.settled)) controller.abort();
+    };
+    try {
+      const response = await fetch('/api/v1/read-batch', {
+        method:'POST', credentials:'same-origin', cache:'no-store', signal:controller.signal,
+        headers:{Accept:'application/json','Content-Type':'application/json; charset=utf-8','X-CSRF-Token':entries[0].csrfToken},
+        body:JSON.stringify({requests:entries.map(entry => ({id:entry.id,path:entry.path}))}),
+      });
+      const raw = await response.text();
+      let payload;
+      try { payload = raw ? JSON.parse(raw) : null; } catch (_) { payload = null; }
+      const unsupported = response.status === 404 || response.status === 405;
+      const tooLarge = response.status === 413 && payload?.error?.code === 'batch_response_too_large';
+      if (unsupported || tooLarge) {
+        if (unsupported) { batchReadUnsupported = true; state.readBatchEnabled = false; }
+        // These are GETs only. The same eight logical slots still bound fallback
+        // requests; never replay a mutation, a denied request, or a malformed 200.
+        await Promise.all(entries.filter(entry => !entry.settled).map(async entry => {
+          try { settleBatchRead(entry, null, await fetch(`/api/v1${entry.path}`, entry.options)); }
+          catch (error) { settleBatchRead(entry, error); }
+        }));
+        return;
+      }
+      if (!response.ok) {
+        for (const entry of entries) settleBatchRead(entry, null, batchResponse(response.status, raw, response.headers));
+        return;
+      }
+      if (!Array.isArray(payload?.responses) || payload.responses.length !== entries.length) throw invalidBatchResponse();
+      const byId = new Map(payload.responses.map(item => [item.id,item]));
+      if (byId.size !== entries.length || entries.some(entry => {
+        const item=byId.get(entry.id);
+        return !item || !Number.isInteger(item.status) || item.status<100 || item.status>599 || !Object.hasOwn(item,'body');
+      })) throw invalidBatchResponse();
+      for (const entry of entries) {
+        const item=byId.get(entry.id);
+        settleBatchRead(entry, null, batchResponse(item.status, JSON.stringify(item.body), item.headers || {}));
+      }
+    } catch (error) {
+      for (const entry of entries) settleBatchRead(entry, error);
+    }
+  }
+  function flushReadBatches() {
+    batchReadScheduled = false;
+    const groups = new Map();
+    for (const entry of batchReads.splice(0)) {
+      if (entry.settled) continue;
+      const key=entry.lane+'|'+entry.csrfToken;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(entry);
+    }
+    for (const entries of groups.values()) {
+      for (let start=0;start<entries.length;start+=32) void dispatchReadBatch(entries.slice(start,start+32));
+    }
+  }
+  function readTransport(path, options) {
+    const lane=readBatchLane(path,options);
+    if (!lane) return fetch(`/api/v1${path}`,options);
+    return new Promise((resolve,reject) => {
+      const entry={id:'r'+(++batchReadSequence),path,options,lane,csrfToken:state.csrfToken,resolve,reject,settled:false};
+      entry.onAbort=()=>{
+        settleBatchRead(entry,new DOMException('The operation was aborted.','AbortError'));
+        entry.cancelGroup?.();
+      };
+      if (options.signal?.aborted) { entry.onAbort(); return; }
+      options.signal?.addEventListener('abort',entry.onAbort,{once:true});
+      batchReads.push(entry);
+      if (!batchReadScheduled) {
+        batchReadScheduled=true;
+        // Background tabs throttle timers; a microtask coalesces this read wave
+        // without adding a timer delay when the user switches tabs.
+        window.queueMicrotask(flushReadBatches);
+      }
+    });
   }
 
   function retryAfterMilliseconds(response) {
@@ -114,7 +245,7 @@
       if (externalSignal) externalSignal.addEventListener('abort', abortFromExternal, { once: true });
       const timeout = window.setTimeout(() => controller.abort('request-timeout'), timeoutMs);
       try {
-        const response = await fetch(`/api/v1${path}`, {
+        const response = await readTransport(path, {
           credentials: 'same-origin',
           cache: method === 'GET' || method === 'HEAD' ? 'no-store' : 'default',
           ...fetchOptions,
@@ -814,6 +945,7 @@
     if (typeof setSession === 'function') setSession(sessionPayload(me));
     enforceWorkspaceRole(me.user);
     state.databaseDriver = String(health?.database?.driver || '');
+    state.readBatchEnabled = health?.features?.readBatch === true && !batchReadUnsupported;
 
     const masterKeys = ['brands', 'materials', 'movements', 'conditions', 'accessories', 'auctions', 'belt-materials', 'dials', 'product-shapes', 'markings', 'part-names'];
     const masterResults = {};
@@ -1057,6 +1189,8 @@
     const recovered = Boolean(state.lastError);
     state.loading = true;
     document.documentElement.dataset.apiLoading = 'true';
+    if (!state.hydrated) document.documentElement.dataset.apiInitialLoading = 'true';
+    else delete document.documentElement.dataset.apiInitialLoading;
     showSyncStatus('loading', state.hydrated ? 'DBの更新情報を確認しています…' : 'DB情報を読み込んでいます…');
 
     hydrateAdminPromise = hydrateAdminOnce()
@@ -1096,6 +1230,7 @@
       .finally(() => {
         state.loading = false;
         delete document.documentElement.dataset.apiLoading;
+        delete document.documentElement.dataset.apiInitialLoading;
         hydrateAdminPromise = null;
       });
     return hydrateAdminPromise;

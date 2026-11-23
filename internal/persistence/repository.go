@@ -178,7 +178,9 @@ func Open(cfg config.Config) (*Repository, error) {
 		sqlDB.SetMaxOpenConns(1)
 	} else {
 		sqlDB.SetMaxOpenConns(20)
-		sqlDB.SetMaxIdleConns(5)
+		// Retain one eight-read batch worth of connections to avoid reopening
+		// remote TLS sessions between waves; the maximum remains twenty.
+		sqlDB.SetMaxIdleConns(8)
 		sqlDB.SetConnMaxLifetime(30 * time.Minute)
 	}
 	return &Repository{db: db, driver: cfg.DatabaseDriver}, nil

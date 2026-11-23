@@ -1086,7 +1086,13 @@ html:not([data-admin-authenticated="true"]) .app-wrapper { visibility: hidden; }
   }
 }
 </style>
-<style>html[data-api-loading="true"] .page-panel, html[data-api-loading="true"] #requestBadge { visibility: hidden; }</style>
+<style id="api-loading-visibility">
+html[data-api-loading="true"] .page-panel,
+html[data-api-loading="true"] #requestBadge { visibility: hidden; }
+/* Only the initial dashboard can show its loading state and complete core data.
+   Other screens retain the full-snapshot gate, including normal refreshes. */
+html[data-api-loading="true"][data-api-initial-loading="true"] #page-dashboard { visibility: visible; }
+</style>
 <link rel="stylesheet" href="css/dashboard.css?v=20261011-period-comparisons">
 <link rel="stylesheet" href="css/auction_fees.css?v=20261013-fee-rows">
 </head>

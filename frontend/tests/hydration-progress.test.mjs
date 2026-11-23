@@ -2,9 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { JSDOM } from 'jsdom';
 const source = await readFile(new URL('../public/admin-reference/js/api_bridge.js', import.meta.url), 'utf8');
+const appHtml = await readFile(new URL('../public/admin-reference/app.html', import.meta.url), 'utf8');
+const loadingCss=appHtml.match(/<style id="api-loading-visibility">([\s\S]*?)<\/style>/)[1];
 const dashboard = await readFile(new URL('../public/admin-reference/js/dashboard.js', import.meta.url), 'utf8');
-const dom = new JSDOM('<!doctype html><html><body><div id="page-dashboard"></div></body></html>', { runScripts:'outside-only', url:'https://inventory.example/app/admin-reference/app.html' });
+const dom = new JSDOM('<!doctype html><html><body><div id="page-dashboard" class="page-panel"></div><div id="other-page" class="page-panel"></div></body></html>', { runScripts:'outside-only', url:'https://inventory.example/app/admin-reference/app.html' });
 const w=dom.window;
+const batchMode=process.argv.includes('--batch');
+const style=w.document.createElement('style');style.textContent=loadingCss;w.document.head.appendChild(style);
 w.eval('var APP_DATA={inventory:[],purchaseSlips:[],sales:[],shipments:[],consignments:[],purchaseReturns:[],salesReturns:[],staff:[],suppliers:[],buyers:[]};');
 w._escHtml=value=>String(value??'');
 w.allAccessoryMasterRecords=()=>[];
@@ -21,7 +25,7 @@ w.fetch=async(url,options)=>{
   await new Promise(r=>setTimeout(r,5));
   let value={items:[]};
   if(path==='/auth/me')value={user:{id:'admin',role:'admin',displayName:'Admin'},csrfToken:'test-csrf'};
-  else if(path==='/health')value={database:{driver:'postgres'}};
+  else if(path==='/health')value={database:{driver:'postgres'},features:{readBatch:batchMode}};
   else if(path==='/products')value={items:[{id:'p1',productCode:'PRODUCT1',brand:'Test',inventoryStatus:'in_stock',imageCount:1,costCurrency:'JPY',baseSaleCurrency:'USD',dashboardCostJpy:125000,purchaseDate:'2026-11-01'}],totalPages:1,total:1};
   else if(path==='/parts')await secondary.promise;
   else if(path==='/products/p1/files'){await images.promise;value={items:[{id:'file1',url:'/api/v1/product-files/file1'}]};}
@@ -31,11 +35,25 @@ w.fetch=async(url,options)=>{
   return{status:200,ok:true,headers:{get:()=>null},text:async()=>JSON.stringify(value)};
  }finally{active--;}
 };
+const wrapBatchTransport=fetchOne=>async(url,options)=>{
+ if(batchMode && String(url)==='/api/v1/read-batch'){
+  const requests=JSON.parse(options.body).requests;
+  const responses=await Promise.all(requests.map(async item=>{
+   const response=await fetchOne('/api/v1'+item.path,{...options,method:'GET',body:undefined});
+   return{id:item.id,status:response.status,body:JSON.parse(await response.text())};
+  }));
+  return{status:200,ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({responses})};
+ }
+ return fetchOne(url,options);
+};
+w.fetch=wrapBatchTransport(w.fetch);
 w.eval(source);
 w.eval(dashboard);
 w.document.addEventListener('zaiko:dashboard-ready',()=>coreReady.resolve());
 const hydration=w.ZaikoAPI.hydrateAdmin();
 w.renderBusinessDashboard();
+assert.equal(w.getComputedStyle(w.document.getElementById('page-dashboard')).visibility,'visible','initial loading text must be visible while requests run');
+assert.equal(w.getComputedStyle(w.document.getElementById('other-page')).visibility,'hidden','other screens remain gated until the full snapshot');
 assert.match(w.document.getElementById('page-dashboard').textContent,/読み込んでいます/);
 assert.equal(w.document.querySelector('[data-business-metric]'),null,'pending data must not appear as zero totals');
 const deadline=setTimeout(()=>coreReady.resolve('timeout'),3000);
@@ -43,6 +61,7 @@ assert.notEqual(await coreReady.promise,'timeout','dashboard should not wait for
 clearTimeout(deadline);
 assert.equal(w.ZaikoAPI.state.hydrated,false,'partial core data must not unlock mutations');
 assert.equal(w.ZaikoAPI.state.dashboardReady,true);
+assert.equal(w.getComputedStyle(w.document.getElementById('page-dashboard')).visibility,'visible','real core metrics must be visible before detail/image responses');
 assert.equal(w.APP_DATA.inventory.length,1);
 assert.equal(w.document.querySelector('[data-business-metric="inventoryCount"]').textContent,'1点');
 await assert.rejects(w.ZaikoAPI.request('/products',{method:'POST',body:'{}'}),/読み込み完了後/);
@@ -61,7 +80,7 @@ assert.ok(peak>1,'independent reads should overlap');
 const previousSnapshot=JSON.stringify(w.APP_DATA);
 const oldFetch=w.fetch;
 const failParts=deferred(),lateImage=deferred(),imageStarted=deferred();
-w.fetch=async(url,options)=>{
+w.fetch=wrapBatchTransport(async(url,options)=>{
  const path=new URL(url,'https://inventory.example').pathname;
  if(path==='/api/v1/parts'){
   await failParts.promise;
@@ -72,8 +91,9 @@ w.fetch=async(url,options)=>{
   return{status:200,ok:true,headers:{get:()=>null},text:async()=>JSON.stringify({items:[{id:'late-file',url:'/late-file.png'}]})};
  }
  return oldFetch(url,options);
-};
+});
 const refresh=w.ZaikoAPI.hydrateAdmin();
+assert.equal(w.getComputedStyle(w.document.getElementById('page-dashboard')).visibility,'hidden','normal full refresh retains the existing snapshot visibility gate');
 const rejectedRefresh=assert.rejects(refresh,/auxiliary read failed/);
 await imageStarted.promise;
 failParts.resolve();

@@ -131,6 +131,32 @@ func (r *Repository) HasPermission(ctx context.Context, user database.User, perm
 	return err == nil && allowed
 }
 
+// PermissionDecisions returns one live authorization snapshot for a single
+// read-batch request. It must not be retained across HTTP requests.
+func (r *Repository) PermissionDecisions(ctx context.Context, user database.User) (map[string]bool, error) {
+	decisions := make(map[string]bool)
+	if !user.Active {
+		return decisions, nil
+	}
+	var rows []struct {
+		PermissionKey string
+		Effect        string
+		Priority      int
+	}
+	err := r.db.WithContext(ctx).Raw(`
+        SELECT permission_key, 'allow' AS effect, 0 AS priority FROM role_permissions WHERE role_key = ?
+        UNION ALL
+        SELECT permission_key, effect, 1 AS priority FROM user_permissions WHERE user_id = ?
+        ORDER BY priority`, user.Role, user.ID).Scan(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		decisions[row.PermissionKey] = row.Effect == "allow"
+	}
+	return decisions, nil
+}
+
 func (r *Repository) WriteAudit(ctx context.Context, entry database.AuditEntry) error {
 	if entry.ID == "" {
 		id, err := database.NewID("aud")
