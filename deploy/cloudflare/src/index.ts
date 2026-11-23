@@ -12,6 +12,7 @@ export interface Env {
   PUBLIC_BASE_URL: string;
   ORGANIZATION_CODE: string;
   APP_REVISION: string;
+  APP_INSTANCE_NAME?: string;
 }
 const PORT = 8080;
 // The existing Go process runs SMBC synchronization every 30 minutes. Cron keeps
@@ -76,6 +77,7 @@ export class ZaikoContainer extends DurableObject<Env> {
       console.info("Application process restarted for deployment revision");
     }
     if (!container.running) {
+      console.info("Starting application process", { database: new URL(this.env.DATABASE_URL).pathname, revision: this.env.APP_REVISION, instance: this.env.APP_INSTANCE_NAME || "zaiko-singleton" });
       container.start({ image: container.images.base, instance: "basic", enableInternet: true, env: containerEnvironment(this.env) });
     }
     await this.ctx.storage.put("app-revision", this.env.APP_REVISION);
@@ -107,16 +109,14 @@ export default {
     if (url.pathname.startsWith("/__storage/")) return storageGateway(request, env);
     if (url.protocol !== "https:" && url.hostname !== "localhost") return Response.redirect(`https://${url.host}${url.pathname}${url.search}`, 308);
     try {
-      return await env.APP.getByName("zaiko-singleton").fetch(request);
+      return await env.APP.getByName(env.APP_INSTANCE_NAME || "zaiko-singleton").fetch(request);
     } catch {
       return new Response("アプリを起動しています。少し待って再度アクセスしてください。", { status: 503, headers: { "Retry-After": "10", "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store" } });
     }
   },
   async scheduled(_controller: ScheduledController, env: Env): Promise<void> {
-    const response = await env.APP.getByName("zaiko-singleton").fetch(new Request(`${env.PUBLIC_BASE_URL}/healthz`));
+    const response = await env.APP.getByName(env.APP_INSTANCE_NAME || "zaiko-singleton").fetch(new Request(`${env.PUBLIC_BASE_URL}/healthz`));
     await response.body?.cancel();
     if (!response.ok) throw new Error("Scheduled application health check failed");
   },
 } satisfies ExportedHandler<Env>;
-
-
