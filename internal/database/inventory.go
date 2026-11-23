@@ -18,6 +18,8 @@ var (
 	ErrInvalidStatusTransition  = errors.New("許可されていない在庫状態の変更です")
 )
 
+const previewSalePriceJPYPerUSD int64 = 155
+
 type Supplier struct {
 	ID   string
 	Code string
@@ -191,6 +193,9 @@ func (s *Store) SeedInventoryPreview(ctx context.Context) error {
 			return err
 		}
 	}
+	if err := s.migratePreviewSalePricesToUSD(ctx, now); err != nil {
+		return err
+	}
 	var count int
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM products WHERE organization_id='org_preview'`).Scan(&count); err != nil {
 		return err
@@ -202,10 +207,50 @@ func (s *Store) SeedInventoryPreview(ctx context.Context) error {
 		OrganizationID: "org_preview", SupplierID: "sup_001", PurchaseDate: "2026-07-26",
 		SKU: "ROLEX-SUB-001", Brand: "ロレックス", ModelNumber: "116610LN",
 		SerialNumber: "ZX123456", ProductType: "腕時計", CostAmountMinor: 850000, CostCurrency: "JPY",
-		BaseSalePriceMinor: 1180000, BaseSaleCurrency: "JPY", Condition: "極美品 (S)",
+		BaseSalePriceMinor: 7613, BaseSaleCurrency: "USD", Condition: "極美品 (S)",
 		Accessories: "BOX, GUARANTEE", CreatedBy: "usr_admin",
 	})
 	return err
+}
+
+// migratePreviewSalePricesToUSD upgrades local preview rows created before the
+// USD policy. The fixed rate matches the reference admin's manually managed
+// preview rate and intentionally does not affect non-preview organizations.
+func (s *Store) migratePreviewSalePricesToUSD(ctx context.Context, updatedAt string) error {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id,base_sale_price_minor FROM products
+		WHERE organization_id='org_preview' AND base_sale_currency='JPY'`)
+	if err != nil {
+		return err
+	}
+	type legacySalePrice struct {
+		id    string
+		price int64
+	}
+	var legacy []legacySalePrice
+	for rows.Next() {
+		var item legacySalePrice
+		if err := rows.Scan(&item.id, &item.price); err != nil {
+			rows.Close()
+			return err
+		}
+		legacy = append(legacy, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range legacy {
+		usd := (item.price + previewSalePriceJPYPerUSD/2) / previewSalePriceJPYPerUSD
+		if _, err := s.db.ExecContext(ctx, `
+			UPDATE products SET base_sale_price_minor=?,base_sale_currency='USD',updated_at=?
+			WHERE id=?`, usd, updatedAt, item.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Suppliers(ctx context.Context, organizationID string) ([]Supplier, error) {
@@ -305,14 +350,20 @@ func (s *Store) InventoryStats(ctx context.Context, organizationID string) (Inve
 }
 
 func nextSlipNumberTx(ctx context.Context, tx *sql.Tx, organizationID, purchaseDate string) (string, error) {
-	year := purchaseDate[:4]
-	var count int
-	if err := tx.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM purchase_slips WHERE organization_id=? AND substr(purchase_date,1,4)=?`,
-		organizationID, year).Scan(&count); err != nil {
+	date, err := time.Parse("2006-01-02", purchaseDate)
+	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("PI-%s-%04d", year, count+1), nil
+	prefix := "SD-" + date.Format("020106")
+	var sequence int
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(substr(slip_number,10,3) AS INTEGER)),0)+1 FROM purchase_slips WHERE organization_id=? AND slip_number GLOB ?`, organizationID, prefix+"[0-9][0-9][0-9]").Scan(&sequence)
+	if err != nil {
+		return "", err
+	}
+	if sequence > 999 {
+		return "", fmt.Errorf("同じ日・同じ種類の伝票は999件までです")
+	}
+	return fmt.Sprintf("%s%03d", prefix, sequence), nil
 }
 
 func (s *Store) ConfirmPurchase(ctx context.Context, organizationID, slipID, actorUserID string) (ConfirmResult, error) {
@@ -406,7 +457,7 @@ func nextProductCodeTx(ctx context.Context, tx *sql.Tx, organizationID, purchase
 		INSERT INTO product_code_sequences(organization_id,purchase_date,last_sequence)
 		VALUES(?,?,1)
 		ON CONFLICT(organization_id,purchase_date) DO UPDATE SET last_sequence=last_sequence+1
-		WHERE last_sequence < 999
+		WHERE last_sequence < 9999
 		RETURNING last_sequence`, organizationID, purchaseDate).Scan(&sequence)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrDailyProductLimit
@@ -418,7 +469,7 @@ func nextProductCodeTx(ctx context.Context, tx *sql.Tx, organizationID, purchase
 	if err != nil {
 		return "", err
 	}
-	return date.Format("20060102") + fmt.Sprintf("%03d", sequence), nil
+	return date.Format("020106") + fmt.Sprintf("%04d", sequence), nil
 }
 
 func productsForPurchaseTx(ctx context.Context, tx *sql.Tx, organizationID, slipID string) ([]Product, error) {
@@ -457,9 +508,6 @@ func (s *Store) CreateSingleProduct(ctx context.Context, input SingleProductInpu
 	candidates, err := serialDuplicatesTx(ctx, tx, input.OrganizationID, input.SerialNumber, "")
 	if err != nil {
 		return Product{}, err
-	}
-	if len(candidates) > 0 && strings.TrimSpace(input.DuplicateReason) == "" {
-		return Product{}, &SerialDuplicateError{Candidates: candidates}
 	}
 	now := s.now().Format(time.RFC3339Nano)
 	slipID, _ := NewID("pur")
@@ -507,7 +555,7 @@ func (s *Store) CreateSingleProduct(ctx context.Context, input SingleProductInpu
 		VALUES(?,?,?,'single.created','in_stock',?,?)`, eventID, input.OrganizationID, productID, input.CreatedBy, now); err != nil {
 		return Product{}, err
 	}
-	if len(candidates) > 0 {
+	if len(candidates) > 0 && strings.TrimSpace(input.DuplicateReason) != "" {
 		candidateIDs := make([]string, 0, len(candidates))
 		for _, candidate := range candidates {
 			candidateIDs = append(candidateIDs, candidate.ID)

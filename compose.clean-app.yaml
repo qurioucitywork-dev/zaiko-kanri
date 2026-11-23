@@ -1,0 +1,18 @@
+services:
+  app:
+    image: gcr.io/distroless/base-debian12:nonroot
+    entrypoint: ["/app/zaiko-server"]
+    working_dir: /app
+    env_file:
+      - .env.clean.app.local
+    ports:
+      - "127.0.0.1:18088:18088"
+    volumes:
+      - ./.runtime/zaiko-clean-linux:/app/zaiko-server:ro
+      - ./.runtime/clean:/state
+    read_only: true
+    tmpfs:
+      - /tmp
+    depends_on:
+      postgres:
+        condition: service_healthy

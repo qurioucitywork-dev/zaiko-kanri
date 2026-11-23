@@ -13,6 +13,8 @@ import (
 
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/config"
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/persistence"
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/storage"
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/web"
 )
 
@@ -66,7 +68,38 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	app, err := web.New(cfg, store, logger)
+	repository, err := persistence.Open(cfg)
+	if err != nil {
+		logger.Error("open GORM repository", "driver", cfg.DatabaseDriver, "error", err)
+		os.Exit(1)
+	}
+	defer repository.Close()
+	if !cfg.SkipDatabaseMigrations {
+		if err := persistence.MigrateConfigured(ctx, cfg); err != nil {
+			logger.Error("migrate PostgreSQL schema", "error", err)
+			os.Exit(1)
+		}
+	}
+	if cfg.Environment == "development" {
+		if err := repository.SeedPreviewIdentity(ctx, cfg.AdminPassword, cfg.WorkerPassword); err != nil {
+			logger.Error("seed PostgreSQL preview identities", "error", err)
+			os.Exit(1)
+		}
+		if err := repository.SeedPreviewMasters(ctx); err != nil {
+			logger.Error("seed PostgreSQL preview masters", "error", err)
+			os.Exit(1)
+		}
+		if err := repository.SeedPreviewInventory(ctx); err != nil {
+			logger.Error("seed PostgreSQL preview inventory", "error", err)
+			os.Exit(1)
+		}
+	}
+	objects, err := storage.New(ctx, cfg)
+	if err != nil {
+		logger.Error("create object storage", "driver", cfg.StorageDriver, "error", err)
+		os.Exit(1)
+	}
+	app, err := web.New(cfg, store, repository, objects, logger)
 	if err != nil {
 		logger.Error("create web server", "error", err)
 		os.Exit(1)
@@ -88,6 +121,7 @@ func main() {
 	}()
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	go app.RunExchangeRateSync(stop)
 	<-stop.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

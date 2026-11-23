@@ -1,0 +1,66 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {JSDOM}=require('jsdom');
+const ref=path.resolve(__dirname,'../public/admin-reference');
+const dom=new JSDOM('<main></main>',{runScripts:'dangerously',url:'http://localhost/'}),w=dom.window;
+w._escHtml=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+w.formatPrice=n=>'JPY '+Number(n).toLocaleString('en-US');
+w.formatPurchaseIssuedAt=s=>s;
+w.getCompanyInfo=()=>({companyName:'POLEPOLE CO., LTD.',zip:'000-0000',address:'1-2-3 Sample, Tokyo\nJAPAN',tel:'+81-00-0000-0000',email:'shipping@example.com'});
+w.APP_DATA={inventory:[],beltMaterialRecords:[{code:'2',name:'ジュビリー',domesticDetail:'国内ベルト',overseasDetail:'Jubilee'}],accessoryRecords:[{code:'2',name:'箱',domesticDetail:'国内箱',overseasDetail:'Box'},{code:'1',name:'RX箱',overseasDetail:'（表記無し）'}],staffRecords:[{code:'1',name:'田中',overseasDetail:'Buyer One'}]};
+w.allAccessoryMasterRecords=()=>w.APP_DATA.accessoryRecords;
+for(const name of ['master_display.js','price_code.js','slip_statement.js'])w.eval(fs.readFileSync(path.join(ref,'js',name),'utf8'));
+const app=fs.readFileSync(path.join(ref,'js/app.js'),'utf8');
+w.eval(app.slice(app.indexOf('function getDocumentMasterName('),app.indexOf('function buildPurchaseRecordTemplateHTML(')));
+w.eval(app.slice(app.indexOf('function getSlipCompanyInfo('),app.indexOf('/** 雛形準拠の請求書')));
+const p={code:'2909260001',brand:'ROLEX',model:'Datejust',ref:'126234',serial:'SAMPLE001',material:'SS',movement:'AT',belt:'2',dial:'Silver',weightGrams:150,accessories:['2'],staffCode:'1',boxNo:'BOX1',purchasePrice:1200000,note:'Light scratches on clasp.',comment:'PRIVATE INTERNAL COMMENT'};
+w.APP_DATA.inventory.push(p);
+const original=JSON.stringify(w.APP_DATA);
+assert.equal(w.overseasSlipSystemNote('バイヤー：2\n支払い方法：銀行振込\n仕入通貨：米ドル（USD）\n仕入レート（登録時固定）：1 USD = ¥155.00\n傷あり'), 'Buyer: 2\nPayment method: Bank transfer\nPurchase currency: USD\nRegistered purchase exchange rate: 1 USD = ¥155.00\n傷あり');
+const opts={title:'出荷伝票',slipId:'SAMPLE-001',issuedAt:'2026-09-29T00:00:00Z',transactionDate:'2026-09-29',counterparty:{regionType:'overseas',name:'EXAMPLE WATCH TRADING LTD.',address:'Unit 001, Sample Building\nKowloon\nHONG KONG',contact:'+852-0000-0000',email:'purchasing@example.com'},note:'Sample overseas shipment.',items:[{code:p.code,amount:1550000}],currencyLabel:'JPY（円）'};
+const root=w.document.createElement('div');
+function render(o=opts){root.innerHTML=w.buildTemplateStyleSlipDocument(o);return root;}
+render();
+assert.equal(root.querySelector('.oi-title').textContent,'INVOICE');
+assert.match(root.querySelector('.oi-party').textContent,/Shipper:POLEPOLE/);
+assert.match(root.querySelectorAll('.oi-party')[1].textContent,/Consignee:EXAMPLE/);
+assert.match(root.querySelector('.oi-totals').textContent,/150 g/);
+assert.match(root.querySelector('.oi-grand').textContent,/JPY 1,550,000/);
+assert.equal(root.querySelector('.tpl-detail-heading h2').textContent,'ITEMIZED STATEMENT');
+assert.deepEqual([...root.querySelectorAll('.tpl-detail-table th')].map(n=>n.textContent),['No','Product information','Remarks','Estimated price','Internal reference']);
+assert.match(root.querySelector('.tpl-detail-table').textContent,/Jubilee/);
+assert.match(root.querySelector('.tpl-detail-table').textContent,/Box/);
+assert.ok(!root.textContent.includes('国内箱'));assert.ok(!root.textContent.includes('PRIVATE INTERNAL COMMENT'));
+assert.ok(!root.querySelector('.tpl-cell-code').textContent.includes('1200000'));
+assert.equal(root.querySelectorAll('.tpl-detail-table tbody tr').length,40);
+assert.equal(root.querySelectorAll('.tpl-detail-page').length,1);
+for (const title of ['仕入伝票','仕入返品伝票','売上返品伝票','出荷伝票','委託伝票','請求書','売上修正伝票']) {
+ render({...opts,title,taxMode:'standard',includeBank:true});
+ assert.ok(root.querySelector('.tpl-overseas'),title);
+ assert.match(root.querySelector('.oi-grand').textContent,/1,705,000/);
+ assert.equal(root.querySelector('.oi-party strong').textContent,['仕入伝票','売上返品伝票'].includes(title)?opts.counterparty.name:'POLEPOLE CO., LTD.');
+ assert.ok(root.querySelector('.oi-bank'));assert.equal(root.querySelectorAll('.oi-notes').length,1);
+}
+render({...opts,currencyLabel:'USD',formatAmount:n=>'$'+n.toLocaleString('en-US'),items:[{code:p.code,amount:12345}]});
+assert.match(root.querySelector('.oi-grand').textContent,/Total \(USD\)\$12,345/);
+render({...opts,counterparty:{...opts.counterparty,regionType:'domestic'}});
+assert.equal(root.querySelector('.oi-title'),null);assert.equal(root.querySelector('.tpl-detail-heading h2').textContent,'明細表');
+assert.ok(root.textContent.includes('国内箱'));
+render({...opts,items:Array.from({length:41},()=>({code:p.code,amount:1}))});
+assert.equal(root.querySelectorAll('.tpl-detail-page').length,2);
+assert.equal(root.querySelectorAll('tbody tr:not(.oi-blank)').length,41);
+assert.equal(root.querySelectorAll('.tpl-statement-summary').length,1);
+const detail=w.getSlipStatementProduct(p,'overseas',{}, {documentType:'purchaseReturn'});
+detail.accessories=w.accessoryDisplayNames(['1'],{},'overseas',{documentType:'purchaseReturn'});
+render({...opts,title:'仕入返品伝票',items:[{code:p.code,product:detail,amount:1}]});assert.ok(root.textContent.includes('RX箱'));
+render({...opts,items:[{code:p.code,product:{...detail,weightGrams:''},amount:1}]});
+assert.match(root.querySelector('.oi-totals').textContent,/Weight unavailable for 1 item/);
+render({...opts,counterparty:{...opts.counterparty,name:'<img src=x>'},note:'<script>unsafe</script>'});assert.equal(root.querySelectorAll('img,script').length,0);
+assert.equal(JSON.stringify(w.APP_DATA),original);
+if(process.env.OVERSEAS_PREVIEW_DIR){
+ fs.mkdirSync(process.env.OVERSEAS_PREVIEW_DIR,{recursive:true});
+ const sample={...opts,items:process.env.OVERSEAS_PREVIEW_COUNT ? Array.from({length:Number(process.env.OVERSEAS_PREVIEW_COUNT)},()=>({code:p.code,amount:1550000})) : [{code:p.code,amount:1550000},{code:p.code,amount:1240000},{code:p.code,amount:930000}]};
+ const html=w.buildTemplateStyleSlipDocument(sample);
+ const libs=['vendor/jspdf.umd.min.js','vendor/html2canvas.min.js','slip_pdf.js'].map(n=>'<script>'+fs.readFileSync(path.join(ref,'js',n),'utf8').replace(/<\/script/gi,'<\\/script')+'</script>').join('');
+ fs.writeFileSync(path.join(process.env.OVERSEAS_PREVIEW_DIR,'index.html'),`<!doctype html><meta charset="utf-8"><title>Overseas invoice verification</title><style>body{margin:0;background:#eceef1}nav{padding:15px;text-align:center}button{padding:10px 20px}</style><nav>TEST DATA ONLY <button onclick="makePdf()">Download PDF</button> <output id="result"></output></nav><main id="doc">${html}</main>${libs}<script>async function makePdf(){try{const b=await buildSlipPdfBlob('Overseas Invoice',document.getElementById('doc').innerHTML);const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='overseas-invoice-check.pdf';a.click();document.getElementById('result').textContent='PDF ready';}catch(e){document.getElementById('result').textContent=e.message;}}</script>`);
+}
+dom.window.close();console.log('Overseas invoices: switching, roles, master labels, amounts/tax/currency, privacy, 40/41 pagination, missing weights, RX box, escaping and immutability passed.');

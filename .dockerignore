@@ -1,0 +1,25 @@
+.git
+.data
+.tooling
+.pnpm-store
+frontend/node_modules
+infra/terraform/.terraform
+*.tfstate*
+.env
+
+# Cloud deployment secrets and generated dependencies must never enter an image.
+**/node_modules
+**/.wrangler
+**/.dev.vars*
+**/secrets*.json
+.env.*
+.tmp
+.runtime
+.backups
+.logs
+output
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3

@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS ux_products_organization_product_code_normalized;

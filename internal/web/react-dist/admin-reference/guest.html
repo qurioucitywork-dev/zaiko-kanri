@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>在庫管理ツール — ゲスト画面</title>
+<link rel="stylesheet" href="css/guest.css?v=20261013-image-zoom">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css">
+</head>
+<body>
+<header class="guest-header">
+  <div class="guest-header-inner">
+    <a class="guest-brand" href="#catalog" aria-label="在庫管理ツール 商品一覧へ">
+      <span class="guest-brand-icon"><i class="fa-solid fa-boxes-stacked" aria-hidden="true"></i></span>
+      <span>在庫管理ツール</span>
+      <span class="guest-role-badge">GUEST</span>
+    </a>
+    <nav class="guest-actions" aria-label="ゲスト画面操作">
+      <button class="guest-action guest-search-jump" type="button" onclick="focusGuestSearch()">
+        <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i><span data-i18n="inventorySearch">在庫検索</span>
+      </button>
+      <button class="guest-action guest-cart-button" type="button" onclick="openGuestCart()" aria-label="カートを開く">
+        <i class="fa-solid fa-cart-shopping" aria-hidden="true"></i>
+        <span data-i18n="cart">カート</span><span id="guest-cart-count" class="guest-cart-count">0</span>
+      </button>
+      <button id="guest-history-button" class="guest-action guest-history-button" type="button" onclick="openGuestRequestHistory()" aria-haspopup="dialog">
+        <i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i><span data-i18n="requestHistory">購入リクエスト履歴</span>
+      </button>
+      <button id="guest-inquiry-button" class="guest-action" type="button" onclick="openGuestInquiry()"><i class="fa-solid fa-envelope" aria-hidden="true"></i><span data-i18n="inquiry">お問い合わせ</span></button>
+      <a class="guest-action guest-logout" href="index.html" onclick="clearGuestSession()">
+        <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i><span data-i18n="logout">ログアウト</span>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="catalog" class="guest-main">
+  <div id="guest-success" class="guest-success hidden" role="status" aria-live="polite"></div>
+
+  <section class="guest-notice" aria-label="価格に関するご案内">
+    <i class="fa-solid fa-circle-info" aria-hidden="true"></i>
+    <span data-i18n="taxNotice">表示価格は税抜き価格です。ご不明な点はお気軽にお問い合わせください。</span>
+  </section>
+
+  <section class="guest-filter-card" aria-label="商品検索条件">
+    <div class="guest-search-field">
+      <label class="sr-only" for="guest-search">ブランド、モデル、型番で検索</label>
+      <i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i>
+      <input id="guest-search" type="search" placeholder="ブランド / モデル / 型番で検索..." oninput="renderGuestCatalog()">
+    </div>
+    <div class="guest-filter-field">
+      <label class="sr-only" for="guest-brand-filter">ブランド</label>
+      <select id="guest-brand-filter" onchange="renderGuestCatalog()"></select>
+    </div>
+    <div class="guest-filter-field">
+      <label class="sr-only" for="guest-condition-filter">コンディション</label>
+      <select id="guest-condition-filter" onchange="renderGuestCatalog()"></select>
+    </div>
+    <div class="guest-result-count" aria-live="polite"><strong id="guest-result-count">0</strong><span data-i18n="items">点</span></div>
+  </section>
+
+  <section id="guest-product-grid" class="guest-product-grid" aria-label="公開商品一覧"></section>
+  <section id="guest-empty" class="guest-empty hidden">
+    <i class="fa-solid fa-box-open" aria-hidden="true"></i>
+    <h2 data-i18n="emptyTitle">公開中の商品がありません</h2>
+    <p data-i18n="emptyBody">検索条件を変更するか、管理者へお問い合わせください。</p>
+  </section>
+</main>
+
+<main id="guest-inquiry-page" class="guest-main hidden" aria-labelledby="guest-inquiry-title">
+  <section class="guest-inquiry-card">
+    <button type="button" class="guest-button guest-button-secondary" onclick="showGuestCatalog()"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i><span data-i18n="backToProducts">商品一覧に戻る</span></button>
+    <h1 id="guest-inquiry-title" tabindex="-1" data-i18n="inquiry">お問い合わせ</h1>
+    <p data-i18n="inquiryIntro">ご質問やご相談をお送りください。管理者が内容を確認し、登録済みの連絡先へご連絡します。</p>
+    <p><span data-i18n="inquirySender">送信者</span>：<strong id="guest-inquiry-sender"></strong></p>
+    <div id="guest-inquiry-success" class="guest-success hidden" role="status" aria-live="polite"></div>
+    <form id="guest-inquiry-form" onsubmit="submitGuestInquiry(event)">
+      <label for="guest-inquiry-subject" data-i18n="inquirySubject">件名（必須）</label>
+      <input id="guest-inquiry-subject" name="subject" type="text" required maxlength="200">
+      <label for="guest-inquiry-product" data-i18n="inquiryProduct">管理番号（任意）</label>
+      <input id="guest-inquiry-product" name="productCode" type="text" maxlength="100">
+      <label for="guest-inquiry-message" data-i18n="inquiryMessage">お問い合わせ内容（必須）</label>
+      <textarea id="guest-inquiry-message" name="message" rows="8" required maxlength="5000"></textarea>
+      <p id="guest-inquiry-error" class="guest-inquiry-error" role="alert"></p>
+      <div class="guest-inquiry-footer"><button id="guest-inquiry-submit" class="guest-button guest-button-primary" type="submit"><i class="fa-solid fa-paper-plane" aria-hidden="true"></i><span data-i18n="inquirySend">お問い合わせを送信</span></button></div>
+    </form>
+  </section>
+</main>
+
+<div id="guest-cart-overlay" class="guest-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="guest-cart-title">
+  <div class="guest-modal guest-cart-modal">
+    <div class="guest-modal-header">
+      <h2 id="guest-cart-title"><i class="fa-solid fa-cart-shopping" aria-hidden="true"></i> <span data-i18n="cart">カート</span></h2>
+      <button class="guest-icon-button" type="button" onclick="closeGuestCart()" aria-label="カートを閉じる"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div class="guest-modal-body">
+      <div id="guest-cart-items" class="guest-cart-items"></div>
+      <div class="guest-cart-total">
+        <span data-i18n="totalTaxExcluded">合計（税抜）</span>
+        <strong id="guest-cart-total">¥0</strong>
+      </div>
+      <fieldset class="guest-checklist">
+        <legend><i class="fa-solid fa-clipboard-check" aria-hidden="true"></i> <span data-i18n="checklist">購入前確認チェックリスト</span></legend>
+        <label><input class="guest-confirm-check" type="checkbox" onchange="updateGuestSubmitState()"><span data-i18n="confirmDetails">商品の詳細情報（コンディション・付属品）を確認しました</span></label>
+        <label><input class="guest-confirm-check" type="checkbox" onchange="updateGuestSubmitState()"><span data-i18n="confirmPrice">表示価格（税抜）に同意しました</span></label>
+        <label><input class="guest-confirm-check" type="checkbox" onchange="updateGuestSubmitState()"><span data-i18n="confirmPolicy">返品・交換ポリシーを確認しました</span></label>
+        <label><input class="guest-confirm-check" type="checkbox" onchange="updateGuestSubmitState()"><span data-i18n="confirmContact">注文後、担当者よりご連絡があることを了承しました</span></label>
+      </fieldset>
+      <div class="guest-note-field">
+        <label for="guest-request-note" data-i18n="requestNote">管理者への備考（任意）</label>
+        <textarea id="guest-request-note" rows="2" maxlength="300" placeholder="希望納期や確認事項をご記入ください"></textarea>
+      </div>
+    </div>
+    <div class="guest-modal-footer">
+      <button class="guest-button guest-button-secondary" type="button" onclick="closeGuestCart()" data-i18n="closeCart">カートを閉じる</button>
+      <button id="guest-submit-request" class="guest-button guest-button-primary" type="button" onclick="submitGuestPurchaseRequest()" disabled>
+        <i class="fa-solid fa-paper-plane" aria-hidden="true"></i><span data-i18n="checkAll">すべての項目にチェックを入れてください</span>
+      </button>
+    </div>
+  </div>
+</div>
+
+<div id="guest-history-overlay" class="guest-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="guest-history-title">
+  <div class="guest-modal guest-history-modal">
+    <div class="guest-modal-header">
+      <h2 id="guest-history-title"><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> <span data-i18n="requestHistory">購入リクエスト履歴</span></h2>
+      <button class="guest-icon-button" type="button" onclick="closeGuestRequestHistory()" aria-label="閉じる"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div id="guest-history-body" class="guest-modal-body" aria-live="polite"></div>
+    <div class="guest-modal-footer">
+      <button class="guest-button guest-button-secondary" type="button" onclick="closeGuestRequestHistory()" data-i18n="closeHistory">閉じる</button>
+      <button class="guest-button guest-button-primary" type="button" onclick="openGuestRequestHistory()" data-i18n="refreshHistory">更新</button>
+    </div>
+  </div>
+</div>
+
+<div id="guest-detail-overlay" class="guest-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="guest-detail-title">
+  <div class="guest-modal guest-detail-modal">
+    <div class="guest-modal-header">
+      <h2 id="guest-detail-title">商品詳細</h2>
+      <button class="guest-icon-button" type="button" onclick="closeGuestDetail()" aria-label="商品詳細を閉じる"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+    </div>
+    <div id="guest-detail-body" class="guest-modal-body"></div>
+  </div>
+</div>
+
+<script src="js/data.js"></script>
+<script src="js/guest_shared.js"></script>
+<script src="js/login_info.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/api_bridge.js"></script>
+<script src="js/guest.js?v=20261013-image-zoom"></script>
+</body>
+</html>

@@ -1,0 +1,20 @@
+# Preparation only. No environment credentials or volume have been created yet.
+# Always use an explicit -f and -p; never merge with compose.yaml.
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: zaiko_clean
+      POSTGRES_USER: zaiko_clean
+      POSTGRES_PASSWORD: ${ZAIKO_CLEAN_DB_PASSWORD:?Generate a new local password before initialization}
+    ports:
+      - "127.0.0.1:15432:5432"
+    volumes:
+      - postgres-clean-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zaiko_clean -d zaiko_clean"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+volumes:
+  postgres-clean-data:

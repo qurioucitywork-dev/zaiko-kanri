@@ -1,0 +1,1 @@
+-- Irreversible data correction: a cost-merge output has no single purchase supplier.

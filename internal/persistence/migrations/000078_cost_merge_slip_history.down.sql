@@ -1,0 +1,1 @@
+-- Irreversible data correction: accumulated adjustment-slip history must be retained.
