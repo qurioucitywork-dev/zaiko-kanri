@@ -102,7 +102,7 @@ func marketPriceQuery(db *gorm.DB) *gorm.DB {
 			m.purchase_price_minor,m.purchase_currency,m.market_price_minor,m.market_currency,
 			m.market_fx_rate_scaled,m.market_fx_scale,
 			COALESCE(sr.role_code,'') AS supplier_code,COALESCE(sp.staff_code,'') AS staff_code,
-			COALESCE(su.display_name,'') AS staff_name,
+			COALESCE(sp.display_name,'') AS staff_name,
 			COALESCE(NULLIF(m.material_text,''),mt.code,'') AS material_code,
 			COALESCE(NULLIF(m.movement_text,''),mv.code,'') AS movement_code,
 			COALESCE(NULLIF(m.condition_text,''),c.code,'') AS condition_code,
@@ -119,7 +119,6 @@ func marketPriceQuery(db *gorm.DB) *gorm.DB {
 		Joins("LEFT JOIN product_conditions c ON c.id=m.condition_id AND c.organization_id=m.organization_id").
 		Joins("LEFT JOIN partner_roles sr ON sr.id=m.supplier_role_id AND sr.organization_id=m.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=m.purchase_staff_profile_id AND sp.organization_id=m.organization_id").
-		Joins("LEFT JOIN users su ON su.id=sp.user_id AND su.organization_id=m.organization_id").
 		Joins("LEFT JOIN materials mt ON mt.id=m.material_id AND mt.organization_id=m.organization_id").
 		Joins("LEFT JOIN movements mv ON mv.id=m.movement_id AND mv.organization_id=m.organization_id").
 		Joins("LEFT JOIN auction_houses ah ON ah.id=m.auction_house_id AND ah.organization_id=m.organization_id").

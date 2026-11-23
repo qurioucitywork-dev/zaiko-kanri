@@ -32,24 +32,12 @@ func (s *Server) apiPurchaseStaff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user, _ := currentUser(r.Context())
-	records, err := s.repository.Users(r.Context(), user.OrganizationID, false)
+	records, err := s.repository.PurchaseStaff(r.Context(), user.OrganizationID)
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "purchase_staff_unavailable", "仕入担当者を取得できませんでした。")
+		writeAPIError(w, http.StatusInternalServerError, "purchase_staff_unavailable", "バイヤーを取得できませんでした。")
 		return
 	}
-	type staffRecord struct {
-		ID          string `json:"id"`
-		StaffCode   string `json:"staffCode"`
-		DisplayName string `json:"displayName"`
-	}
-	items := make([]staffRecord, 0, len(records))
-	for _, record := range records {
-		if record.StaffCode == "" || !record.IsPurchaseStaff || !record.IsActive {
-			continue
-		}
-		items = append(items, staffRecord{ID: record.ID, StaffCode: record.StaffCode, DisplayName: record.DisplayName})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	writeJSON(w, http.StatusOK, map[string]any{"items": records, "total": len(records)})
 }
 
 func (s *Server) apiUserCreate(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +55,7 @@ func (s *Server) apiUserCreate(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, persistence.ErrUserInvalid) {
 			status = http.StatusBadRequest
 		}
-		writeAPIError(w, status, "user_create_failed", "ログインID、メール、固定コード、パスワードを確認してください。")
+		writeAPIError(w, status, "user_create_failed", "ログインID、メール、12文字以上のパスワードを確認してください。")
 		return
 	}
 	after, _ := json.Marshal(record)
@@ -98,7 +86,7 @@ func (s *Server) apiUserUpdate(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, persistence.ErrLastAdministrator) {
 			status, code = http.StatusConflict, "last_administrator"
 		}
-		writeAPIError(w, status, code, "利用者情報を更新できませんでした。")
+		writeAPIError(w, status, code, "利用者情報を更新できませんでした。ログインIDの重複・形式と、変更するパスワードの文字数を確認してください。")
 		return
 	}
 	beforeJSON, _ := json.Marshal(before)
@@ -125,7 +113,7 @@ func (s *Server) apiUserPassword(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, persistence.ErrUserNotFound) {
 			status = http.StatusNotFound
 		}
-		writeAPIError(w, status, "password_change_failed", "8文字以上の新しいパスワードを確認してください。")
+		writeAPIError(w, status, "password_change_failed", "作業者・管理者は12文字以上、ゲストは8文字以上、いずれも72バイト以内で入力してください。")
 		return
 	}
 	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: actor.OrganizationID, ActorUserID: actor.ID,
@@ -136,7 +124,7 @@ func (s *Server) apiUserPassword(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiPartners(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
-	records, err := s.repository.Partners(r.Context(), user.OrganizationID, r.URL.Query().Get("includeInactive") == "true" && user.Role == database.RoleAdmin)
+	records, err := s.repository.Partners(r.Context(), user.OrganizationID, r.URL.Query().Get("includeInactive") == "true" && (user.Role == database.RoleAdmin || hasAdminPageGrant(r)))
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "partners_unavailable", "取引先情報を取得できませんでした。")
 		return
@@ -156,6 +144,10 @@ func (s *Server) apiPartnerCreate(w http.ResponseWriter, r *http.Request) {
 	record, err := s.repository.CreatePartner(r.Context(), actor.OrganizationID, actor.ID, input)
 	if err != nil {
 		status := http.StatusConflict
+		if errors.Is(err, persistence.ErrAuctionFee) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_auction_fee", "手数料の料率・固定額・価格帯を確認してください。価格帯は0円から上限なしまで重複や空白なく設定してください。")
+			return
+		}
 		if errors.Is(err, persistence.ErrPartnerInvalid) {
 			status = http.StatusBadRequest
 		}
@@ -185,6 +177,10 @@ func (s *Server) apiPartnerUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	record, err := s.repository.UpdatePartner(r.Context(), actor.OrganizationID, r.PathValue("id"), actor.ID, input)
 	if err != nil {
+		if errors.Is(err, persistence.ErrAuctionFee) {
+			writeAPIError(w, http.StatusBadRequest, "invalid_auction_fee", "手数料の料率・固定額・価格帯を確認してください。価格帯は0円から上限なしまで重複や空白なく設定してください。")
+			return
+		}
 		writeAPIError(w, http.StatusBadRequest, "partner_update_failed", "会社情報または取引区分を確認してください。")
 		return
 	}

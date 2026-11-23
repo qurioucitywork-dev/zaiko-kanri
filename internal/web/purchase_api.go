@@ -62,6 +62,20 @@ func (s *Server) apiDeletedPurchases(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) apiDeletedPurchase(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	record, err := s.repository.DeletedPurchaseSlip(r.Context(), user.OrganizationID, r.PathValue("id"))
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, persistence.ErrPurchaseNotFound) {
+			status = http.StatusNotFound
+		}
+		writeAPIError(w, status, "purchase_not_found", "仕入伝票が見つかりません。")
+		return
+	}
+	writeJSON(w, http.StatusOK, record)
+}
+
 func (s *Server) apiPurchase(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
 	record, err := s.repository.PurchaseSlip(r.Context(), user.OrganizationID, r.PathValue("id"))
@@ -104,8 +118,18 @@ func (s *Server) apiPurchaseRevision(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, persistence.ErrPurchaseNotFound):
 			status, code, message = http.StatusNotFound, "purchase_not_found", "仕入伝票が見つかりません。"
+		case errors.Is(err, persistence.ErrPurchaseCostStatusLocked):
+			status, code, message = http.StatusConflict, "purchase_cost_status_locked", "原価を修正できる商品は仕入中・在庫中・出荷中のみです。画面を再読み込みして状態を確認してください。"
+		case errors.Is(err, persistence.ErrExchangeRate):
+			status, code, message = http.StatusConflict, "purchase_revision_fx_missing", "登録時の仕入レートが確認できないため、原価を修正できません。"
+		case errors.Is(err, persistence.ErrPurchaseAlreadyPaid):
+			status, code, message = http.StatusConflict, "purchase_already_paid", "支払済みの仕入伝票は修正できません。"
 		case errors.Is(err, persistence.ErrPurchaseDateMismatch):
 			status, code, message = http.StatusConflict, "purchase_date_fixed", "採番済み商品の仕入日は変更できません。"
+		case errors.Is(err, persistence.ErrSlipRevisionUnchanged):
+			status, code, message = http.StatusBadRequest, "revision_unchanged", "伝票の内容に変更がありません。保存理由だけでは修正できません。"
+		case errors.Is(err, persistence.ErrPurchaseReturnProductLocked):
+			status, code, message = http.StatusConflict, "purchase_return_product_locked", "仕入返品処理中の商品情報は変更できません。先に仕入返品伝票を取り下げてください。"
 		case errors.Is(err, persistence.ErrPurchaseRevisionInvalid):
 			status, code, message = http.StatusBadRequest, "invalid_purchase_revision", "保存理由・明細の金額と通貨を確認してください。海外仕入の原価変更はこの画面ではできません。"
 		case errors.Is(err, persistence.ErrSupplierNotFound), errors.Is(err, persistence.ErrStaffNotFound):
@@ -315,6 +339,13 @@ func (s *Server) apiPurchaseDelete(w http.ResponseWriter, r *http.Request) {
 func writePurchaseError(w http.ResponseWriter, err error) {
 	status, code, message := http.StatusInternalServerError, "purchase_failed", "仕入伝票を処理できませんでした。"
 	switch {
+
+	case errors.Is(err, persistence.ErrAuctionFeeChanged):
+		status, code, message = http.StatusConflict, "auction_fee_changed", "手数料マスタが変更されています。画面を更新して設定・金額を確認してください。"
+	case errors.Is(err, persistence.ErrAuctionFee):
+		status, code, message = http.StatusBadRequest, "invalid_auction_fee", "手数料は円取引のみ対応しています。設定内容と商品金額を確認してください（売上は手数料を下回る金額では登録できません）。"
+	case errors.Is(err, persistence.ErrInvalidProductWeight):
+		status, code, message = http.StatusBadRequest, "invalid_product_weight", "グラムは0以上の数字で入力してください。"
 	case errors.Is(err, persistence.ErrSupplierNotFound):
 		status, code, message = http.StatusBadRequest, "supplier_not_found", "仕入先コードが見つかりません。"
 	case errors.Is(err, persistence.ErrStaffNotFound):
@@ -330,7 +361,7 @@ func writePurchaseError(w http.ResponseWriter, err error) {
 	case errors.Is(err, persistence.ErrPurchaseTaxMode):
 		status, code, message = http.StatusBadRequest, "invalid_purchase_tax_mode", "仕入区分は国内業者仕入／オークション、個人買取仕入、海外仕入のいずれかを指定してください。"
 	case errors.Is(err, persistence.ErrPurchaseTaxCategory):
-		status, code, message = http.StatusBadRequest, "invalid_purchase_tax_category", "税区分は消費税、消費税相当額、対象外のいずれかを指定してください。"
+		status, code, message = http.StatusBadRequest, "invalid_purchase_tax_category", "税区分は消費税、消費税相当額、TAX FREEのいずれかを指定してください。"
 	case errors.Is(err, persistence.ErrPurchasePaymentMethod):
 		status, code, message = http.StatusBadRequest, "invalid_purchase_payment_method", "支払い方法は現金、銀行振込、カードのいずれかを指定してください。"
 	case errors.Is(err, persistence.ErrPurchaseNotFound):

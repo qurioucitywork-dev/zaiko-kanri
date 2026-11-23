@@ -12,14 +12,7 @@ function _consignmentToday() {
   return new Date(now.getTime() - offset).toISOString().slice(0, 10);
 }
 
-function _nextConsignmentNumber() {
-  const year = new Date().getFullYear();
-  const max = (APP_DATA.consignments || []).reduce((current, record) => {
-    const match = String(record.id || '').match(/^CO-(\d{4})-(\d+)$/);
-    return match && Number(match[1]) === year ? Math.max(current, Number(match[2])) : current;
-  }, 0);
-  return `CO-${year}-${String(max + 1).padStart(4, '0')}`;
-}
+function _nextConsignmentNumber() { return nextDailySlipNumber('IT', document.getElementById('co-date')?.value || _consignmentToday()); }
 
 function init_consignment() {
   if (!Array.isArray(APP_DATA.consignments)) APP_DATA.consignments = [];
@@ -64,7 +57,7 @@ function renderRegisteredConsignmentSlips() {
         </button>
       </td>
       <td style="text-align:center;white-space:nowrap;" onclick="event.stopPropagation()">
-        <button type="button" class="btn btn-primary btn-sm" onclick="issueConsignmentSlipDocument('${id}',event)" ${canIssuePurchaseSlip() ? '' : 'disabled'}>
+        <button type="button" class="btn btn-primary btn-sm" onclick="issueConsignmentSlipDocument('${id}',event)" ${canIssuePurchaseSlip() && (!row.apiManaged || row.apiStatus === 'confirmed') ? '' : 'disabled'}>
           <i class="fa-solid fa-file-arrow-down"></i> ${row.issuedAt ? '再発行' : '発行'}
         </button>
       </td>
@@ -79,8 +72,8 @@ function resetConsignmentForm(notify = false) {
   const dest = document.getElementById('co-dest');
   const note = document.getElementById('co-note');
   const lines = document.getElementById('consignmentLines');
-  if (id) id.value = _nextConsignmentNumber();
   if (date) date.value = _consignmentToday();
+  if (id) id.value = _nextConsignmentNumber();
   if (dest) dest.value = '';
   if (note) note.value = '';
   if (lines) lines.innerHTML = '';
@@ -109,6 +102,11 @@ function addConsignmentLine() {
     </div>
     <div class="consignment-readonly-cell" id="co-brand-${id}">—</div>
     <div class="consignment-readonly-cell" id="co-model-${id}">—</div>
+    <div class="consignment-readonly-cell consignment-amount-cell" id="co-cost-${id}" data-label="原価（円）">—</div>
+    <div class="consignment-amount-cell" data-label="販売価格（USD）">
+      <input type="text" inputmode="numeric" class="form-control" id="co-price-${id}" aria-label="販売価格（USD）" placeholder="0" disabled
+        style="text-align:right;min-width:0;" oninput="priceFormatHandler(this)" onblur="priceFormatHandler(this)">
+    </div>
     <div>
       <button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger);"
         onclick="removeConsignmentLine(this)" aria-label="この委託明細行を削除">
@@ -152,14 +150,35 @@ function onConsignmentCodeInput(input, lineId, moveFocus = false) {
   const item = _consignableInventoryItem(input?.value);
   const brand = document.getElementById(`co-brand-${lineId}`);
   const model = document.getElementById(`co-model-${lineId}`);
-  if (!item) {
-    if (brand) brand.textContent = '—';
+  const cost = document.getElementById(`co-cost-${lineId}`);
+  const price = document.getElementById(`co-price-${lineId}`);
+  const hasCode = Boolean(String(input?.value || '').trim());
+  const available = Boolean(item && item.status === '在庫中');
+  const invalid = hasCode && !available;
+  input.style.borderColor = invalid ? 'var(--danger)' : (available ? 'var(--success)' : '');
+  input.setAttribute('aria-invalid', String(invalid));
+  if (invalid) input.setAttribute('aria-describedby', 'co-brand-' + lineId);
+  else input.removeAttribute('aria-describedby');
+  if (brand) brand.style.color = invalid ? 'var(--danger)' : '';
+  if (!available) {
+    if (brand) brand.textContent = invalid ? '未登録または在庫なし' : '—';
     if (model) model.textContent = '—';
+    if (cost) cost.textContent = '—';
+    if (price) { price.value = ''; price.dataset.rawValue = ''; delete price.dataset.productCode; price.disabled = true; }
     return false;
   }
   input.value = item.code;
   if (brand) brand.textContent = item.brand || '—';
   if (model) model.textContent = item.model || '—';
+  if (cost) cost.textContent = formatPrice(getInventoryFixedPurchaseCostJPY(item));
+  if (price) {
+    price.disabled = false;
+    if (price.dataset.productCode !== item.code) {
+      price.value = String(Number(item.salePrice) || 0);
+      priceFormatHandler(price);
+      price.dataset.productCode = item.code;
+    }
+  }
   const trailing = ensureConsignmentTrailingBlankLine();
   if (moveFocus && trailing) document.getElementById(`co-code-${trailing.dataset.lineId}`)?.focus();
   return true;
@@ -208,7 +227,7 @@ function _collectConsignmentItems() {
       unavailable.push(`${item?.code || code}（${item?.status || '未登録'}）`);
       return;
     }
-    const salePriceUsd = Number(item.salePrice) || 0;
+    const salePriceUsd = getPriceValue(document.getElementById(`co-price-${row.dataset.lineId}`));
     const rate = typeof getSalesUsdRate === 'function' ? getSalesUsdRate() : 155.25;
     items.push({
       code: item.code, brand: item.brand || '', model: item.model || '',
@@ -221,7 +240,7 @@ function _collectConsignmentItems() {
 }
 
 async function saveConsignment() {
-  if (!requireAdminForSensitiveOperation('委託伝票の登録')) return;
+  if (!isWorker() && !requireAdminForSensitiveOperation('委託伝票の登録')) return;
   const date = document.getElementById('co-date')?.value || '';
   const destination = document.getElementById('co-dest')?.value || '';
   const note = document.getElementById('co-note')?.value || '';
@@ -257,10 +276,11 @@ async function saveConsignment() {
         consignmentDate: date,
         notes: note,
         productCodes: items.map(item => item.code),
+        items: items.map(item => ({ productCode: item.code, salePriceUsdMinor: item.salePriceUsd })),
       });
       record = {
         ...record, _id: saved.id, id: saved.slipNumber, date: saved.consignmentDate,
-        status: '処理済', apiManaged: true, displayCurrency: 'JPY', inputCurrency: 'JPY',
+        status: saved.status === 'draft' ? '承認待ち' : '処理済', apiStatus: saved.status, apiManaged: true, displayCurrency: 'JPY', inputCurrency: 'JPY',
         fxRateScaled: Number(saved.fxRateScaled) || 0, fxScale: Number(saved.fxScale) || 0,
         usdJpyRate: Number(saved.fxRateScaled) > 0 && Number(saved.fxScale) > 0 ? Number(saved.fxRateScaled) / Number(saved.fxScale) : record.usdJpyRate,
         issuedAt: saved.issuedAt || null, issuedBy: saved.issuedBy || '',
@@ -281,7 +301,8 @@ async function saveConsignment() {
       });
       if (typeof refreshLinkedBusinessViews === 'function') refreshLinkedBusinessViews({ source: 'consignment-register' });
     }
-    showToast('success', '委託登録完了', `${record.id} / ${items.length}点を委託中へ更新しました`);
+    if (record.apiStatus === 'draft') showToast('success', '承認申請を送信しました', `${record.id} / 管理者承認後に委託が確定します`);
+    else showToast('success', '委託登録完了', `${record.id} / ${items.length}点を委託中へ更新しました`);
     resetConsignmentForm(false);
     renderRegisteredConsignmentSlips();
   } catch (error) {

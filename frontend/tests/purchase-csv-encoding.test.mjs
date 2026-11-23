@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {JSDOM} from 'jsdom';
+const dom=new JSDOM('<button id="pe-csv-import-button"></button>',{runScripts:'dangerously'});
+const w=dom.window;
+w.TextDecoder=TextDecoder;
+const script=w.document.createElement('script');
+script.textContent=await readFile(new URL('../public/admin-reference/js/purchase_entry.js',import.meta.url),'utf8');
+w.document.body.appendChild(script);
+const text='原価,売価\r\n1,2';
+const masters=[{code:'0001',name:'SS'},{code:'0010',name:'Calf'},{code:'S001',name:'仕入先'}];
+for(const code of ['1','01','001','0001'])assert.equal(w._peCSVFindRecord(masters,code),masters[0]);
+assert.equal(w._peCSVFindRecord(masters,'10'),masters[1]);
+assert.equal(w._peCSVFindRecord(masters,'S001'),masters[2]);
+assert.equal(w._peCSVFindRecord(masters,'SS'),masters[0]);
+assert.equal(w._peCSVFindRecord(masters,'2'),null);
+assert.equal(w._peCSVFindRecord(masters,'00001'),null);
+const sjis=Buffer.from('8cb489bf2c948489bf0d0a312c32','hex');
+const utf16be=Buffer.from('\ufeff'+text,'utf16le').swap16();
+const cases=[Buffer.from(text),Buffer.from('\ufeff'+text),sjis,Buffer.from('\ufeff'+text,'utf16le'),utf16be];
+for(const bytes of cases){
+  assert.equal(w._peDecodeCSVBuffer(bytes),text);
+  const input={files:[new w.File([bytes],'test.csv')],value:'test.csv'};
+  const imported=await new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>reject(Error('FileReader import timed out')),3000);
+    w.peImportCSVText=value=>{clearTimeout(timer);resolve(value);};
+    w._peShowCSVImportErrors=error=>{clearTimeout(timer);reject(error);};
+    w.peHandleCSVImport(input);
+    assert.equal(w.document.getElementById('pe-csv-import-button').disabled,true);
+  });
+  await new Promise(resolve=>setTimeout(resolve,0));
+  assert.equal(imported,text,'file picker must decode before parsing');
+  assert.equal(input.value,'');
+  assert.equal(w.document.getElementById('pe-csv-import-button').disabled,false);
+}
+assert.throws(()=>w._peDecodeCSVBuffer(Buffer.from('504b03040000','hex')),/Excelブック形式/u);
+assert.throws(()=>w._peDecodeCSVBuffer(Buffer.from('d0cf11e00000','hex')),/Excelブック形式/u);
+assert.throws(()=>w._peDecodeCSVBuffer(Buffer.from('efbbbfff','hex')),/文字コード/u);
+assert.throws(()=>w._peDecodeCSVBuffer(Buffer.from('fffe00','hex')),/文字コード/u);
+assert.throws(()=>w._peCSVValidateHeaders(['原価\t売価']),/タブ区切り/u);
+assert.throws(()=>w._peCSVValidateHeaders(['原価','売価']),error=>/マーキングコード/u.test(error.message)&&!error.message.includes('最新'));
+const parsed=w._peParseCSVText('\ufeffSKU,備考\r\n001,"カンマ,改行\n引用""符"\r\n');
+assert.equal(parsed[1][0],'001');
+assert.equal(parsed[1][1],'カンマ,改行\n引用"符');
+dom.window.close();
+console.log('Purchase CSV: UTF-8/BOM, Shift_JIS, UTF-16, real FileReader, format errors and quoted fields passed');

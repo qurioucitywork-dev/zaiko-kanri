@@ -11,6 +11,7 @@ import (
 )
 
 var ErrSaleRevisionInvalid = errors.New("invalid sale revision")
+var ErrSaleAlreadyPaid = errors.New("paid sale cannot be revised")
 
 type SaleRevisionLine struct {
 	ID             string `json:"id"`
@@ -40,15 +41,21 @@ func (r *Repository) ReviseSale(ctx context.Context, saleID string, input SaleRe
 		var slip struct {
 			ID, SlipNumber, DisplayCurrency, TaxMode string
 			TaxRateBasisPoints                       int
+			SaleDate                                 time.Time
+			BuyerRoleID, Notes                       string
+			PaidAt                                   *time.Time
 		}
 		result := tx.Table("sales_slips").Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id,slip_number,display_currency,tax_mode,tax_rate_basis_points").
+			Select("paid_at,id,slip_number,display_currency,tax_mode,tax_rate_basis_points,sale_date,COALESCE(buyer_role_id,'') AS buyer_role_id,COALESCE(notes,'') AS notes").
 			Where("organization_id=? AND id=? AND status<>'cancelled'", input.OrganizationID, saleID).Take(&slip)
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return ErrSaleNotFound
 		}
 		if result.Error != nil {
 			return result.Error
+		}
+		if slip.PaidAt != nil {
+			return ErrSaleAlreadyPaid
 		}
 		buyerRoleID, err := lookupBuyerRole(tx, input.OrganizationID, input.BuyerCode)
 		if err != nil {
@@ -57,14 +64,26 @@ func (r *Repository) ReviseSale(ctx context.Context, saleID string, input SaleRe
 		var rows []struct {
 			ID, ProductID, SaleCurrency, FXRateSnapshotID string
 			FXRateScaled, FXScale                         int64
+			UnitPriceMinor                                int64
 		}
 		if err := tx.Table("sales_lines").Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id,product_id,sale_currency,fx_rate_snapshot_id,fx_rate_scaled,fx_scale").
+			Select("id,product_id,sale_currency,fx_rate_snapshot_id,fx_rate_scaled,fx_scale,unit_price_minor").
 			Where("sales_slip_id=?", saleID).Order("line_number").Find(&rows).Error; err != nil {
 			return err
 		}
 		if len(rows) != len(input.Lines) {
 			return ErrSaleRevisionInvalid
+		}
+		changed := input.SaleDate != slip.SaleDate.Format("2006-01-02") || buyerRoleID != slip.BuyerRoleID || strings.TrimSpace(input.Notes) != strings.TrimSpace(slip.Notes)
+		for index, line := range input.Lines {
+			row := rows[index]
+			if line.ID == "" || line.ID != row.ID || line.UnitPriceMinor < 0 || row.SaleCurrency != slip.DisplayCurrency || row.FXRateScaled <= 0 || row.FXScale <= 0 {
+				return ErrSaleRevisionInvalid
+			}
+			changed = changed || line.UnitPriceMinor != row.UnitPriceMinor
+		}
+		if !changed {
+			return ErrSlipRevisionUnchanged
 		}
 		now := time.Now().UTC()
 		noteLine := "修正理由: " + reason
@@ -101,7 +120,7 @@ func (r *Repository) ReviseSale(ctx context.Context, saleID string, input SaleRe
 				return err
 			}
 			var comment string
-			if err := tx.Table("products").Select("internal_comment").Where("organization_id=? AND id=? AND deleted_at IS NULL", input.OrganizationID, row.ProductID).Scan(&comment).Error; err != nil {
+			if err := tx.Table("products").Select("COALESCE(internal_comment,'')").Where("organization_id=? AND id=? AND deleted_at IS NULL", input.OrganizationID, row.ProductID).Scan(&comment).Error; err != nil {
 				return err
 			}
 			comment = strings.TrimSpace(comment)

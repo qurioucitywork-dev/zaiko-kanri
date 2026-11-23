@@ -467,11 +467,22 @@ function _updateSortIcons() {
 }
 
 /** ステータスのソート順（pending → revision → approved） */
-const _statusOrder = { pending: 0, revision: 1, approved: 2 };
+const _statusOrder = { pending: 0, revision: 1, returned: 1, approved: 2 };
 
 // =====================================================
 // 承認リクエスト一覧レンダリング
 // =====================================================
+function formatApprovalRequestTime(value) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '—';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('ja-JP', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  return `${parts.year}/${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
 function renderApprovalList() {
   const tbody = document.getElementById('approvalListBody');
   if (!tbody) return;
@@ -500,7 +511,7 @@ function renderApprovalList() {
   _updateSortIcons();
 
   if (list.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:32px;">承認リクエストはありません</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#aaa;padding:32px;">承認リクエストはありません</td></tr>';
     return;
   }
 
@@ -509,15 +520,15 @@ function renderApprovalList() {
       pending:  '<span class="badge-approval pending"><i class="fa-solid fa-clock"></i> 保留中</span>',
       approved: '<span class="badge-approval approved"><i class="fa-solid fa-circle-check"></i> 承認済</span>',
       revision: '<span class="badge-approval revision"><i class="fa-solid fa-rotate-left"></i> 差戻し</span>',
+    returned: '<span class="badge-approval revision"><i class="fa-solid fa-rotate-left"></i> 差戻し</span>',
     }[req.status] || req.status;
 
     // 内容サマリー（クリック可）
     const summaryHtml = buildDetailSummary(req);
 
     return `<tr class="appr-row" onclick="openApprovalDetail('${req.id}')" title="クリックで詳細表示">
-      <td><code style="font-size:11px;">${req.id}</code></td>
       <td style="white-space:nowrap;font-size:12px;">
-        <i class="fa-solid fa-calendar-days" style="color:var(--text-muted);margin-right:4px;"></i>${req.createdAt}
+        <i class="fa-solid fa-calendar-days" style="color:var(--text-muted);margin-right:4px;"></i>${formatApprovalRequestTime(req.createdAt)}
       </td>
       <td>
         <div style="font-weight:bold;font-size:13px;">${req.buyerName}</div>
@@ -554,6 +565,8 @@ function typeIcon(type) {
 // ── 内容サマリー（一覧用・1行） ──
 function buildDetailSummary(req) {
   const d = req.detail || {};
+  const documentSummary=buildApprovalDocumentSummary(d);
+  if(documentSummary)return documentSummary;
 
   if (req.type === 'purchase') {
     return `<span class="appr-summary">
@@ -645,8 +658,11 @@ function approvalDisplayType(req) {
   const labels = {
     'purchase.confirm': '仕入伝票の確定',
     'purchase.confirmed': '仕入伝票の確定',
+    'sale.confirm': '売上伝票の確定',
+    'return.confirm': '返品伝票の確定',
     'sales.confirm': '売上伝票の確定',
     'sales.confirmed': '売上伝票の確定',
+    'consignment.confirm': '委託伝票の確定',
     'shipment.confirm': '出荷伝票の確定',
     'shipment.confirmed': '出荷伝票の確定',
     'consignment.confirm': '委託伝票の確定',
@@ -660,9 +676,11 @@ function approvalDisplayType(req) {
 
 function approvalTargetTypeLabel(value) {
   return ({
+    document_change: '伝票操作',
     purchase_slip: '仕入伝票',
     sales_slip: '売上伝票',
     shipment_slip: '出荷伝票',
+    consignment_slip: '委託伝票',
     consignment_slip: '委託伝票',
     return_slip: '返品伝票',
     product: '商品',
@@ -724,6 +742,10 @@ function buildReadableApprovalDetail(detail = {}) {
     const purchaseDetail = buildPurchaseApprovalTargetDetail(detail);
     if (purchaseDetail) return purchaseDetail;
   }
+  if(detail.targetType === 'stocktake_line') {
+    const escape = value => String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    return '<div class="appr-content-card">'+[['管理番号',detail.productCode],['ブランド',detail.brand],['モデル',detail.modelNumber],['不一致理由',detail.reason],['備考',detail.note]].map(([label,value])=>'<p>'+label+'：'+escape(value)+'</p>').join('')+'</div>';
+  }
   const targetLabel = approvalTargetTypeLabel(detail.targetType);
   const rows = [
     ['申請対象', targetLabel],
@@ -752,6 +774,7 @@ function openApprovalDetail(reqId) {
   // ボディ
   const body = document.getElementById('apprDetailBody');
   body.innerHTML = buildDetailModalBody(req);
+  body.closest('.modal').style.maxWidth=approvalDocumentSnapshot(req.detail||{})?'1000px':'640px';
 
   // フッター（ステータスに応じたボタン）
   const footer = document.getElementById('apprDetailFooter');
@@ -771,6 +794,7 @@ function buildDetailModalBody(req) {
     pending:  '<span class="badge-approval pending"><i class="fa-solid fa-clock"></i> 保留中</span>',
     approved: '<span class="badge-approval approved"><i class="fa-solid fa-circle-check"></i> 承認済</span>',
     revision: '<span class="badge-approval revision"><i class="fa-solid fa-rotate-left"></i> 差戻し</span>',
+    returned: '<span class="badge-approval revision"><i class="fa-solid fa-rotate-left"></i> 差戻し</span>',
   }[req.status] || req.status;
 
   // 共通ヘッダー情報
@@ -782,7 +806,7 @@ function buildDetailModalBody(req) {
       </div>
       <div class="appr-meta-row">
         <span class="appr-meta-label"><i class="fa-solid fa-calendar-days"></i> 申請日時</span>
-        <span class="appr-meta-val">${req.createdAt ? new Date(req.createdAt).toLocaleString('ja-JP') : '—'}</span>
+        <span class="appr-meta-val">${formatApprovalRequestTime(req.createdAt)}</span>
       </div>
       <div class="appr-meta-row">
         <span class="appr-meta-label"><i class="fa-solid fa-user"></i> 申請者</span>
@@ -819,7 +843,9 @@ function buildDetailModalBody(req) {
   `;
 
   // 種別ごとの詳細
-  if (req.type === 'purchase') {
+  const documentDetail=buildApprovalDocumentDetail(req.detail||{});
+  if(documentDetail){html+=documentDetail;}
+  else if (req.type === 'purchase') {
     html += buildPurchaseDetail(req.detail);
   } else if (req.type === 'purchase_edit') {
     html += buildSlipEditDetail(req, 'purchase');
@@ -1241,7 +1267,7 @@ function buildDetailModalFooter(req) {
       </button>
     `;
   }
-  return closeBtn;
+  return closeBtn + returnedApprovalButton(req);
 }
 
 // =====================================================
@@ -1253,7 +1279,7 @@ function openReviseModal(reqId) {
   const modal = document.getElementById('reviseModalOverlay');
   if (!modal) return;
   document.getElementById('reviseReqId').value = reqId;
-  document.getElementById('reviseReqInfo').textContent = `${req.typeLabel} / ${req.buyerName} / ${req.createdAt}`;
+  document.getElementById('reviseReqInfo').textContent = `${req.typeLabel} / ${req.buyerName} / ${formatApprovalRequestTime(req.createdAt)}`;
   document.getElementById('reviseComment').value = '';
   modal.classList.remove('hidden');
 }
@@ -1575,4 +1601,481 @@ function approveReturnToStock(reqId) {
   renderApprovalList();
   closeApprovalDetail();
   showToast('success', '承認・在庫戻しを実行しました', `${targets.length}件を在庫に戻しました`);
+}
+
+// Approval documents are displayed from the saved application snapshot, not mutable inventory prices.
+function approvalDocumentSnapshot(detail = {}) {
+ const doc=detail.document;
+ return ['purchase_slip','sales_slip','shipment_slip','return_slip','consignment_slip'].includes(detail.targetType)
+   && doc && typeof doc==='object' && !Array.isArray(doc) && doc.slipNumber ? doc : null;
+}
+function approvalDocumentEscape(value) {return String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function approvalDocumentMoney(value,currency) {
+ if(value==null || !Number.isFinite(Number(value)))return '—';
+ const code=/^[A-Z]{3}$/.test(currency||'')?currency:'JPY';
+ return new Intl.NumberFormat('ja-JP',{style:'currency',currency:code,maximumFractionDigits:code==='JPY'?0:2}).format(Number(value));
+}
+function approvalDocumentLines(detail) {
+ const doc=approvalDocumentSnapshot(detail);if(!doc)return [];
+ return [...(Array.isArray(doc.lines)?doc.lines:[]),...(doc.adjustmentDetails?.lines || []).map(line=>({productCode:'99999',modelNumber:line.name,quantity:0,costAmountMinor:line.amountMinor,costCurrency:doc.adjustmentDetails.currency}))].map(line=>{
+  let currency,unit,amount;
+  const quantity=line.quantity ?? 1;
+  if(detail.targetType==='purchase_slip'){currency=line.costCurrency;unit=line.unitCostMinor;amount=unit==null?null:Number(unit)*quantity;}
+  else if(['shipment_slip','consignment_slip'].includes(detail.targetType)){currency=doc.displayCurrency||'USD';unit=currency==='JPY'?line.convertedSalePriceJpy:line.salePriceUsdMinor;amount=unit;}
+  else if(detail.targetType==='sales_slip'){currency=line.saleCurrency||doc.displayCurrency;unit=line.unitPriceMinor;amount=line.subtotalMinor ?? unit;}
+  else {currency=line.costCurrency;unit=line.costAmountMinor;amount=unit;}
+  return {line,quantity,currency,unit,amount};
+ });
+}
+function buildApprovalDocumentSummary(detail) {
+ if(detail.targetType==='document_change')return buildApprovalDocumentSummary(documentChangeDetail(detail,'before')); 
+ const doc=approvalDocumentSnapshot(detail);if(!doc)return null;
+ const esc=approvalDocumentEscape,lines=approvalDocumentLines(detail),sums=new Map();
+ for(const row of lines){if(row.amount!=null)sums.set(row.currency||'JPY',(sums.get(row.currency||'JPY')||0)+Number(row.amount));}
+ return `<span class="appr-summary"><b>伝票No：${esc(doc.slipNumber)}</b><br>${esc(doc.supplierName||doc.buyerName||doc.consigneeName||doc.recipientName||'—')} / ${lines.length}明細<br>${[...sums].map(([currency,amount])=>esc(approvalDocumentMoney(amount,currency))).join(' / ')}</span>`;
+}
+function buildApprovalDocumentDetail(detail) {
+ const revised=buildReturnedApprovalReview(detail);if(revised)return revised;
+ if(detail.targetType==='document_change')return '<h4>現在の伝票（申請時点）</h4>'+ (buildApprovalDocumentDetail(documentChangeDetail(detail,'before'))||'')+'<h4>申請内容（承認後に反映）</h4>'+documentChangeFields(detail.document?.payload||{},false)+(buildApprovalDocumentDetail(documentChangeDetail(detail,'after'))||'');
+ const doc=approvalDocumentSnapshot(detail);if(!doc)return null;
+ const esc=approvalDocumentEscape,lines=approvalDocumentLines(detail),purchase=detail.targetType==='purchase_slip',sale=detail.targetType==='sales_slip',shipment=detail.targetType==='shipment_slip';
+ const fields=[['伝票No',doc.slipNumber],['伝票種類',approvalTargetTypeLabel(detail.targetType)],['伝票日付',doc.purchaseDate||doc.saleDate||doc.shipmentDate||doc.transactionDate||doc.consignmentDate||'—'],[purchase?'仕入先':'取引先',doc.supplierName||doc.buyerName||doc.consigneeName||doc.recipientName||'—']];
+ if(doc.staffName)fields.push(['担当者',doc.staffName]);
+ if(doc.paymentMethod)fields.push(['支払い方法',({cash:'現金',bank_transfer:'銀行振込',credit_card:'クレジットカード',credit:'掛け',other:'その他'})[doc.paymentMethod]||doc.paymentMethod]);
+ if(doc.recipientAddress)fields.push(['送付先住所',doc.recipientAddress]);
+ if(doc.sourcePurchaseSlipNumber)fields.push(['元仕入伝票No',doc.sourcePurchaseSlipNumber]);
+ if(doc.reason)fields.push(['理由',doc.reason]);
+ fields.push(['備考',doc.notes||'—']);
+ const totals=[];
+ if(sale){totals.push(['小計（税抜）',approvalDocumentMoney(doc.subtotalMinor,doc.displayCurrency)],['消費税',approvalDocumentMoney(doc.taxAmountMinor,doc.displayCurrency)],['合計（税込）',approvalDocumentMoney(doc.totalMinor,doc.displayCurrency)]);}
+ else {
+  const sums=new Map();for(const row of lines){if(row.amount!=null)sums.set(row.currency||'JPY',(sums.get(row.currency||'JPY')||0)+Number(row.amount));}
+  for(const [currency,amount] of sums)totals.push([purchase?'仕入小計（税抜）':shipment?'売価小計（税抜）':'明細金額合計',approvalDocumentMoney(amount,currency)]);
+  if(purchase && lines.every(row=>row.line.convertedTotalJpy!=null))totals.push(['仕入小計（円換算）',approvalDocumentMoney(lines.reduce((sum,row)=>sum+Number(row.line.convertedTotalJpy),0),'JPY')]);
+ }
+ return `<div class="appr-content-card approval-document-detail"><p class="text-muted">申請時の伝票内容</p><div class="appr-content-grid">${[...fields,...totals].map(([label,value])=>`<div class="appr-content-item"><span class="appr-content-label">${esc(label)}</span><span class="appr-content-val" style="white-space:pre-wrap">${esc(value)}</span></div>`).join('')}</div>
+ <div class="appr-items-section"><div class="appr-items-title">商品明細（${lines.length}明細）</div><div style="overflow-x:auto"><table class="appr-items-table" style="min-width:860px"><thead><tr><th>No.</th><th>管理番号</th><th>ブランド</th><th>モデル</th><th>型番</th><th>シリアル</th><th>数量</th><th>${purchase?'原価単価':'単価'}</th><th>金額</th></tr></thead><tbody>
+ ${lines.map(({line,quantity,currency,unit,amount},index)=>`<tr><td>${esc(line.lineNumber??index+1)}</td><td>${esc(line.productCode||line.partCode||'未発番')}</td><td>${esc(line.brandName||line.brand||'—')}</td><td>${esc(line.modelNumber||'—')}</td><td>${esc(line.referenceNumber||'—')}</td><td>${esc(line.serialNumber||'—')}</td><td>${esc(quantity)}</td><td style="white-space:nowrap">${esc(approvalDocumentMoney(unit,currency))}</td><td style="white-space:nowrap">${esc(approvalDocumentMoney(amount,currency))}</td></tr>${line.notes?`<tr><td></td><td colspan="8">備考：${esc(line.notes)}</td></tr>`:''}`).join('')||'<tr><td colspan="9">商品明細がありません</td></tr>'}
+ </tbody></table></div></div></div>`;
+}
+
+// Returned documents are edited through an owner- and state-checked API.
+function canReviseReturnedApproval(req) {
+  return Boolean(window.ZaikoAPI && req?.apiManaged && isWorker() && _approvalRequesterId(req) === currentUserId()
+    && ['returned','rejected'].includes(req.status) && ['purchase_slip','sales_slip','shipment_slip','return_slip','consignment_slip','document_change'].includes(req.detail?.targetType));
+}
+function returnedApprovalButton(req) {
+  return canReviseReturnedApproval(req) ? `<button type="button" class="btn btn-warning" onclick="openReturnedApprovalEditor('${approvalDocumentEscape(req.id)}')"><i class="fa-solid fa-pen-to-square"></i> 棄却・差戻し修正</button>` : '';
+}
+function returnedPurchaseProductFields(line, index) {
+  if(line.lineItemKind==='part' || line.generatedProductCount>0 || line.generatedPartCount>0)return '';
+  const esc = approvalDocumentEscape;
+  const field = (key,label,type='text') => `<label>${label}<input class="form-control" style="width:100%" data-returned-product="${key}" type="${type}" ${type==='number'?'min="0" step="any"':''} ${['referenceNumber','serialNumber'].includes(key)?'data-fmt="half"':''} value="${esc(line[key]??'')}"></label>`;
+  const select = (key,label,records) => {
+    const value=String(line[key]||'');
+    const options=[...(records||[])];
+    if(value&&!options.some(r=>String(r.code)===value))options.push({code:value,name:value});
+    return `<label>${label}<select class="form-control" style="width:100%" data-returned-product="${key}"><option value="">—</option>${options.map(r=>`<option value="${esc(r.code)}" ${String(r.code)===value?'selected':''}>${esc(r.name)}</option>`).join('')}</select></label>`;
+  };
+  const records=(name)=>getProductSpecMasterRecords(name);
+  const accessories=[...(APP_DATA.accessoryRecords||[])];
+  for(const code of line.accessoryCodes||[])if(!accessories.some(r=>r.code===code))accessories.push(allAccessoryMasterRecords().find(r=>r.code===code)||{code,name:code});
+  return `<tr><td colspan="7"><details class="returned-product-editor" data-returned-product-index="${index}"><summary style="cursor:pointer;color:var(--primary);padding:10px 0;font-weight:600;">商品登録内容を修正（明細 ${index+1}）</summary>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;padding:16px 0;">
+    ${select('brandCode','ブランド',APP_DATA.brandRecords)}${field('modelNumber','モデル')}${field('referenceNumber','型番')}${field('serialNumber','シリアル')}
+    ${select('shapeCode','形状',records('shape'))}${select('markingCode','マーキング',records('marking'))}
+    ${select('materialCode','素材',records('material'))}${select('movementCode','駆動方式',records('movement'))}${select('conditionCode','コンディション',APP_DATA.conditions)}
+    ${select('beltText','ベルト素材',(APP_DATA.beltMaterialRecords||[]).map(r=>({code:r.name,name:r.name})))}${field('dialText','文字盤')}${field('weightGrams','グラム','number')}
+    ${select('boxCode','BOX番号',Array.from({length:10},(_,i)=>({code:'BOX-'+String(i+1).padStart(2,'0'),name:'BOX '+(i+1)})))}
+    </div>
+    <label>付属品</label><div class="checkbox-group" id="returned-accessories-${index}">${accessories.map(r=>`<label class="checkbox-label ${(line.accessoryCodes||[]).includes(r.code)?'checked':''}"><input type="checkbox" value="${esc(r.code)}" ${(line.accessoryCodes||[]).includes(r.code)?'checked':''} onchange="this.closest('.checkbox-label').classList.toggle('checked',this.checked);refreshAccessorySupplementInputs(this.closest('.checkbox-group'))">${esc(r.name)}</label>`).join('')}</div>
+    ${field('braceletQuantity','コマ数','number')}${field('productType','商品種別')}${field('duplicateSerialReason','シリアル重複登録理由')}
+    <label>商品備考<textarea class="form-control" style="width:100%;margin:10px 0;" rows="3" data-returned-product="notes">${esc(line.notes||'')}</textarea></label>
+  </details></td></tr>`;
+}
+function readReturnedPurchaseProducts(form, doc) {
+  const products={};
+  for(const editor of form.querySelectorAll('[data-returned-product-index]')) {
+    const index=Number(editor.dataset.returnedProductIndex),line=doc.lines[index];
+    const detail={};
+    for(const input of editor.querySelectorAll('[data-returned-product]'))detail[input.dataset.returnedProduct]=input.value;
+    detail.braceletQuantity=detail.braceletQuantity?Number(detail.braceletQuantity):null;
+    const group='returned-accessories-'+index;
+    detail.accessoryCodes=[...document.querySelectorAll('#'+group+' input:checked')].map(input=>input.value);
+    detail.accessorySupplements=readAccessorySupplementInputs(group,true);
+    if(detail.accessorySupplements===null)return null;
+    products[line.id]=detail;
+  }
+  return products;
+}
+
+function returnedShipmentProductSelect(line,index) {
+  const esc=approvalDocumentEscape;
+  const items=(APP_DATA.inventory||[]).filter(item=>item.status==='在庫中'&&item.code!==line.productCode);
+  return `<select class="form-control" style="min-width:220px;width:100%" aria-label="明細${index+1}の商品" data-returned-field="product-${index}" onchange="returnedShipmentProductChanged(${index})"><option value="${esc(line.productCode)}">${esc(line.productCode)}（現在の商品）</option>${items.map(item=>`<option value="${esc(item.code)}">${esc(item.code)} / ${esc(item.brand)} ${esc(item.model)} / ${esc(item.serial||'')}</option>`).join('')}</select>`;
+}
+function returnedShipmentProductChanged(index) {
+  const doc=returnedApprovalEditor?.document,line=doc?.lines[index];if(!line)return;
+  const form=document.getElementById('returned-approval-form');
+  const code=form.querySelector(`[data-returned-field="product-${index}"]`).value;
+  const cell=form.querySelector(`[data-returned-product-summary="${index}"]`);
+  const price=form.querySelector(`[data-returned-field="price-${index}"]`);
+  if(code===line.productCode){cell.textContent=[line.brandName||line.brand,line.modelNumber,line.referenceNumber].filter(Boolean).join(' / ');price.value=doc.displayCurrency==='JPY'?line.convertedSalePriceJpy:line.salePriceUsdMinor;return;}
+  const item=(APP_DATA.inventory||[]).find(item=>item.code===code);
+  if(!item)return;
+  cell.textContent=[item.brand,item.model,item.ref,item.serial].filter(Boolean).join(' / ');
+  const usd=Number(item.salePrice)||0;
+  price.value=doc.displayCurrency==='JPY'&&doc.fxRateScaled>0&&doc.fxScale>0?Math.ceil(usd*doc.fxRateScaled/doc.fxScale/1000)*1000:usd;
+}
+
+let returnedApprovalEditor = null;
+const returnedHeaderFields={
+ purchase_slip:['purchaseDate','purchaseTaxMode','taxCategory','paymentMethod','supplierCode','supplierName','staffCode'],
+ sales_slip:['saleDate','buyerCode','displayCurrency','taxMode','taxRateBasisPoints'],
+ shipment_slip:['shipmentDate','buyerCode','displayCurrency','salesSlipNumber','recipientName','recipientAddress','carrier','trackingNumber'],
+ consignment_slip:['consignmentDate','consigneeCode'],
+ return_slip:['transactionDate','buyerCode','supplierCode','sourcePurchaseSlipNumber','carrier','trackingNumber','reason']
+};
+const returnedLabels={purchaseDate:'仕入日',purchaseTaxMode:'仕入区分',taxCategory:'税区分',paymentMethod:'支払方法',supplierCode:'仕入先',supplierName:'仕入先名（個人買取）',staffCode:'バイヤー',saleDate:'売上日',buyerCode:'販売先',displayCurrency:'通貨',taxMode:'税区分',taxRateBasisPoints:'税率（%）',shipmentDate:'出荷日',salesSlipNumber:'参照売上伝票番号',recipientName:'宛先名',recipientAddress:'宛先住所',carrier:'配送会社',trackingNumber:'追跡番号',consignmentDate:'委託日',consigneeCode:'委託先',transactionDate:'返品日',sourcePurchaseSlipNumber:'元仕入伝票番号',reason:'返品理由',notes:'備考',productCode:'管理番号',brandCode:'ブランド',brandName:'ブランド',brand:'ブランド',modelNumber:'モデル',referenceNumber:'型番',serialNumber:'シリアル',sku:'SKU',quantity:'数量',unitCostMinor:'原価',costCurrency:'原価通貨',baseSalePriceMinor:'想定売価',baseSaleCurrency:'想定売価通貨',unitPriceMinor:'売価',salePriceUsdMinor:'売価（USD）',convertedSalePriceJpy:'売価（円換算）',materialCode:'素材',movementCode:'駆動方式',conditionCode:'コンディション',shapeCode:'形状',markingCode:'マーキング',weightGrams:'グラム',beltText:'ベルト素材',dialText:'文字盤',boxCode:'BOX番号',accessoryCodes:'付属品',accessorySupplements:'付属品補足',braceletQuantity:'コマ数',productType:'商品種別',duplicateSerialReason:'シリアル重複登録理由',subtotalMinor:'小計（税抜）',taxAmountMinor:'消費税',totalMinor:'合計（税込）'};
+const returnedChoices={purchaseTaxMode:[['domestic','国内業者仕入'],['personal','個人買取'],['overseas','海外仕入']],taxCategory:[['consumption_tax','消費税'],['tax_equivalent','税相当額'],['out_of_scope','対象外']],paymentMethod:[['cash','現金'],['bank_transfer','銀行振込'],['card','カード']],taxMode:[['taxable','課税'],['out_of_scope','対象外'],['exempt','非課税']],displayCurrency:[['JPY','円（JPY）'],['USD','USドル（USD）'],['HKD','香港ドル（HKD）']]};
+function returnedMasterOptions(key){
+ if(key==='supplierCode')return APP_DATA.suppliers||[];
+ if(key==='buyerCode'||key==='consigneeCode')return APP_DATA.buyers||[];
+ if(key==='staffCode')return APP_DATA.staffRecords||[];
+ const masters={brandCode:'brandRecords',conditionCode:'conditions',accessoryCodes:'accessoryRecords'};
+ if(masters[key])return APP_DATA[masters[key]]||[];
+ const spec={shapeCode:'shape',markingCode:'marking',materialCode:'material',movementCode:'movement'};
+ return spec[key]?getProductSpecMasterRecords(spec[key]):null;
+}
+function returnedControl(key,value,attr='',choices=null){
+ if(key==='taxRateBasisPoints' && value!=null)value=Number(value)/100;
+ const esc=approvalDocumentEscape, options=choices||returnedChoices[key]||returnedMasterOptions(key)?.map(r=>[r.code,r.name]);
+ if(options){const all=[...options];if(value!==''&&value!=null&&!all.some(([v])=>String(v)===String(value)))all.push([value,value]);return `<select class="form-control" style="width:100%" ${attr}><option value="">—</option>${all.map(([v,label])=>`<option value="${esc(v)}" ${String(v)===String(value)?'selected':''}>${esc(label||v)}</option>`).join('')}</select>`;}
+ const numeric=['taxRateBasisPoints','unitPriceMinor','unitCostMinor','baseSalePriceMinor','weightGrams','braceletQuantity'].includes(key);
+ return `<input class="form-control" style="width:100%;min-width:100px" ${attr} type="${key.endsWith('Date')?'date':numeric?'number':'text'}" ${numeric?'min="0" step="any" required':''} ${['sku','referenceNumber','serialNumber'].includes(key)?'data-fmt="half"':''} value="${esc(value??'')}">`;
+}
+function returnedVisibleHeaders(type,doc){
+ return returnedHeaderFields[type].filter(key=>{
+  if(type==='return_slip')return doc.operationType==='purchase_return'?key!=='buyerCode':!['supplierCode','sourcePurchaseSlipNumber'].includes(key);
+  return true;
+ });
+}
+async function openReturnedApprovalEditor(id){
+ const req=(APP_DATA.approvalRequests||[]).find(r=>r.id===id);if(!canReviseReturnedApproval(req))return;
+ if(req.detail?.targetType==='document_change')return openDocumentChangeEditor(req);
+ try{
+  const loaded=await ZaikoAPI.request(`/approvals/${encodeURIComponent(id)}/returned-document`),doc=loaded.document,type=loaded.approval.targetType,esc=approvalDocumentEscape;
+  returnedApprovalEditor={id,...loaded,rows:JSON.parse(JSON.stringify(doc.lines||[])).map(line=>({...line,unitPriceMinor:type==='shipment_slip'?(doc.displayCurrency==='JPY'?line.convertedSalePriceJpy:line.salePriceUsdMinor):type==='consignment_slip'?line.salePriceUsdMinor:line.unitPriceMinor}))};
+  document.getElementById('apprDetailTitle').textContent=`棄却・差戻し修正 — ${doc.slipNumber}`;
+  document.getElementById('apprDetailBody').innerHTML=`<form id="returned-approval-form">${returnedRegistrationLayout(loaded)}${returnApprovalAdjustmentEditor(doc)}</form>`;
+  returnedRenderRows();
+  if ((doc.lines || []).some(line=>line.auctionFee?.rule)) showToast('info','手数料適用済みの伝票です','金額欄は手数料反映後の金額です。差戻し修正では手数料を再計算しません。');returnedRegistrationInit();
+  document.getElementById('apprDetailBody').closest('.modal').style.maxWidth='1440px';
+  document.getElementById('apprDetailFooter').innerHTML=`<button class="btn btn-outline" onclick="openWorkerApprovalResult('${esc(id)}')">戻る</button><button id="returned-approval-submit" class="btn btn-primary" onclick="submitReturnedApproval()">修正を保存して再申請</button>`;
+  document.getElementById('approvalDetailOverlay').classList.remove('hidden');
+ }catch(error){showToast('error','差戻し伝票を開けませんでした',error.message);}
+}
+function returnedCaptureRows(validate=true){
+ const state=returnedApprovalEditor,form=document.getElementById('returned-approval-form');if(!state||!form)return false;
+ for(let i=0;i<state.rows.length;i++){
+  const row=state.rows[i];for(const el of form.querySelectorAll(`[data-returned-row="${i}"]`))row[el.dataset.rowKey]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;
+  const editor=form.querySelector(`[data-returned-product-index="${i}"]`);
+  if(editor){for(const el of editor.querySelectorAll('[data-returned-product]'))row[el.dataset.returnedProduct]=el.value;
+   row.braceletQuantity=row.braceletQuantity===''||row.braceletQuantity==null?null:Number(row.braceletQuantity);
+   row.accessoryCodes=[...editor.querySelectorAll('input[type="checkbox"]:checked')].map(el=>el.value);
+   row.accessorySupplements=readAccessorySupplementInputs('returned-accessories-'+i,validate);if(row.accessorySupplements===null)return false;
+  }
+ }
+ return true;
+}
+function returnedRenderRows(){returnedRegistrationRenderRows();}
+function returnedAddLine(){if(!returnedCaptureRows(false))return;const state=returnedApprovalEditor;if(state.rows.length>=100){showToast('warning','明細は100件までです','');return;}const first=state.rows[0]||{};state.rows.push({id:'',quantity:1,sku:'',brandCode:'',productCode:'',modelNumber:'',unitCostMinor:0,unitPriceMinor:0,baseSalePriceMinor:0,costCurrency:first.costCurrency||'JPY',baseSaleCurrency:first.baseSaleCurrency||'USD',accessoryCodes:[],accessorySupplements:{}});returnedRenderRows();}
+function returnedRemoveLine(index){if(!returnedCaptureRows(false))return;returnedApprovalEditor.rows.splice(index,1);returnedRenderRows();}
+function returnedFullProductChanged(index){
+ const state=returnedApprovalEditor,el=document.querySelector(`[data-returned-row="${index}"][data-row-key="productCode"]`),price=document.querySelector(`[data-returned-row="${index}"][data-row-key="unitPriceMinor"]`);if(!price)return;
+ const original=state.document.lines.find(l=>l.productCode===el.value),type=state.approval.targetType,currency=document.querySelector('[data-returned-header="displayCurrency"]')?.value||'USD';
+ if(original){price.value=type==='sales_slip'?original.unitPriceMinor:type==='consignment_slip'||currency!=='JPY'?original.salePriceUsdMinor:original.convertedSalePriceJpy;return;}
+ const item=(APP_DATA.inventory||[]).find(p=>p.code===el.value);if(!item)return;
+ const usd=Number(item.salePrice)||0,doc=state.document;price.value=type!=='consignment_slip'&&currency==='JPY'&&doc.fxScale>0?Math.ceil(usd*doc.fxRateScaled/doc.fxScale/1000)*1000:usd;
+}
+async function submitReturnedApproval(){
+ const state=returnedApprovalEditor,form=document.getElementById('returned-approval-form'),button=document.getElementById('returned-approval-submit');if(!state||!form||button.disabled||!form.reportValidity()||!returnedCaptureRows())return;
+ const errorEl=document.getElementById('returned-approval-error');if(!state.rows.length && !state.document.adjustmentDetails?.lines?.length){errorEl.textContent='商品明細または金額調整を1件以上追加してください。';return;}
+ const header={};form.querySelectorAll('[data-returned-header]').forEach(el=>header[el.dataset.returnedHeader]=el.type==='number'?Number(el.value)*(el.dataset.returnedHeader==='taxRateBasisPoints'?100:1):el.value);
+ const reason=form.querySelector('[data-returned-field="reason"]').value.trim();if(!reason){errorEl.textContent='再申請理由を入力してください。';return;}
+ const doc=state.document,type=state.approval.targetType,rows=state.rows.filter(row=>type!=='sales_slip'||row._included!==false),rebuild={reason,originalLineIds:rows.map(r=>r.id||'')};
+ if(!rows.length && !doc.adjustmentDetails?.lines?.length){errorEl.textContent='計上する商品明細を1件以上選択してください。';return;}
+ if(type==='purchase_slip'){
+  const keys=['quantity','sku','brandCode','modelNumber','referenceNumber','serialNumber','productType','shapeCode','markingCode','materialCode','movementCode','conditionCode','accessoryCodes','accessorySupplements','beltText','dialText','braceletQuantity','weightGrams','boxCode','unitCostMinor','costCurrency','baseSalePriceMinor','baseSaleCurrency','notes','duplicateSerialReason'];
+  rebuild.purchase={...header,lines:rows.map(row=>Object.fromEntries(keys.filter(key=>row[key]!=null).map(key=>[key,key==='quantity'?1:row[key]])))};
+ }else{
+  const codes=rows.map(r=>r.productCode);if(codes.some(c=>!c)||new Set(codes).size!==codes.length){errorEl.textContent='商品を選択してください。同じ商品を複数の明細には指定できません。';return;}
+  if(type==='sales_slip')rebuild.sale={...header,lines:rows.map(r=>({productCode:r.productCode,unitPriceMinor:Number(r.unitPriceMinor)}))};
+  if(type==='shipment_slip')rebuild.shipment={...header,productCodes:codes,items:rows.map(r=>({productCode:r.productCode,[header.displayCurrency==='JPY'?'salePriceJpyMinor':'salePriceUsdMinor']:Number(r.unitPriceMinor)}))};
+  if(type==='consignment_slip')rebuild.consignment={...header,productCodes:codes,items:rows.map(r=>({productCode:r.productCode,salePriceUsdMinor:Number(r.unitPriceMinor)}))};
+  if(type==='return_slip')rebuild.return={...header,operationType:doc.operationType,productCodes:codes,sourceSaleSlipNumber:doc.adjustmentDetails?.sourceSaleSlipNumber || '',adjustmentLines:captureReturnApprovalAdjustments(doc)};
+ }
+ button.disabled=true;try{
+  await ZaikoAPI.request(`/approvals/${encodeURIComponent(state.id)}/resubmit`,{method:'POST',body:JSON.stringify({expectedApprovalUpdatedAt:state.approval.updatedAt,expectedDocumentUpdatedAt:doc.updatedAt,rebuild})});
+  returnedApprovalEditor=null;closeApprovalDetail();showToast('success','修正して再申請しました',`${doc.slipNumber} は管理者の承認待ちです。`);await ZaikoAPI.hydrateAdmin();renderWorkerNotificationList();renderNotifyList();updateNotifyBadge();
+ }catch(error){errorEl.textContent=error.message;}finally{button.disabled=false;}
+}
+
+function returnedReviewValue(key,value){
+ if(value==null||value==='')return '—';
+ if(key==='taxRateBasisPoints')return String(Number(value)/100)+'%';
+ if(key==='accessorySupplements')return Object.entries(value||{}).map(([code,v])=>`${allAccessoryMasterRecords().find(r=>r.code===code)?.name||code}：${v}`).join(' / ')||'—';
+ if(Array.isArray(value))return value.map(v=>returnedReviewValue(key,v)).join(' / ')||'—';
+ const choices=returnedChoices[key];if(choices)return choices.find(([code])=>String(code)===String(value))?.[1]||String(value);
+ const masters=returnedMasterOptions(key);if(masters)return masters.find(r=>String(r.code)===String(value))?.name||String(value);
+ if(typeof value==='number')return value.toLocaleString('ja-JP');
+ return String(value);
+}
+function returnedReviewEqual(a,b){
+ const normalize=v=>v==null||v===''?'':Array.isArray(v)?v.map(normalize):typeof v==='object'?Object.fromEntries(Object.keys(v).sort().map(k=>[k,normalize(v[k])])):String(v);
+ return JSON.stringify(normalize(a))===JSON.stringify(normalize(b));
+}
+function buildReturnedApprovalReview(detail){
+ const doc=detail.document,previous=detail.previousDocument,type=detail.targetType,esc=approvalDocumentEscape;if(!previous||!doc||!returnedHeaderFields[type])return null;
+ const changedStyle='background:#fff1a8;border:1px solid #e2c147;border-radius:6px;padding:10px;';
+ const cell=(key,old,value,force=false)=>{const changed=force||!returnedReviewEqual(old,value);return `<div class="returned-review-field${changed?' returned-review-changed':''}" style="${changed?changedStyle:'padding:10px;'}"><b>${esc(returnedLabels[key]||key)}</b><div style="white-space:pre-wrap">${esc(returnedReviewValue(key,value))}</div>${changed?`<small style="color:#725719">変更前：${esc(returnedReviewValue(key,old))}</small>`:''}</div>`;};
+ const headers=[...returnedVisibleHeaders(type,doc),'notes'];if(type==='sales_slip')headers.push('subtotalMinor','taxAmountMinor','totalMinor');
+ const keys=type==='purchase_slip'?['sku','brandCode','modelNumber','referenceNumber','serialNumber','quantity','unitCostMinor','costCurrency','baseSalePriceMinor','baseSaleCurrency','shapeCode','markingCode','materialCode','movementCode','conditionCode','beltText','dialText','weightGrams','boxCode','accessoryCodes','accessorySupplements','braceletQuantity','productType','duplicateSerialReason','notes']:type==='sales_slip'?['productCode','brand','modelNumber','referenceNumber','serialNumber','unitPriceMinor']:type==='return_slip'?['productCode','brand','modelNumber']:['productCode','brand','modelNumber','salePriceUsdMinor','convertedSalePriceJpy'];
+ const oldByID=new Map((previous.lines||[]).map(l=>[l.id,l])),newIDs=new Set((doc.lines||[]).map(l=>l.id));
+ const lines=(doc.lines||[]).map((line,i)=>{const old=oldByID.get(line.id);return `<section style="margin:18px 0;border:1px solid #dce1e8;padding:12px;border-radius:8px"><h4 ${old?'':`class="returned-review-changed" style="${changedStyle}"`}>明細 ${i+1}${old?'':'（追加）'}</h4><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px">${keys.map(key=>cell(key,old?.[key],line[key],!old)).join('')}</div></section>`;}).join('');
+ const removed=(previous.lines||[]).filter(l=>!newIDs.has(l.id)).map(line=>`<section class="returned-review-changed" style="${changedStyle}margin:12px 0"><b>削除した明細 ${esc(line.lineNumber)}：${esc([line.productCode,line.brandName||line.brand,line.modelNumber,line.referenceNumber].filter(Boolean).join(' / '))}</b><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px">${keys.map(key=>`<div><b>${esc(returnedLabels[key])}</b>：${esc(returnedReviewValue(key,line[key]))}</div>`).join('')}</div></section>`).join('');
+ return `<div class="approval-document-detail"><p><b>伝票No：${esc(doc.slipNumber)}</b></p><p style="${changedStyle}">黄色の項目が、前回の申請から変更された箇所です。追加・削除した明細も黄色で表示します。</p>${detail.resubmissionReason?`<p>再申請理由：${esc(detail.resubmissionReason)}</p>`:''}<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px">${headers.map(key=>cell(key,previous[key],doc[key])).join('')}</div><h4>商品明細（${doc.lines?.length||0}明細）</h4>${lines}${removed}</div>`;
+}
+
+function documentChangeDetail(detail,which){const snap=detail.document||{};return {targetType:({purchase:'purchase_slip',sale:'sales_slip',shipment:'shipment_slip',consignment:'consignment_slip',return:'return_slip'})[String(snap.kind||'').split('.')[0]],document:snap[which],previousDocument:which==='after'?detail.previousDocument?.after:null,resubmissionReason:detail.resubmissionReason};}
+const documentChangeFieldLabels={purchaseDate:'仕入日',saleDate:'売上日',shipmentDate:'出荷日',consignmentDate:'委託日',transactionDate:'返品日',adjustmentDate:'変更日',supplierCode:'仕入先コード',staffCode:'バイヤーコード',buyerCode:'販売先コード',consigneeCode:'委託先コード',notes:'備考',reason:'変更理由',returnReason:'返品理由',carrier:'配送会社',trackingNumber:'追跡番号',confirmed:'配送番号を確定',code:'管理番号',sku:'SKU',unitCostMinor:'原価',baseSalePriceMinor:'想定売価',unitPriceMinor:'金額',adjustmentAmountMinor:'調整金額',direction:'増減区分',lines:'明細',recipientName:'宛先名',recipientAddress:'宛先住所',expectedUpdatedAt:'更新日時'};
+function documentChangeFields(payload,editable,prefix=[]){
+ return Object.entries(payload).map(([key,value])=>{
+  if(['id','saleLineId','expectedUpdatedAt','organizationId','actorUserId'].includes(key))return '';
+  const path=[...prefix,key],label=documentChangeFieldLabels[key]||key,esc=approvalDocumentEscape;
+  if(Array.isArray(value))return `<div><b>${esc(label)}</b>${value.map((row,i)=>`<fieldset><legend>明細 ${i+1}</legend>${documentChangeFields(row,editable,[...path,i])}</fieldset>`).join('')}</div>`;
+  if(value&&typeof value==='object')return documentChangeFields(value,editable,path);
+  if(!editable)return `<p><b>${esc(label)}</b>：${esc(typeof value==='boolean'?(value?'はい':'いいえ'):value)}</p>`;
+  const data=esc(JSON.stringify(path));
+  if(typeof value==='boolean')return `<label>${esc(label)} <input type="checkbox" data-change-path="${data}" ${value?'checked':''}></label>`;
+  return `<label style="display:block;margin:12px 0">${esc(label)}<input class="form-control" style="width:100%" data-change-path="${data}" type="${typeof value==='number'?'number':key.endsWith('Date')?'date':'text'}" value="${esc(value)}"></label>`;
+ }).join('');
+}
+let documentChangeEditor=null;
+function openDocumentChangeEditor(req){
+ if(/^(purchase|sale|shipment|consignment)\.revision$/.test(req.detail.document.kind))return openReturnedRevisionEditor(req);
+ const snap=req.detail.document;documentChangeEditor={req,payload:JSON.parse(JSON.stringify(snap.payload||{}))};
+ document.getElementById('apprDetailTitle').textContent='申請内容を修正して再申請';
+ document.getElementById('apprDetailBody').innerHTML=`<p>伝票No：${approvalDocumentEscape(snap.before?.slipNumber||'')}</p><p>棄却・差戻し理由：${approvalDocumentEscape(req.decisionNote||req.revisionComment||req.note||'—')}</p><form id="document-change-form">${documentChangeFields(documentChangeEditor.payload,true)}<p id="document-change-error" style="color:#c0392b" role="alert"></p></form>`;
+ document.getElementById('apprDetailFooter').innerHTML='<button class="btn btn-outline" onclick="closeApprovalDetail()">閉じる</button><button id="document-change-submit" class="btn btn-primary" onclick="resubmitDocumentChange()">修正して再申請</button>';
+ document.getElementById('approvalDetailOverlay').classList.remove('hidden');
+}
+async function resubmitDocumentChange(){
+ const state=documentChangeEditor,form=document.getElementById(state?.registration?'returned-approval-form':'document-change-form'),button=document.getElementById('document-change-submit');if(!state||button.disabled||!form.reportValidity())return;
+ const payload=state.registration?returnedRevisionPayload():JSON.parse(JSON.stringify(state.payload));
+ form.querySelectorAll('[data-change-path]').forEach(input=>{const path=JSON.parse(input.dataset.changePath);let obj=payload;path.slice(0,-1).forEach(k=>obj=obj[k]);obj[path.at(-1)]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;});
+ button.disabled=true;try{
+ const snap=state.req.detail.document;
+ await ZaikoAPI.request('/document-change-requests',{method:'POST',body:JSON.stringify({kind:snap.kind,targetId:snap.targetId,payload,approvalId:state.req.id,expectedUpdatedAt:state.req.updatedAt})});
+ closeApprovalDetail();await ZaikoAPI.hydrateAdmin();showToast('success','修正して再申請しました','管理者承認後に反映されます。');
+ }catch(error){document.getElementById('document-change-error').textContent=error.message;}finally{button.disabled=false;}
+}
+
+async function downloadApprovedDocument(id){try { const ref=await ZaikoAPI.request('/approvals/'+encodeURIComponent(id)+'/document');const link=document.createElement('a');link.href=ref.downloadUrl;link.download=ref.fileName;link.click();}catch(error){showToast('error','PDFを取得できません',error.message);}}
+
+// Use the registration screens' cards, form rows, switches and line tables.
+function returnedRegistrationField(key,doc,label=returnedLabels[key]){
+ return `<div class="form-group" data-returned-header-group="${key}"><label class="form-label">${approvalDocumentEscape(label)}</label>${returnedControl(key,doc[key],`data-returned-header="${key}" aria-label="${approvalDocumentEscape(label)}" ${returnedMasterOptions(key)?'data-partner-search':''}`)}</div>`;
+}
+function returnedRegistrationSaleBuyer(doc){
+ const esc=approvalDocumentEscape,name=doc.buyerName||returnedMasterOptions('buyerCode').find(b=>b.code===doc.buyerCode)?.name||doc.buyerCode||'—';
+ return `<div class="form-group" data-returned-header-group="buyerCode"><label class="form-label">販売先 <span class="auto-tag">変更不可</span></label><input type="hidden" data-returned-header="buyerCode" value="${esc(doc.buyerCode||'')}"><input class="form-control auto-filled" aria-label="販売先" readonly value="${esc(name)}"></div>`;
+}
+function returnedRegistrationSwitch(key,value,style,options=returnedChoices[key]){
+ const esc=approvalDocumentEscape;
+ return `<input type="hidden" data-returned-header="${key}" value="${esc(value||options[0][0])}"><div class="${style}-switch" role="group" aria-label="${esc(returnedLabels[key]||key)}">${options.map(([v,name])=>`<button type="button" class="${style}-btn ${v===(value||options[0][0])?'active':''}" data-returned-switch="${key}" data-switch-value="${esc(v)}" aria-pressed="${v===(value||options[0][0])}" onclick="returnedRegistrationSwitchChanged(this)">${esc(name)}</button>`).join('')}</div>`;
+}
+function returnedRegistrationLayout(loaded){
+ const doc=loaded.document,type=loaded.approval.targetType,esc=approvalDocumentEscape;
+ const title={purchase_slip:['file-invoice','仕入伝票'],sales_slip:['receipt','売上伝票'],shipment_slip:['truck','出荷伝票'],consignment_slip:['handshake','委託伝票'],return_slip:['rotate-left',doc.operationType==='purchase_return'?'仕入返品伝票':'売上返品伝票']}[type];
+ const number=`<div class="form-group"><label class="form-label">伝票番号 <span class="auto-tag">変更なし</span></label><input class="form-control auto-filled" aria-label="伝票番号" readonly value="${esc(doc.slipNumber)}"></div>`;
+ let headers='',extra='';
+ if(type==='purchase_slip'){
+  headers=`<div class="form-row cols-4">${number}${returnedRegistrationField('purchaseDate',doc)}<div class="form-group">${returnedRegistrationField('supplierCode',doc)}${returnedRegistrationField('supplierName',doc,'仕入先名')}</div>${returnedRegistrationField('staffCode',doc)}</div>`;
+  for(const [key,style,icon,label] of [['paymentMethod','pe-payment-method','wallet','支払い方法'],['purchaseTaxMode','pe-tax-mode','receipt','仕入区分'],['taxCategory','pe-tax-category','percent','税区分']])headers+=`<div class="${style}-panel"><div class="${style}-copy"><strong><i class="fa-solid fa-${icon}"></i> ${label}</strong></div>${returnedRegistrationSwitch(key,doc[key],style)}${key==='purchaseTaxMode'?`<div class="pe-purchase-currency-panel"><strong>仕入通貨</strong><div class="pe-purchase-currency-switch" role="group" aria-label="仕入通貨">${returnedChoices.displayCurrency.map(([code,name])=>`<button class="pe-purchase-currency-btn ${(doc.lines?.[0]?.costCurrency||'JPY')===code?'active':''}" type="button" data-returned-cost-currency="${code}" onclick="returnedSetCostCurrency('${code}')">${esc(name)}</button>`).join('')}</div></div>`:''}</div>`;
+ }else if(type==='shipment_slip'){
+  headers=`<div class="form-row shipping-entry-header-fields">${number}${returnedRegistrationField('shipmentDate',doc)}${returnedRegistrationField('buyerCode',doc,'出荷先')}<div class="form-group shipping-entry-currency"><label class="form-label">売価</label>${returnedRegistrationSwitch('displayCurrency',doc.displayCurrency,'sl-currency',[['USD','$ USD'],['JPY','¥ 円']])}</div>${returnedRegistrationField('notes',doc)}</div>`;
+  extra=`<details class="returned-delivery"><summary>配送情報・参照伝票</summary><div class="form-row cols-3">${['salesSlipNumber','recipientName','recipientAddress','carrier','trackingNumber'].map(key=>returnedRegistrationField(key,doc)).join('')}</div></details>`;
+ }else if(type==='sales_slip'){
+  headers=`<div class="form-row cols-3 sales-entry-header-fields">${number}${returnedRegistrationField('saleDate',doc)}${returnedRegistrationSaleBuyer(doc)}</div><div class="returned-sales-options"><div><label class="form-label">販売金額の入力通貨</label>${returnedRegistrationSwitch('displayCurrency',doc.displayCurrency,'sl-currency')}</div><div><label class="form-label">税区分</label>${returnedRegistrationSwitch('taxMode',doc.taxMode||'out_of_scope','pe-tax-category')}</div>${returnedRegistrationField('taxRateBasisPoints',doc)}</div>`;
+ }else if(type==='consignment_slip')headers=`<div class="form-row cols-4 consignment-meta-grid">${number}${returnedRegistrationField('consignmentDate',doc)}${returnedRegistrationField('consigneeCode',doc)}${returnedRegistrationField('notes',doc)}</div>`;
+ else headers=`<div class="form-row cols-3">${number}${returnedVisibleHeaders(type,doc).map(key=>returnedRegistrationField(key,doc)).join('')}</div>`;
+ const add=type==='purchase_slip'?`<div class="pe-line-add-controls"><label for="returned-add-count">追加行数</label><div class="pe-line-add-count-field"><input id="returned-add-count" class="form-control" type="number" min="1" max="100" value="1"><span>行</span></div><button type="button" class="btn btn-primary btn-sm" onclick="returnedRegistrationAddLines()"><i class="fa-solid fa-plus"></i> 明細追加</button></div>`:'';
+ const notes=!['shipment_slip','consignment_slip'].includes(type)?`<div class="form-group returned-notes"><label class="form-label">備考</label><textarea class="form-control" rows="2" data-returned-header="notes">${esc(doc.notes||'')}</textarea></div>`:'';
+ return `<div class="returned-registration returned-registration--${type}"><div class="returned-reason"><i class="fa-solid fa-comment-dots"></i><div><b>棄却・差戻し理由</b><p>${esc(loaded.approval.decisionNote||'—')}</p></div></div><section class="card mb-16"><div class="card-header"><h3><i class="fa-solid fa-${title[0]}"></i> ${title[1]}</h3></div><div class="card-body">${headers}${extra}</div></section><section class="card mb-16"><div class="card-header"><h3><i class="fa-solid fa-list"></i> 明細</h3>${add}</div><div class="card-body returned-lines-body"><div id="returned-registration-lines"></div>${type==='purchase_slip'?'':`<button type="button" class="add-row-btn" onclick="returnedAddLine()">＋ 明細行を追加</button>`}<div id="returned-registration-totals" class="slip-total-area" aria-live="polite"></div>${notes}</div></section><section class="card"><div class="card-header"><h3><i class="fa-solid fa-comment"></i> 再申請</h3></div><div class="card-body"><label class="form-label" for="returned-resubmit-reason">修正内容・再申請理由 <span class="required">*</span></label><textarea id="returned-resubmit-reason" class="form-control" rows="3" required maxlength="1000" data-returned-field="reason"></textarea><p class="text-muted">伝票番号を維持して再申請します。管理者の承認後に確定します。</p><p id="returned-approval-error" role="alert" class="returned-error"></p></div></section></div>`;
+}
+function returnedRegistrationInit(){
+ const form=document.getElementById('returned-approval-form');
+ form.addEventListener('input',e=>{if(!e.isComposing && !e.target.closest('#returned-product-overlay'))returnedRegistrationTotals();});
+ form.addEventListener('change',e=>{if(!e.target.closest('#returned-product-overlay'))returnedRegistrationTotals();});
+ returnedRegistrationSyncHeaders();enhanceSearchablePartnerSelects();
+ const body=document.getElementById('apprDetailBody');
+ body._returnedSearchController?.abort();body._returnedSearchController=new AbortController();
+ const options={capture:true,signal:body._returnedSearchController.signal};
+ body.addEventListener('scroll',returnedPositionSearchPanels,options);
+ form.addEventListener('focusin',returnedPositionSearchPanels);
+ form.addEventListener('click',returnedPositionSearchPanels);form.addEventListener('input',returnedPositionSearchPanels);
+ window.addEventListener('resize',returnedPositionSearchPanels,{signal:body._returnedSearchController.signal});
+}
+function returnedPositionSearchPanels(){
+ document.querySelectorAll('#returned-approval-form .partner-search-select.open').forEach(wrapper=>{
+  const rect=wrapper.getBoundingClientRect(),panel=wrapper.querySelector('.partner-search-panel'),height=Math.min(238,panel.scrollHeight||238),width=Math.min(Math.max(rect.width,230),innerWidth-24);
+  Object.assign(panel.style,{position:'fixed',width:width+'px',left:Math.max(12,Math.min(rect.left,innerWidth-width-12))+'px',top:(rect.bottom+height+8>innerHeight?Math.max(12,rect.top-height-5):rect.bottom+5)+'px'});
+ });
+}
+function returnedRegistrationSwitchChanged(button){
+ const form=document.getElementById('returned-approval-form'),key=button.dataset.returnedSwitch;
+ form.querySelector(`[data-returned-header="${key}"]`).value=button.dataset.switchValue;
+ form.querySelectorAll(`[data-returned-switch="${key}"]`).forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});
+ returnedRegistrationSyncHeaders();returnedRegistrationTotals();
+}
+function returnedRegistrationSyncHeaders(){
+ const form=document.getElementById('returned-approval-form'),personal=form.querySelector('[data-returned-header="purchaseTaxMode"]')?.value==='personal';
+ for(const key of ['supplierCode','supplierName']){const group=form.querySelector(`[data-returned-header-group="${key}"]`);if(group&&returnedApprovalEditor.approval.targetType==='purchase_slip')group.hidden=(key==='supplierName')!==personal;}
+ const tax=form.querySelector('[data-returned-header-group="taxRateBasisPoints"]');if(tax){tax.hidden=form.querySelector('[data-returned-header="taxMode"]')?.value!=='taxable';const input=tax.querySelector('input');if(input.value==='')input.value='0';}
+ const currency=form.querySelector('[data-returned-header="displayCurrency"]')?.value||'USD';form.querySelectorAll('[data-returned-price-heading]').forEach(el=>el.textContent=`販売金額（${currency}・税抜）`);
+}
+function returnedRegistrationAddLines(){
+ const count=Number(document.getElementById('returned-add-count').value);if(!Number.isInteger(count)||count<1||count+returnedApprovalEditor.rows.length>100){showToast('warning','追加行数を確認してください','明細は合計100件までです。');return;}
+ for(let i=0;i<count;i++)returnedAddLine();
+}
+function returnedSetCostCurrency(currency){
+ if(!returnedCaptureRows(false))return;returnedApprovalEditor.rows.forEach(row=>row.costCurrency=currency);document.querySelectorAll('[data-returned-cost-currency]').forEach(b=>b.classList.toggle('active',b.dataset.returnedCostCurrency===currency));returnedRenderRows();
+}
+function returnedRegistrationProduct(row){
+ const item=(APP_DATA.inventory||[]).find(p=>p.code===row.productCode),original=returnedApprovalEditor.document.lines.find(l=>l.productCode===row.productCode)||{};
+ return {brand:item?.brand||original.brand||row.brandName||row.brand||'—',model:item?.model||original.modelNumber||row.modelNumber||'—',ref:item?.ref||original.referenceNumber||'—',serial:item?.serial||original.serialNumber||'—',accessories:item?.accessories||original.accessories||[],cost:item?.purchasePrice??original.costAmountMinor??null};
+}
+function returnedRegistrationProductSelect(row,index){
+ const state=returnedApprovalEditor,type=state.approval.targetType,doc=state.document,allowed=type==='return_slip'?(doc.operationType==='purchase_return'?['在庫中','仕入中']:['売上済','出荷済','取置中']):type==='sales_slip'?['在庫中','出荷済','取置中','委託中']:['在庫中'];
+ const choices=(APP_DATA.inventory||[]).filter(p=>allowed.includes(p.status)||doc.lines.some(l=>l.productCode===p.code)).map(p=>[p.code,`${p.code} / ${p.brand} ${p.model}`]);
+ for(const line of doc.lines)if(!choices.some(([code])=>code===line.productCode))choices.push([line.productCode,`${line.productCode} / ${line.brand||''} ${line.modelNumber||''}`]);
+ return returnedControl('productCode',row.productCode,`data-partner-search aria-label="明細${index+1}の管理番号" data-returned-row="${index}" data-row-key="productCode" onchange="returnedRegistrationProductChanged(${index})"`,choices);
+}
+function returnedRegistrationRenderRows(){
+ const {rows,approval}=returnedApprovalEditor,type=approval.targetType,esc=approvalDocumentEscape,purchase=type==='purchase_slip',sale=type==='sales_slip',consignment=type==='consignment_slip',returned=type==='return_slip';
+ const remove=i=>`<button type="button" class="btn btn-sm returned-remove" title="この明細を削除" aria-label="明細${i+1}を削除" onclick="returnedRemoveLine(${i})"><i class="fa-solid fa-trash-can"></i></button>`;
+ const field=(row,i,key,choices)=>returnedControl(key,row[key],`aria-label="明細${i+1}の${returnedLabels[key]}" data-returned-row="${i}" data-row-key="${key}"`,choices);
+ let headings=purchase?['No.','商品コード','SKU（任意）','仕入金額','税区分 / 税額','想定売価','商品登録','削除']:consignment?['商品管理番号','ブランド','モデル名','原価（円）','販売価格（USD）','']:returned?['管理番号','ブランド','モデル名','型番','シリアル','原価','']:['商品コード','ブランド','モデル名','型番','シリアル','付属品','原価','販売金額',''];if(sale)headings.unshift('計上');
+ let html=`<div class="returned-table-wrap"><table class="${sale?'sl-table':purchase?'data-table pe-detail-table':'data-table'} returned-entry-table"><thead><tr>${headings.map(h=>`<th ${h==='販売金額'?'data-returned-price-heading':''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>`;
+ html+=rows.map((row,i)=>{
+  if(purchase)return `<tr><td>${i+1}</td><td><code>${esc(row.productCode||'未発番')}</code><small class="returned-product-summary">${esc([row.brandName||returnedMasterOptions('brandCode').find(b=>b.code===row.brandCode)?.name,row.modelNumber].filter(Boolean).join(' '))}</small></td><td>${field(row,i,'sku')}</td><td>${field(row,i,'unitCostMinor')}${field(row,i,'costCurrency',returnedChoices.displayCurrency)}</td><td data-returned-line-tax="${i}"></td><td>${field(row,i,'baseSalePriceMinor')}${field(row,i,'baseSaleCurrency',returnedChoices.displayCurrency)}</td><td><button type="button" class="btn btn-outline btn-sm pe-regbtn" onclick="returnedOpenProduct(${i})"><i class="fa-solid fa-box-open"></i> ${row.modelNumber?'確認・編集':'登録'}</button></td><td>${remove(i)}</td></tr>`;
+  const p=returnedRegistrationProduct(row),cells=[returnedRegistrationProductSelect(row,i),esc(p.brand),esc(p.model)];
+  if(!consignment)cells.push(esc(p.ref),esc(p.serial));if(!consignment&&!returned)cells.push(esc(Array.isArray(p.accessories)?p.accessories.join(' / '):p.accessories));cells.push(p.cost==null?'—':esc(approvalDocumentMoney(p.cost,'JPY')));if(!returned)cells.push(field(row,i,'unitPriceMinor'));cells.push(remove(i));if(sale)cells.unshift(`<input type="checkbox" aria-label="明細${i+1}を売上計上" data-returned-row="${i}" data-row-key="_included" ${row._included===false?'':'checked'}>`);
+  return `<tr data-returned-line="${i}">${cells.map(c=>`<td>${c}</td>`).join('')}</tr>`;
+ }).join('');html+='</tbody></table></div>';
+ document.getElementById('returned-registration-lines').innerHTML=html;
+ returnedRevisionConfigureRows();enhanceSearchablePartnerSelects();initInputFormatListeners();returnedRegistrationSyncHeaders();returnedRegistrationTotals();
+}
+function returnedRegistrationProductChanged(index){if(!document.querySelector(`[data-returned-row="${index}"][data-row-key="productCode"]`)?.value)return;returnedFullProductChanged(index);if(!returnedCaptureRows(false))return;returnedRenderRows();}
+function returnedRegistrationTotals(){
+ const form=document.getElementById('returned-approval-form'),target=document.getElementById('returned-registration-totals');if(!form||!target)return;
+ const value=key=>form.querySelector(`[data-returned-header="${key}"]`)?.value||'',type=returnedApprovalEditor.approval.targetType,sums=new Map(),taxes=new Map();let count=0;
+ returnedApprovalEditor.rows.forEach((row,i)=>{
+  const get=key=>form.querySelector(`[data-returned-row="${i}"][data-row-key="${key}"]`)?.value??row[key];if(form.querySelector(`[data-returned-row="${i}"][data-row-key="_included"]`)?.checked===false)return;count++;
+  const currency=type==='purchase_slip'?get('costCurrency'):type==='consignment_slip'?(returnedApprovalEditor.revisionKind?returnedApprovalEditor.document.displayCurrency||'USD':'USD'):value('displayCurrency')||'JPY';let amount=type==='purchase_slip'?Number(get('unitCostMinor')):type==='return_slip'?Number(returnedRegistrationProduct(row).cost||0):Number(get('unitPriceMinor'));
+  if(!Number.isFinite(amount))amount=0;sums.set(currency,(sums.get(currency)||0)+amount);const rate=type==='purchase_slip'?(value('taxCategory')==='consumption_tax'?10:0):type==='sales_slip'&&currency==='JPY'&&value('taxMode')==='taxable'?Number(value('taxRateBasisPoints')):0;taxes.set(currency,(taxes.get(currency)||0)+(type==='purchase_slip'?Math.floor(amount*rate/100):Math.round(amount*rate/100)));
+  const taxCell=form.querySelector(`[data-returned-line-tax="${i}"]`);if(taxCell){const taxed=value('taxCategory')==='consumption_tax';taxCell.textContent=taxed?approvalDocumentMoney(Math.floor(amount*.1),currency):returnedReviewValue('taxCategory',value('taxCategory'));}
+ });
+ target.innerHTML=`<div class="slip-total-row"><span class="slip-total-label">明細 ${count} 点</span></div>`+[...sums].map(([currency,amount])=>{const rate=type==='purchase_slip'?(value('taxCategory')==='consumption_tax'?10:0):type==='sales_slip'&&currency==='JPY'&&value('taxMode')==='taxable'?Number(value('taxRateBasisPoints')):0;const tax=taxes.get(currency)||0;return `<div class="slip-total-row"><span class="slip-total-label">合計金額（${currency}・税抜）</span><span class="slip-total-val">${approvalDocumentMoney(amount,currency)}</span></div>${rate?`<div class="slip-total-row"><span>消費税（${rate}%）</span><span>${approvalDocumentMoney(tax,currency)}</span></div><div class="slip-total-row slip-total-grand"><span>税込合計</span><strong>${approvalDocumentMoney(amount+tax,currency)}</strong></div>`:''}`;}).join('');
+}
+function returnedOpenProduct(index){
+ if(!returnedCaptureRows(false))return;const row=returnedApprovalEditor.rows[index],doc=returnedApprovalEditor.document,esc=approvalDocumentEscape;
+ const template=document.createElement('template');template.innerHTML=`<table><tbody>${returnedPurchaseProductFields(row,index)}</tbody></table>`;const editor=template.content.querySelector('[data-returned-product-index]');if(!editor)return;
+ const field=key=>{const el=editor.querySelector(`[data-returned-product="${key}"]`);if(!el)return '';const label=el.closest('label');label.className='form-group';label.style='';const text=label.firstChild;if(text?.nodeType===3){const span=document.createElement('span');span.className='form-label';span.textContent=text.textContent;label.replaceChild(span,text);}if(el.tagName==='SELECT')el.setAttribute('data-partner-search','');return label.outerHTML;};
+ const ro=(name,val)=>`<div class="form-group"><label class="form-label">${name}</label><input class="form-control auto-filled" readonly value="${esc(val||'—')}"></div>`;
+ const headerValue=k=>document.querySelector(`[data-returned-header="${k}"]`)?.value||'';
+ let overlay=document.createElement('div');overlay.id='returned-product-overlay';overlay.className='modal-overlay returned-product-overlay';overlay.innerHTML=`<div class="modal" role="dialog" aria-modal="true" aria-labelledby="returned-product-title"><div class="modal-header"><h3 id="returned-product-title"><i class="fa-solid fa-box-open"></i> 商品登録 — 明細 ${index+1}</h3><button type="button" class="modal-close" aria-label="閉じる" onclick="returnedCloseProduct(false)">×</button></div><div class="modal-body" data-returned-product-index="${index}"><div class="form-row cols-3">${field('shapeCode')}${field('markingCode')}${ro('商品コード',row.productCode||'承認後に発番')}${ro('仕入日',headerValue('purchaseDate'))}<label class="form-group"><span class="form-label">SKU</span><input class="form-control" data-fmt="half" data-returned-product="sku" value="${esc(row.sku||'')}"></label></div><div class="form-row cols-3">${ro('仕入先',returnedReviewValue('supplierCode',headerValue('supplierCode')))}${ro('仕入金額',approvalDocumentMoney(row.unitCostMinor,row.costCurrency))}${ro('想定売価',approvalDocumentMoney(row.baseSalePriceMinor,row.baseSaleCurrency))}</div><hr><div class="form-row cols-3">${['brandCode','modelNumber','referenceNumber','serialNumber','materialCode','movementCode','conditionCode','beltText','dialText'].map(field).join('')}</div><div class="form-row cols-2">${field('boxCode')}${field('weightGrams')}</div><div class="form-group"><label class="form-label">付属品</label>${editor.querySelector('.checkbox-group').outerHTML}</div><div class="form-row cols-2">${field('braceletQuantity')}${field('productType')}</div>${field('duplicateSerialReason')}${field('notes')}<p class="returned-error" id="returned-product-error"></p></div><div class="modal-footer"><button type="button" class="btn btn-outline" onclick="returnedCloseProduct(false)">キャンセル</button><button type="button" class="btn btn-primary" onclick="returnedCloseProduct(true)"><i class="fa-solid fa-check"></i> 確定</button></div></div>`;
+ document.getElementById('returned-approval-form').appendChild(overlay);setAccessorySupplementInputs('returned-accessories-'+index,row.accessorySupplements||{});enhanceSearchablePartnerSelects();initInputFormatListeners();overlay.querySelector('.modal-close').focus();
+}
+function returnedCloseProduct(save){
+ const overlay=document.getElementById('returned-product-overlay');if(!overlay)return;
+ if(save){for(const input of overlay.querySelectorAll('input,select,textarea'))if(!input.reportValidity())return;if(!returnedCaptureRows())return;}
+ overlay.remove();if(save)returnedRenderRows();
+}
+
+// Confirmed-document revision requests share the registration layout with draft resubmissions.
+// Only fields supported by the existing revision API are editable; immutable IDs stay in the payload.
+const returnedRevisionHeaders={
+ purchase:['purchaseDate','supplierCode','staffCode','notes'],
+ sale:['saleDate','buyerCode','notes'],
+ shipment:['shipmentDate','buyerCode','notes'],
+ consignment:['consignmentDate','consigneeCode','notes'],
+};
+function openReturnedRevisionEditor(req){
+ const snap=req.detail.document,kind=snap.kind.split('.')[0],type={purchase:'purchase_slip',sale:'sales_slip',shipment:'shipment_slip',consignment:'consignment_slip'}[kind];
+ const payload=JSON.parse(JSON.stringify(snap.payload||{})),doc=JSON.parse(JSON.stringify(snap.before||snap.after||{}));
+ for(const key of returnedRevisionHeaders[kind])if(Object.hasOwn(payload,key)&&!(kind==='sale'&&key==='buyerCode'))doc[key]=payload[key];
+ if(kind==='sale')payload.buyerCode=doc.buyerCode;
+ doc.lines=(doc.lines||[]).map(line=>({...line,...(payload.lines||[]).find(change=>change.id===line.id)}));
+ const loaded={document:doc,approval:{targetType:type,decisionNote:req.decisionNote||req.revisionComment||req.note||'—'}};
+ returnedApprovalEditor={...loaded,id:req.id,revisionKind:kind,rows:doc.lines.map(line=>({...line,unitPriceMinor:Object.hasOwn(line,'unitPriceMinor')?line.unitPriceMinor:doc.displayCurrency==='JPY'?line.convertedSalePriceJpy:line.salePriceUsdMinor}))};
+ documentChangeEditor={req,payload,registration:true};
+ document.getElementById('apprDetailTitle').textContent=`棄却・差戻し修正 — ${doc.slipNumber}`;
+ document.getElementById('apprDetailBody').innerHTML=`<form id="returned-approval-form">${returnedRegistrationLayout(loaded)}</form>`;
+ returnedRenderRows();
+ const form=document.getElementById('returned-approval-form');
+ form.querySelector('[data-returned-field="reason"]').value=payload.reason||'';
+ form.querySelector('#returned-approval-error').id='document-change-error';
+ form.querySelector('.pe-line-add-controls')?.remove();form.querySelector('.add-row-btn')?.remove();
+ form.querySelector('.returned-delivery')?.remove();
+ for(const input of form.querySelectorAll('[data-returned-header]')){
+  const key=input.dataset.returnedHeader;
+  if(!returnedRevisionHeaders[kind].includes(key)||(kind==='purchase'&&key==='purchaseDate'))input.disabled=true;
+ }
+ form.querySelectorAll('[data-returned-switch],[data-returned-cost-currency]').forEach(button=>button.disabled=true);
+ returnedRegistrationInit();
+ document.getElementById('apprDetailBody').closest('.modal').style.maxWidth='1440px';
+ document.getElementById('apprDetailFooter').innerHTML='<button class="btn btn-outline" onclick="closeApprovalDetail()">閉じる</button><button id="document-change-submit" class="btn btn-primary" onclick="resubmitDocumentChange()">修正して再申請</button>';
+ document.getElementById('approvalDetailOverlay').classList.remove('hidden');
+}
+function returnedRevisionConfigureRows(){
+ const state=returnedApprovalEditor;if(!state?.revisionKind)return;
+ const form=document.getElementById('returned-approval-form'),kind=state.revisionKind;
+ const allowed=kind==='purchase'?['sku','unitCostMinor','baseSalePriceMinor']:['unitPriceMinor'];
+ const editableIDs=new Set((documentChangeEditor?.payload.lines||[]).map(line=>line.id));
+ for(const input of form.querySelectorAll('[data-returned-row]')){
+  if(!allowed.includes(input.dataset.rowKey)||!editableIDs.has(state.rows[Number(input.dataset.returnedRow)]?.id))input.disabled=true;
+ }
+ form.querySelectorAll('.returned-remove').forEach(button=>button.closest('td').hidden=true);
+ const headings=form.querySelectorAll('.returned-entry-table thead th');if(headings.length)headings[headings.length-1].hidden=true;
+ if(kind==='purchase')form.querySelectorAll('.pe-regbtn').forEach((button,i)=>{
+  const row=state.rows[i],esc=approvalDocumentEscape;
+  button.outerHTML=`<details class="returned-product-summary"><summary>商品情報</summary>${['brandName','modelNumber','referenceNumber','serialNumber','weightGrams'].map(key=>`<div><b>${esc(returnedLabels[key])}</b>：${esc(row[key]||'—')}</div>`).join('')}</details>`;
+ });
+ if(kind==='consignment'){
+  const currency=state.document.displayCurrency||'USD';
+  form.querySelectorAll('.returned-entry-table thead th')[4].textContent=`販売価格（${currency}）`;
+  form.querySelectorAll('[data-row-key="unitPriceMinor"]').forEach(input=>{
+   const shell=document.createElement('div'),unit=document.createElement('span');
+   shell.className='pu-price-input-shell';unit.textContent=currency==='JPY'?'¥':currency==='HKD'?'HK$':'$';
+   input.replaceWith(shell);shell.append(unit,input);
+  });
+ }
+}
+function returnedRevisionPayload(){
+ const state=documentChangeEditor,form=document.getElementById('returned-approval-form');
+ const payload=JSON.parse(JSON.stringify(state.payload)),kind=returnedApprovalEditor.revisionKind;
+ for(const key of returnedRevisionHeaders[kind]){
+  const input=form.querySelector(`[data-returned-header="${key}"]`);
+  if(input&&!input.disabled)payload[key]=input.value;
+ }
+ const fields=kind==='purchase'?['sku','unitCostMinor','baseSalePriceMinor']:['unitPriceMinor'];
+ payload.lines=(payload.lines||[]).map(line=>{
+  const index=returnedApprovalEditor.rows.findIndex(row=>row.id===line.id),result={...line};
+  for(const key of fields){const input=form.querySelector(`[data-returned-row="${index}"][data-row-key="${key}"]`);if(input&&!input.disabled)result[key]=input.type==='number'?Number(input.value):input.value;}
+  return result;
+ });
+ payload.reason=form.querySelector('[data-returned-field="reason"]').value.trim();
+ return payload;
 }

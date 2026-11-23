@@ -28,13 +28,14 @@ const sessionCookie = "zaiko_session"
 const csrfCookie = "zaiko_csrf"
 
 type Server struct {
-	cfg        config.Config
-	store      *database.Store
-	repository *persistence.Repository
-	objects    storage.Store
-	log        *slog.Logger
-	templates  map[string]*template.Template
-	handler    http.Handler
+	publicDemoPassword string
+	cfg                config.Config
+	store              *database.Store
+	repository         *persistence.Repository
+	objects            storage.Store
+	log                *slog.Logger
+	templates          map[string]*template.Template
+	handler            http.Handler
 }
 
 type pageData struct {
@@ -87,6 +88,9 @@ type pageData struct {
 
 func New(cfg config.Config, store *database.Store, repository *persistence.Repository, objects storage.Store, logger *slog.Logger) (*Server, error) {
 	s := &Server{cfg: cfg, store: store, repository: repository, objects: objects, log: logger}
+	if err := s.configurePublicDemoLogin(); err != nil {
+		return nil, err
+	}
 	if err := s.parseTemplates(); err != nil {
 		return nil, err
 	}
@@ -104,11 +108,15 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/auth/me", s.apiAuthenticated("", http.HandlerFunc(s.apiMe)))
 	mux.Handle("POST /api/v1/auth/logout", s.apiAuthenticated("", http.HandlerFunc(s.apiLogout)))
 	mux.Handle("GET /api/v1/dashboard", s.apiAuthenticated("dashboard.read", http.HandlerFunc(s.apiDashboard)))
+	mux.Handle("GET /api/v1/parts", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiParts)))
+	mux.Handle("POST /api/v1/parts", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiPartCreate)))
+	mux.Handle("PATCH /api/v1/parts/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiPartUpdate)))
 	mux.Handle("GET /api/v1/products", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProducts)))
 	mux.Handle("POST /api/v1/products", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductCreate)))
 	mux.Handle("GET /api/v1/products/{id}", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProduct)))
 	mux.Handle("GET /api/v1/purchases", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiPurchases)))
 	mux.Handle("GET /api/v1/purchases-deleted", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiDeletedPurchases)))
+	mux.Handle("GET /api/v1/purchases-deleted/{id}", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiDeletedPurchase)))
 	mux.Handle("GET /api/v1/purchases/{id}", s.apiAuthenticated("purchase.read", http.HandlerFunc(s.apiPurchase)))
 	mux.Handle("PATCH /api/v1/purchases/{id}/revision", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseRevision)))
 	mux.Handle("POST /api/v1/purchases", s.apiAuthenticated("purchase.write", http.HandlerFunc(s.apiPurchaseCreate)))
@@ -125,6 +133,10 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("POST /api/v1/market-prices/imports/{id}/commit", s.apiAuthenticated("market.import", http.HandlerFunc(s.apiMarketImportCommit)))
 	mux.Handle("GET /api/v1/boxes", s.apiAuthenticated("inventory.publish", http.HandlerFunc(s.apiBoxes)))
 	mux.Handle("PUT /api/v1/boxes/{code}", s.apiAuthenticated("inventory.publish", http.HandlerFunc(s.apiBoxUpdate)))
+	mux.Handle("PATCH /api/v1/boxes/{code}/products/{productCode}/visibility", s.apiAuthenticated("inventory.publish", http.HandlerFunc(s.apiBoxProductVisibility)))
+	mux.Handle("GET /api/v1/guest/product-files/{id}", s.apiAuthenticated("", http.HandlerFunc(s.apiGuestProductFile)))
+	mux.Handle("POST /api/v1/guest/inquiries", s.apiAuthenticated("", http.HandlerFunc(s.apiGuestInquiryCreate)))
+	mux.Handle("GET /api/v1/inquiries/{id}", s.apiAuthenticated("", http.HandlerFunc(s.apiGuestInquiryDetail)))
 	mux.Handle("GET /api/v1/guest/catalog", s.apiAuthenticated("", http.HandlerFunc(s.apiGuestCatalog)))
 	mux.Handle("GET /api/v1/guest/purchase-requests", s.apiAuthenticated("", http.HandlerFunc(s.apiPurchaseRequests)))
 	mux.Handle("POST /api/v1/guest/purchase-requests", s.apiAuthenticated("", http.HandlerFunc(s.apiGuestPurchaseRequestCreate)))
@@ -132,6 +144,10 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("POST /api/v1/purchase-requests/{id}/{decision}", s.apiAuthenticated("request.review", http.HandlerFunc(s.apiPurchaseRequestReview)))
 	mux.Handle("GET /api/v1/notifications", s.apiAuthenticated("", http.HandlerFunc(s.apiNotifications)))
 	mux.Handle("POST /api/v1/notifications/{id}/read", s.apiAuthenticated("", http.HandlerFunc(s.apiNotificationRead)))
+	mux.Handle("GET /api/v1/approvals/{id}/returned-document", s.apiAuthenticated("approval.request", http.HandlerFunc(s.apiReturnedApprovalDocument)))
+	mux.Handle("POST /api/v1/approvals/{id}/resubmit", s.apiAuthenticated("approval.request", http.HandlerFunc(s.apiApprovalResubmit)))
+	mux.Handle("GET /api/v1/approvals/{id}/document", s.apiAuthenticated("approval.request", http.HandlerFunc(s.apiApprovedDocument)))
+	mux.Handle("POST /api/v1/document-change-requests", s.apiAuthenticated("approval.request", http.HandlerFunc(s.apiDocumentChangeRequest)))
 	mux.Handle("GET /api/v1/approvals", s.apiAuthenticated("approval.read", http.HandlerFunc(s.apiApprovals)))
 	mux.Handle("POST /api/v1/approvals", s.apiAuthenticated("approval.request", http.HandlerFunc(s.apiApprovalCreate)))
 	mux.Handle("POST /api/v1/approvals/{id}/{decision}", s.apiAuthenticated("approval.approve", http.HandlerFunc(s.apiApprovalDecision)))
@@ -148,10 +164,12 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("POST /api/v1/shipments", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiShipmentCreate)))
 	mux.Handle("POST /api/v1/shipments/{id}/confirm", s.apiAuthenticated("shipment.confirm", http.HandlerFunc(s.apiShipmentConfirm)))
 	mux.Handle("POST /api/v1/shipments/{id}/return-scan", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiShipmentReturnScan)))
+	mux.Handle("PATCH /api/v1/shipments/{id}/revision", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiShipmentRevision)))
 	mux.Handle("PATCH /api/v1/shipments/{id}/tracking", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiShipmentTrackingUpdate)))
 	mux.Handle("GET /api/v1/consignments", s.apiAuthenticated("shipment.read", http.HandlerFunc(s.apiConsignments)))
 	mux.Handle("GET /api/v1/consignments/{id}", s.apiAuthenticated("shipment.read", http.HandlerFunc(s.apiConsignment)))
 	mux.Handle("POST /api/v1/consignments", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiConsignmentCreate)))
+	mux.Handle("PATCH /api/v1/consignments/{id}/revision", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiConsignmentRevision)))
 	mux.Handle("POST /api/v1/consignments/{id}/issue", s.apiAuthenticated("", http.HandlerFunc(s.apiConsignmentIssue)))
 	mux.Handle("POST /api/v1/consignments/{id}/return-scan", s.apiAuthenticated("shipment.write", http.HandlerFunc(s.apiConsignmentReturnScan)))
 	mux.Handle("GET /api/v1/returns", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiReturns)))
@@ -159,6 +177,8 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("POST /api/v1/returns", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiReturnCreate)))
 	mux.Handle("POST /api/v1/returns/{id}/confirm", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiReturnConfirm)))
 	mux.Handle("PATCH /api/v1/returns/{id}/tracking", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiReturnTrackingUpdate)))
+	mux.Handle("PATCH /api/v1/returns/{id}/revision", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiPurchaseReturnRevise)))
+	mux.Handle("POST /api/v1/returns/{id}/withdraw", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiPurchaseReturnWithdraw)))
 	mux.Handle("GET /api/v1/documents", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocuments)))
 	mux.Handle("GET /api/v1/document-events", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocumentEvents)))
 	mux.Handle("POST /api/v1/document-events", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiDocumentEventCreate)))
@@ -172,6 +192,7 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("GET /api/v1/company", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiCompanyInfo)))
 	mux.Handle("PUT /api/v1/company", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiCompanyInfoUpdate)))
 	mux.Handle("GET /api/v1/exchange-rates", s.apiAuthenticated("market.read", http.HandlerFunc(s.apiExchangeRates)))
+	mux.Handle("POST /api/v1/exchange-rates/sync", s.apiAuthenticated("market.write", http.HandlerFunc(s.apiExchangeRateSync)))
 	mux.Handle("POST /api/v1/exchange-rates", s.apiAuthenticated("market.write", http.HandlerFunc(s.apiExchangeRateCreate)))
 	mux.Handle("POST /api/v1/products/{id}/files", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductFileUpload)))
 	mux.Handle("GET /api/v1/products/{id}/files", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiProductFiles)))
@@ -189,6 +210,9 @@ func New(cfg config.Config, store *database.Store, repository *persistence.Repos
 	mux.Handle("DELETE /api/v1/product-files/{id}", s.apiAuthenticated("inventory.write", http.HandlerFunc(s.apiProductFileDelete)))
 	mux.Handle("GET /api/v1/users", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUsers)))
 	mux.Handle("GET /api/v1/purchase-staff", s.apiAuthenticated("inventory.read", http.HandlerFunc(s.apiPurchaseStaff)))
+	mux.Handle("POST /api/v1/purchase-staff", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiPurchaseStaffSave)))
+	mux.Handle("PATCH /api/v1/purchase-staff/{id}", s.apiAuthenticated("settings.manage", http.HandlerFunc(s.apiPurchaseStaffSave)))
+	mux.Handle("POST /api/v1/guest-logins", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiGuestLoginSave)))
 	mux.Handle("POST /api/v1/users", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUserCreate)))
 	mux.Handle("PATCH /api/v1/users/{id}", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUserUpdate)))
 	mux.Handle("POST /api/v1/users/{id}/password", s.apiAuthenticated("users.manage", http.HandlerFunc(s.apiUserPassword)))

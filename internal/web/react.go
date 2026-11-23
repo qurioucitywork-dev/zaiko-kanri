@@ -75,6 +75,9 @@ func serveEmbeddedAsset(w http.ResponseWriter, r *http.Request, assetPath string
 
 func (s *Server) reactApp(w http.ResponseWriter, r *http.Request) {
 	requested := strings.TrimPrefix(r.URL.Path, "/app/")
+	if requested == "admin-reference/index.html" && s.servePublicDemoLogin(w, r) {
+		return
+	}
 	if pageName, ok := referencePage(requested); ok {
 		query := r.URL.Query()
 		query.Set("page", pageName)

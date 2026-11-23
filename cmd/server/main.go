@@ -74,13 +74,11 @@ func main() {
 		os.Exit(1)
 	}
 	defer repository.Close()
-	if err := repository.Migrate(ctx); err != nil {
-		logger.Error("migrate PostgreSQL schema", "error", err)
-		os.Exit(1)
-	}
-	if err := repository.AutoMigrateCore(ctx); err != nil {
-		logger.Error("migrate GORM core schema", "error", err)
-		os.Exit(1)
+	if !cfg.SkipDatabaseMigrations {
+		if err := persistence.MigrateConfigured(ctx, cfg); err != nil {
+			logger.Error("migrate PostgreSQL schema", "error", err)
+			os.Exit(1)
+		}
 	}
 	if cfg.Environment == "development" {
 		if err := repository.SeedPreviewIdentity(ctx, cfg.AdminPassword, cfg.WorkerPassword); err != nil {
@@ -123,6 +121,7 @@ func main() {
 	}()
 	stop, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	go app.RunExchangeRateSync(stop)
 	<-stop.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()

@@ -43,8 +43,9 @@
         </div>
         <div class="ca-direct-search">
         <label for="ca-direct-code">管理番号検索</label>
-        <div class="ca-code-input-row">
+        <div class="ca-code-input-row ca-search-layout">
           <input id="ca-direct-code" class="form-control" placeholder="商品の管理番号を入力" oninput="costDirectCodeChanged()" onkeydown="if(event.key==='Enter'){event.preventDefault();costDirectStart();}">
+          <dl id="ca-direct-code-preview" class="ca-search-preview" aria-label="検索した商品情報" aria-live="polite"><div><dt>ブランド</dt><dd data-ca-preview="brand">—</dd></div><div><dt>モデル</dt><dd data-ca-preview="model">—</dd></div><div><dt>型番</dt><dd data-ca-preview="ref">—</dd></div><div><dt>シリアル</dt><dd data-ca-preview="serial">—</dd></div><div><dt>原価</dt><dd data-ca-preview="cost">—</dd></div></dl>
           <button type="button" class="btn btn-primary ca-direct-start" id="ca-direct-start" disabled onclick="costDirectStart()"><i class="fa-solid fa-play" aria-hidden="true"></i> 原価調整開始</button>
         </div>
         <p id="ca-direct-feedback" class="ca-input-feedback" aria-live="polite">管理番号を入力すると原価調整を開始できます（1商品専用）</p>
@@ -93,6 +94,7 @@
     const codeInput = document.getElementById('ca-direct-code');
     const startButton = document.getElementById('ca-direct-start');
     if (codeInput) codeInput.disabled = draft.items.length > 0;
+    costAdjustmentRenderSearchPreview('ca-direct-code');
     if (startButton) startButton.disabled = draft.items.length > 0 || !String(codeInput?.value || '').trim();
     document.getElementById('ca-direct-amount-sign').textContent = draft.direction === '増額' ? '＋' : '−';
     const beforeTotal = draft.items.reduce((sum, item) => sum + Number(item.purchasePrice || 0), 0);
@@ -132,6 +134,7 @@
     render();
   };
   window.costDirectCodeChanged = function () {
+    costAdjustmentRenderSearchPreview('ca-direct-code');
     const input = document.getElementById('ca-direct-code');
     const button = document.getElementById('ca-direct-start');
     if (button) button.disabled = draft.items.length > 0 || !String(input?.value || '').trim();
@@ -181,6 +184,11 @@
   // 開始後の商品を画面だけから外すとDBの「原価調整中」が残るため、
   // 取り消しは必ず下部の作業リセットからDBと画面を一緒に戻します。
   window.costDirectRemove = function () { return false; };
+  window.costDirectPendingProducts = () => draft.items.slice();
+  window.costDirectDiscardDraft = function () {
+    Object.assign(draft, { direction: '増額', items: [], reason: '', amount: 0, lastSlipNumber: '' });
+    render();
+  };
   window.costDirectReset = async function () {
     if (draft.items.length !== 1 || !window.confirm('原価調整の開始後に行った今回の作業だけをリセットします。よろしいですか？')) return false;
     const button = document.getElementById('ca-direct-reset');
@@ -235,4 +243,54 @@
   };
   costAdjustmentSetMode = function (mode) { const result = oldMode(mode); render(); return result; };
   costAdjustmentRenderBreakdownWorkspace = function () { const result = oldRender(); render(); return result; };
+})();
+
+// Navigation must restore an unconfirmed start before discarding its local draft.
+(function () {
+  const operations = new Set();
+  let leaving = false;
+  const pendingProducts = () => {
+    const state = _costAdjustmentState;
+    const groups = [];
+    const direct = window.costDirectPendingProducts?.() || [];
+    if (direct.length) groups.push(direct);
+    if ((state.breakdownActive || state.combineActive) &&
+        !state.breakdownDraft?.finalized && !state.combineDraft?.finalized) {
+      const products = state.mode === 'combine' && Array.isArray(state.breakdownDraft?.inputs)
+        ? state.breakdownDraft.inputs : [state.product].filter(Boolean);
+      if (products.length) groups.push(products);
+    }
+    return groups;
+  };
+  // These wrappers run after split/merge/direct handlers have all been installed.
+  for (const name of ['costAdjustmentStart', 'costAdjustmentFinalize', 'costAdjustmentResetCurrent',
+    'costDirectStart', 'costDirectRegister', 'costDirectReset']) {
+    const original = window[name];
+    window[name] = function (...args) {
+      if (leaving || operations.size) return Promise.resolve(false);
+      const operation = Promise.resolve().then(() => original.apply(this, args));
+      operations.add(operation);
+      const cleanup = () => operations.delete(operation);
+      operation.then(cleanup, cleanup);
+      return operation;
+    };
+  }
+  window.costDirectAdd = window.costDirectStart;
+  window.costAdjustmentNeedsLeaveReset = () => operations.size > 0 || pendingProducts().length > 0;
+  window.costAdjustmentPrepareToLeave = async function () {
+    leaving = true;
+    try {
+      await Promise.allSettled([...operations]);
+      const groups = pendingProducts();
+      for (const products of groups) {
+        if (!window.ZaikoAPI?.resetCostAdjustmentStart) throw new Error('DB接続を確認してください');
+        await window.ZaikoAPI.resetCostAdjustmentStart(products);
+      }
+      if (groups.length) showToast('success', '未確定の原価管理作業をリセットしました', 'ステータス・売価・社内コメントを開始前へ戻しました');
+      return true;
+    } catch (error) {
+      showToast('error', '画面を移動できませんでした', error?.message || '開始した作業のリセットに失敗しました。再度お試しください');
+      return false;
+    } finally { leaving = false; }
+  };
 })();

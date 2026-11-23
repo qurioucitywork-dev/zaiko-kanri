@@ -163,17 +163,19 @@ func TestSingleProductCreatesSimplePurchaseAndAllowsDuplicateSKU(t *testing.T) {
 	}
 }
 
-func TestDuplicateSerialRequiresReasonAndRecordsOverride(t *testing.T) {
+func TestDuplicateSerialAllowedWithoutReasonAndOptionalReasonRecorded(t *testing.T) {
 	store := inventoryStore(t)
 	ctx := context.Background()
 	if _, err := store.CreateSingleProduct(ctx, singleInput("2026-08-04", "", "DUPLICATE-SERIAL")); err != nil {
 		t.Fatal(err)
 	}
 	input := singleInput("2026-08-04", "", "DUPLICATE-SERIAL")
-	_, err := store.CreateSingleProduct(ctx, input)
-	var duplicateErr *SerialDuplicateError
-	if !errors.As(err, &duplicateErr) || len(duplicateErr.Candidates) != 1 {
-		t.Fatalf("error=%v candidates=%d", err, len(duplicateErr.Candidates))
+	duplicate, err := store.CreateSingleProduct(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duplicate.SerialNumber != input.SerialNumber {
+		t.Fatal("serial not retained")
 	}
 	input.DuplicateReason = "現物と仕入先を確認し、別個体と判断"
 	product, err := store.CreateSingleProduct(ctx, input)

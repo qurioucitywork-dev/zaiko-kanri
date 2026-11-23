@@ -63,7 +63,15 @@ func TestProductImageCanBeUploadedFromProductRegistration(t *testing.T) {
 }
 
 func TestProductImagesCanBeReorderedAndDeleted(t *testing.T) {
-	app, _ := testServer(t)
+	app, store := testServer(t)
+	if err := store.SeedInventoryPreview(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	products, err := store.Products(t.Context(), "org_preview", database.ProductFilter{})
+	if err != nil || len(products) == 0 {
+		t.Fatalf("seed products: %v", err)
+	}
+	productID := products[0].ID
 	cookies, csrf := loginAPIForFileTest(t, app)
 
 	for index, id := range []string{"fil_edit_1", "fil_edit_2", "fil_edit_3"} {
@@ -72,25 +80,25 @@ func TestProductImagesCanBeReorderedAndDeleted(t *testing.T) {
 			t.Fatalf("put test object %s: %v", id, err)
 		}
 		if _, err := app.repository.CreateProductFile(t.Context(), "org_preview", "usr_admin", persistence.ProductFileRecord{
-			ID: id, ProductID: "product_preview_001", StorageDriver: "local", ObjectKey: key,
+			ID: id, ProductID: productID, StorageDriver: "local", ObjectKey: key,
 			OriginalName: id + ".jpg", ContentType: "image/jpeg", SizeBytes: 5, SHA256: "test",
 		}); err != nil {
 			t.Fatalf("create product file %d: %v", index, err)
 		}
 	}
 
-	stale := authenticatedFileRequest(t, app, http.MethodPut, "/api/v1/products/product_preview_001/files/order",
+	stale := authenticatedFileRequest(t, app, http.MethodPut, "/api/v1/products/"+productID+"/files/order",
 		`{"fileIds":["fil_edit_1"]}`, csrf, cookies)
 	if stale.Code != http.StatusConflict {
 		t.Fatalf("stale reorder status=%d body=%s", stale.Code, stale.Body.String())
 	}
 
-	reordered := authenticatedFileRequest(t, app, http.MethodPut, "/api/v1/products/product_preview_001/files/order",
+	reordered := authenticatedFileRequest(t, app, http.MethodPut, "/api/v1/products/"+productID+"/files/order",
 		`{"fileIds":["fil_edit_3","fil_edit_1","fil_edit_2"]}`, csrf, cookies)
 	if reordered.Code != http.StatusOK {
 		t.Fatalf("reorder status=%d body=%s", reordered.Code, reordered.Body.String())
 	}
-	files, err := app.repository.ProductFiles(t.Context(), "org_preview", "product_preview_001")
+	files, err := app.repository.ProductFiles(t.Context(), "org_preview", productID)
 	if err != nil || len(files) != 3 || files[0].ID != "fil_edit_3" || files[1].ID != "fil_edit_1" || files[2].ID != "fil_edit_2" {
 		t.Fatalf("unexpected reordered files=%#v error=%v", files, err)
 	}
@@ -99,7 +107,7 @@ func TestProductImagesCanBeReorderedAndDeleted(t *testing.T) {
 	if deleted.Code != http.StatusNoContent {
 		t.Fatalf("delete status=%d body=%s", deleted.Code, deleted.Body.String())
 	}
-	files, err = app.repository.ProductFiles(t.Context(), "org_preview", "product_preview_001")
+	files, err = app.repository.ProductFiles(t.Context(), "org_preview", productID)
 	if err != nil || len(files) != 2 || files[0].ID != "fil_edit_3" || files[0].SortOrder != 0 || files[1].ID != "fil_edit_2" || files[1].SortOrder != 1 {
 		t.Fatalf("unexpected compacted files=%#v error=%v", files, err)
 	}

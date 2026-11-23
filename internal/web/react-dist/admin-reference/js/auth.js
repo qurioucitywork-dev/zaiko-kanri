@@ -14,11 +14,13 @@ function getSession() {
 
 // ── セッション保存 ──
 function setSession(user) {
+  if (getSession()?.id !== user?.id) window.__adminPageAccess = null;
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(user));
 }
 
 // ── セッションクリア ──
 function clearSession() {
+  window.__adminPageAccess = null;
   sessionStorage.removeItem(SESSION_KEY);
 }
 
@@ -31,12 +33,12 @@ function currentUserId() { return getSession()?.id || null; }
 const ROLE_LEVEL = { admin: 3, buyer: 2, worker: 2, guest: 1 };
 const ROLE_LABELS = { admin: '管理者', buyer: '作業者', worker: '作業者', guest: 'ゲスト' };
 const ROLE_ADMIN_ONLY_PAGES = ['approval', 'password', 'company', 'login-info'];
-const ROLE_ADMIN_AUTH_PAGES = ['master', 'box'];
+const ROLE_ADMIN_AUTH_PAGES = ['cost-adjustment', 'cost-adjustment-slips', 'master', 'client', 'box', 'performance', 'stocktake', 'purchase-list'];
 const ROLE_WORKSPACE_PAGES = [
   'dashboard', 'market', 'market-entry', 'inventory', 'purchase-entry', 'purchase', 'cost-adjustment', 'cost-adjustment-slips', 'sales',
   'sales-list', 'shipping', 'consignment', 'sales-adjustment-entry', 'purchase-adjustment-entry',
   'returns', 'master', 'box', 'performance',
-  'stocktake', 'purchase-list', 'client',
+  'stocktake', 'purchase-list', 'client', 'notifications',
 ];
 
 function hasRole(requiredRole) {
@@ -55,6 +57,8 @@ function currentRoleLabel() { return ROLE_LABELS[currentRole()] || '未ログイ
  */
 function requireAdminForSensitiveOperation(operationLabel) {
   if (!currentUser() || isAdmin()) return true;
+  if (isWorker() && window.__adminPageAccess?.page === window.__zaikoCurrentPage && ['原価','パーツ','外貨レート','商品情報'].some(label=>operationLabel.includes(label))) return true;
+  if (isWorker() && /伝票|支払確認|入金確認|配送情報/.test(operationLabel)) return true;
   const message = `${operationLabel}には管理者権限または管理者承認が必要です。`;
   if (typeof showToast === 'function') {
     showToast('warning', '管理者承認が必要です', message);
@@ -141,7 +145,7 @@ function applyRoleUI() {
   });
 
   document.querySelectorAll('.nav-item[data-page]').forEach(el => {
-    el.style.display = canAccessPage(el.dataset.page) ? '' : 'none';
+    el.style.display = canAccessPage(el.dataset.page) && (!el.hasAttribute('data-worker-only') || isWorker()) ? '' : 'none';
   });
 
   // 作業者には承認が必要な操作に警告バッジ

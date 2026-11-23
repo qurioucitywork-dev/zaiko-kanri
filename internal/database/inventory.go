@@ -350,14 +350,20 @@ func (s *Store) InventoryStats(ctx context.Context, organizationID string) (Inve
 }
 
 func nextSlipNumberTx(ctx context.Context, tx *sql.Tx, organizationID, purchaseDate string) (string, error) {
-	year := purchaseDate[:4]
-	var count int
-	if err := tx.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM purchase_slips WHERE organization_id=? AND substr(purchase_date,1,4)=?`,
-		organizationID, year).Scan(&count); err != nil {
+	date, err := time.Parse("2006-01-02", purchaseDate)
+	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("PI-%s-%04d", year, count+1), nil
+	prefix := "SD-" + date.Format("020106")
+	var sequence int
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(CAST(substr(slip_number,10,3) AS INTEGER)),0)+1 FROM purchase_slips WHERE organization_id=? AND slip_number GLOB ?`, organizationID, prefix+"[0-9][0-9][0-9]").Scan(&sequence)
+	if err != nil {
+		return "", err
+	}
+	if sequence > 999 {
+		return "", fmt.Errorf("同じ日・同じ種類の伝票は999件までです")
+	}
+	return fmt.Sprintf("%s%03d", prefix, sequence), nil
 }
 
 func (s *Store) ConfirmPurchase(ctx context.Context, organizationID, slipID, actorUserID string) (ConfirmResult, error) {
@@ -503,9 +509,6 @@ func (s *Store) CreateSingleProduct(ctx context.Context, input SingleProductInpu
 	if err != nil {
 		return Product{}, err
 	}
-	if len(candidates) > 0 && strings.TrimSpace(input.DuplicateReason) == "" {
-		return Product{}, &SerialDuplicateError{Candidates: candidates}
-	}
 	now := s.now().Format(time.RFC3339Nano)
 	slipID, _ := NewID("pur")
 	lineID, _ := NewID("pul")
@@ -552,7 +555,7 @@ func (s *Store) CreateSingleProduct(ctx context.Context, input SingleProductInpu
 		VALUES(?,?,?,'single.created','in_stock',?,?)`, eventID, input.OrganizationID, productID, input.CreatedBy, now); err != nil {
 		return Product{}, err
 	}
-	if len(candidates) > 0 {
+	if len(candidates) > 0 && strings.TrimSpace(input.DuplicateReason) != "" {
 		candidateIDs := make([]string, 0, len(candidates))
 		for _, candidate := range candidates {
 			candidateIDs = append(candidateIDs, candidate.ID)

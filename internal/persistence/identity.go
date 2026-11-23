@@ -28,6 +28,12 @@ func (r *Repository) Authenticate(ctx context.Context, organizationCode, usernam
 		Joins("JOIN organizations AS o ON o.id = u.organization_id").
 		Where("o.code = ? AND u.username = ? AND u.deleted_at IS NULL AND o.is_active", organizationCode, strings.TrimSpace(username)).
 		Take(&row)
+	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		resolved, err := r.guestLoginUsername(ctx, organizationCode, username)
+		if err == nil && resolved != strings.TrimSpace(username) {
+			return r.Authenticate(ctx, organizationCode, resolved, password)
+		}
+	}
 	if result.Error != nil || !row.Active || !database.VerifyPassword(row.PasswordHash, password) {
 		return database.User{}, errors.New("invalid credentials")
 	}

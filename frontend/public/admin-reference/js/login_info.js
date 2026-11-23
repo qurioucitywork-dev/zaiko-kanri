@@ -97,6 +97,7 @@ function ensureBuyerForGuest(guest, details = {}) {
     name: Object.prototype.hasOwnProperty.call(details, 'name') ? details.name : (buyer.name || fallbackName),
     address: Object.prototype.hasOwnProperty.call(details, 'address') ? details.address : (buyer.address || ''),
     contact: Object.prototype.hasOwnProperty.call(details, 'contact') ? details.contact : (buyer.contact || ''),
+    ...(details.regionType ? { regionType: details.regionType } : {}),
     invoice: Object.prototype.hasOwnProperty.call(details, 'invoice') ? details.invoice : (buyer.invoice || ''),
     email: Object.prototype.hasOwnProperty.call(details, 'email') ? details.email : (buyer.email || guest.email || ''),
   };
@@ -293,21 +294,18 @@ function openLoginInfoModal(role = loginInfoState.role, id = null) {
   const roleInput = document.getElementById('loginInfoRole');
   roleInput.value = role;
   roleInput.disabled = isEdit;
+  updateLoginInfoEmailRequirement(isGuestRole);
   document.getElementById('loginInfoName').value = record?.name || '';
-  const isWorkerRole = role === 'buyer';
-  const staffCode = record?.staffCode || (isWorkerRole && typeof getNextStaffCode === 'function' ? getNextStaffCode() : '');
-  const staffCodeField = document.getElementById('loginInfoStaffCodeField');
-  const staffCodeInput = document.getElementById('loginInfoStaffCode');
-  if (staffCodeField) staffCodeField.classList.toggle('hidden', !isWorkerRole);
-  if (staffCodeInput) staffCodeInput.value = staffCode;
   document.getElementById('loginInfoLoginId').value = isGuestRole ? (record?.id || suggestedLoginId) : (record?.loginId || '');
   document.getElementById('loginInfoLoginId').readOnly = isGuestRole && isEdit;
   document.getElementById('loginInfoEmail').value = record?.email || '';
   document.getElementById('loginInfoPassword').value = '';
-  document.getElementById('loginInfoPassword').placeholder = isEdit ? '変更しない場合は空欄' : '8文字以上を推奨';
+  document.getElementById('loginInfoPassword').placeholder = isEdit ? '変更しない場合は空欄' : (isGuestRole ? '8文字以上' : '12文字以上');
   document.getElementById('loginInfoActive').checked = record?.active !== false;
   document.getElementById('loginInfoCompany').value = record?.company || customer?.name || '';
   document.getElementById('loginInfoBuyerCode').value = record?.buyerCode || (isGuestRole ? loginInfoNextId('B', APP_DATA.buyers, 'code') : '');
+  document.getElementById('loginInfoBuyerCode').readOnly = Boolean(window.ZaikoAPI && isEdit);
+  document.getElementById('loginInfoRegionType').value = customer?.regionType || 'domestic';
   document.getElementById('loginInfoAddress').value = customer?.address || '';
   document.getElementById('loginInfoContact').value = customer?.contact || '';
   document.getElementById('loginInfoInvoice').value = customer?.invoice || '';
@@ -318,17 +316,22 @@ function openLoginInfoModal(role = loginInfoState.role, id = null) {
   setTimeout(() => document.getElementById('loginInfoName')?.focus(), 0);
 }
 
+function updateLoginInfoEmailRequirement(isGuest) {
+  const input = document.getElementById('loginInfoEmail');
+  if (input) input.required = isGuest;
+  const label = document.querySelector('label[for="loginInfoEmail"]');
+  if (label) label.innerHTML = isGuest ? 'メールアドレス <span class="required">*</span>' : 'メールアドレス（任意）';
+}
+
 function onLoginInfoRoleChange(role) {
   if (loginInfoState.editingId) return;
   loginInfoState.editingType = role;
   const guest = role === 'guest';
+  updateLoginInfoEmailRequirement(guest);
   document.getElementById('loginInfoCustomerFields').classList.toggle('hidden', !guest);
   document.getElementById('loginInfoLoginId').value = guest ? loginInfoNextId('G', APP_DATA.guestAccounts) : '';
   document.getElementById('loginInfoBuyerCode').value = guest ? loginInfoNextId('B', APP_DATA.buyers, 'code') : '';
-  const worker = role === 'buyer';
-  document.getElementById('loginInfoStaffCodeField')?.classList.toggle('hidden', !worker);
-  const staffCodeInput = document.getElementById('loginInfoStaffCode');
-  if (staffCodeInput) staffCodeInput.value = worker && typeof getNextStaffCode === 'function' ? getNextStaffCode() : '';
+
 }
 
 function closeLoginInfoModal() {
@@ -354,7 +357,9 @@ function toggleLoginInfoPassword() {
   document.getElementById('loginInfoPasswordToggleIcon').className = show ? 'fa-regular fa-eye-slash' : 'fa-regular fa-eye';
 }
 
-function saveLoginInfo() {
+let loginInfoSaving = false;
+async function saveLoginInfo() {
+  if (loginInfoSaving) return false;
   const role = document.getElementById('loginInfoRole').value;
   const name = document.getElementById('loginInfoName').value.trim();
   const loginId = document.getElementById('loginInfoLoginId').value.trim();
@@ -364,20 +369,20 @@ function saveLoginInfo() {
   const isGuestRole = role === 'guest';
   const isEdit = Boolean(loginInfoState.editingId);
 
-  if (!name || !loginId || !email) {
-    showToast('error', '入力内容を確認してください', '氏名・ログインID・メールアドレスは必須です');
+  if (!name || !loginId || (isGuestRole && !email)) {
+    showToast('error', '入力内容を確認してください', isGuestRole ? '氏名・ログインID・メールアドレスは必須です' : '氏名・ログインIDは必須です');
     return false;
   }
-  if (!/^[A-Za-z0-9._@+-]+$/.test(loginId)) {
-    showToast('error', 'ログインIDを確認してください', '半角英数字と . _ @ + - のみ使用できます');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._@+-]{2,319}$/.test(loginId)) {
+    showToast('error', 'ログインIDを確認してください', '半角英数字で始まる3〜320文字で入力してください（. _ @ + - も使用できます）');
     return false;
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     showToast('error', 'メールアドレスを確認してください', '有効なメールアドレスを入力してください');
     return false;
   }
-  if (!isEdit && password.length < 8) {
-    showToast('error', 'パスワードを確認してください', '新規作成時は8文字以上で入力してください');
+  if ((!isEdit || password) && (password.length < (isGuestRole || !window.ZaikoAPI ? 8 : 12) || new Blob([password]).size > 72)) {
+    showToast('error', 'パスワードを確認してください', isGuestRole || !window.ZaikoAPI ? 'パスワードは8文字以上、72バイト以内で入力してください' : 'パスワードは12文字以上、72バイト以内で入力してください');
     return false;
   }
 
@@ -402,6 +407,47 @@ function saveLoginInfo() {
       showToast('error', 'この販売先にはログイン情報があります', '同じ顧客コードに複数のゲストログインは発行できません');
       return false;
     }
+    if (window.ZaikoAPI) {
+      if (!/^G[0-9]{3,}$/.test(loginId.toUpperCase())) {
+        showToast('error', 'ゲストIDを確認してください', 'G001 の形式で入力してください'); return false;
+      }
+      const current = APP_DATA.guestAccounts.find(item => item.id === loginInfoState.editingId);
+      if (isEdit && !current?.userId) {
+        showToast('error', '登録情報を確認してください', '画面を再読み込みしてから登録してください'); return false;
+      }
+      if (!document.getElementById('loginInfoAddress').value.trim()) { showToast('error', '顧客情報を確認してください', '住所を入力してください'); return false; }
+      loginInfoSaving = true;
+      let saved = false;
+      try {
+        const record = await window.ZaikoAPI.saveGuestLogin({
+          userId: current?.userId || '', guestCode: loginId.toUpperCase(), displayName: name,
+          company, buyerCode, email, password, isActive: active,
+          regionType: document.getElementById('loginInfoRegionType').value,
+          address: document.getElementById('loginInfoAddress').value.trim(),
+          contact: document.getElementById('loginInfoContact').value.trim(),
+          invoiceNumber: document.getElementById('loginInfoInvoice').value.trim(),
+        });
+        saved = true;
+        // Preserve the server ID if the following refresh fails: retry edits the
+        // saved account instead of creating another one. Never retain passwords.
+        const guest = { id: record.guestCode, userId: record.id, name: record.displayName,
+          company: record.companyName, buyerCode: record.buyerCode, partnerCode: record.partnerCode,
+          email: record.email, active: record.isActive, password: '', apiManaged: true };
+        const index = APP_DATA.guestAccounts.findIndex(item => item.id === guest.id);
+        if (index < 0) APP_DATA.guestAccounts.push(guest); else APP_DATA.guestAccounts[index] = guest;
+        loginInfoState.editingId = guest.id;
+        document.getElementById('loginInfoPassword').value = '';
+        await window.ZaikoAPI.hydrateAdmin();
+        closeLoginInfoModal(); renderLoginInfoPage();
+        if (typeof refreshBuyerMasterConsumers === 'function') refreshBuyerMasterConsumers();
+        if (typeof refreshPasswordMasterDirectory === 'function') refreshPasswordMasterDirectory();
+        showToast('success', isEdit ? '更新しました' : '作成しました', name + ' のログイン情報を保存しました');
+        return true;
+      } catch (error) {
+        showToast('error', saved ? '保存済み・表示更新エラー' : '保存エラー', saved ? '登録は保存されています。画面を再読み込みしてください。' : error.message);
+        return false;
+      } finally { loginInfoSaving = false; }
+    }
     let guest = APP_DATA.guestAccounts.find(item => item.id === loginInfoState.editingId);
     const previousBuyerCode = guest?.buyerCode || '';
     if (!guest) {
@@ -421,6 +467,7 @@ function saveLoginInfo() {
     ensureBuyerForGuest(guest, {
       code: buyerCode,
       name: company,
+      regionType: document.getElementById('loginInfoRegionType').value,
       address: document.getElementById('loginInfoAddress').value.trim(),
       contact: document.getElementById('loginInfoContact').value.trim(),
       invoice: document.getElementById('loginInfoInvoice').value.trim(),
@@ -431,7 +478,6 @@ function saveLoginInfo() {
     }
   } else {
     let user = APP_DATA.users.find(item => item.id === loginInfoState.editingId);
-    const previousWorkerName = user?.name || '';
     if (user?.role === 'admin' && !active) {
       if (typeof currentUserId === 'function' && currentUserId() === user.id) {
         showToast('error', '現在の管理者は停止できません', '別の管理者でログインしてから変更してください');
@@ -442,6 +488,30 @@ function saveLoginInfo() {
         showToast('error', '最後の管理者は停止できません', '有効な管理者を1件以上残してください');
         return false;
       }
+    }
+    if (window.ZaikoAPI) {
+      loginInfoSaving = true;
+      let saved = false;
+      try {
+        const record = user
+          ? await window.ZaikoAPI.updateUser(user.id, { username: loginId, displayName: name, email, isActive: active, ...(password ? { password } : {}) })
+          : await window.ZaikoAPI.createUser({ username: loginId, displayName: name, email, password, role: role === 'buyer' ? 'worker' : role });
+        saved = true;
+        loginInfoState.editingId = record.id;
+        const account = { id: record.id, role: record.role, name: record.displayName, loginId: record.username,
+          email: record.email, active: record.isActive, avatar: name.slice(0, 1), password: '', apiManaged: true };
+        const index = APP_DATA.users.findIndex(item => item.id === record.id);
+        if (index < 0) APP_DATA.users.push(account); else APP_DATA.users[index] = account;
+        if (!isEdit && !active) await window.ZaikoAPI.updateUser(record.id, { isActive: false });
+        document.getElementById('loginInfoPassword').value = '';
+        await window.ZaikoAPI.hydrateAdmin();
+        closeLoginInfoModal(); renderLoginInfoPage(); refreshPasswordMasterDirectory();
+        showToast('success', isEdit ? '更新しました' : '作成しました', name + ' のログイン情報を保存しました');
+        return true;
+      } catch (error) {
+        showToast('error', saved ? '一部保存済み' : '保存エラー', error.message);
+        return false;
+      } finally { loginInfoSaving = false; }
     }
     if (!user) {
       user = {
@@ -464,9 +534,6 @@ function saveLoginInfo() {
       avatar: name.slice(0, 1),
     });
     if (password) user.password = password;
-    if ((role === 'buyer' || role === 'worker') && typeof syncWorkerAccountToStaffMaster === 'function') {
-      syncWorkerAccountToStaffMaster(user, previousWorkerName, document.getElementById('loginInfoStaffCode')?.value || '');
-    }
     if (typeof currentUserId === 'function' && currentUserId() === user.id && typeof setSession === 'function') {
       setSession({ id: user.id, role: user.role, name: user.name, avatar: user.avatar, loginId: user.loginId });
       if (typeof applyRoleUI === 'function') applyRoleUI();

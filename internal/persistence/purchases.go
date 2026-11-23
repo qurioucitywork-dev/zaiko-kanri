@@ -58,31 +58,36 @@ const (
 )
 
 type PurchaseLineInput struct {
-	Quantity              int      `json:"quantity"`
-	SKU                   string   `json:"sku"`
-	BrandCode             string   `json:"brandCode"`
-	ModelNumber           string   `json:"modelNumber"`
-	ReferenceNumber       string   `json:"referenceNumber"`
-	SerialNumber          string   `json:"serialNumber"`
-	ProductType           string   `json:"productType"`
-	ShapeCode             string   `json:"shapeCode"`
-	MarkingCode           string   `json:"markingCode"`
-	MaterialCode          string   `json:"materialCode"`
-	MovementCode          string   `json:"movementCode"`
-	ConditionCode         string   `json:"conditionCode"`
-	AccessoryCodes        []string `gorm:"-" json:"accessoryCodes"`
-	BeltText              string   `json:"beltText"`
-	DialText              string   `json:"dialText"`
-	BraceletQuantity      *int     `json:"braceletQuantity,omitempty"`
-	UnitCostMinor         int64    `json:"unitCostMinor"`
-	CostCurrency          string   `json:"costCurrency"`
-	BaseSalePriceMinor    int64    `json:"baseSalePriceMinor"`
-	BaseSaleCurrency      string   `json:"baseSaleCurrency"`
-	Notes                 string   `json:"notes"`
-	DuplicateSerialReason string   `json:"duplicateSerialReason"`
+	WeightGrams           string                    `json:"weightGrams"`
+	AccessorySupplements  AccessorySupplementValues `json:"accessorySupplements"`
+	BoxCode               string                    `json:"boxCode"`
+	Quantity              int                       `json:"quantity"`
+	SKU                   string                    `json:"sku"`
+	BrandCode             string                    `json:"brandCode"`
+	ModelNumber           string                    `json:"modelNumber"`
+	ReferenceNumber       string                    `json:"referenceNumber"`
+	SerialNumber          string                    `json:"serialNumber"`
+	ProductType           string                    `json:"productType"`
+	ShapeCode             string                    `json:"shapeCode"`
+	MarkingCode           string                    `json:"markingCode"`
+	MaterialCode          string                    `json:"materialCode"`
+	MovementCode          string                    `json:"movementCode"`
+	ConditionCode         string                    `json:"conditionCode"`
+	AccessoryCodes        []string                  `gorm:"-" json:"accessoryCodes"`
+	BeltText              string                    `json:"beltText"`
+	DialText              string                    `json:"dialText"`
+	BraceletQuantity      *int                      `json:"braceletQuantity,omitempty"`
+	UnitCostMinor         int64                     `json:"unitCostMinor"`
+	CostCurrency          string                    `json:"costCurrency"`
+	BaseSalePriceMinor    int64                     `json:"baseSalePriceMinor"`
+	BaseSaleCurrency      string                    `json:"baseSaleCurrency"`
+	Notes                 string                    `json:"notes"`
+	DuplicateSerialReason string                    `json:"duplicateSerialReason"`
 }
 
 type PurchaseCreateInput struct {
+	AuctionFeeRule  *AuctionFeeRule        `json:"auctionFeeRule,omitempty"`
+	rebuild         *returnedDraftIdentity // Set only inside the owner-checked resubmission transaction.
 	OrganizationID  string
 	ActorUserID     string
 	SupplierCode    string              `json:"supplierCode"`
@@ -97,47 +102,54 @@ type PurchaseCreateInput struct {
 }
 
 type PurchaseLineRecord struct {
-	ID                    string     `json:"id"`
-	LineNumber            int        `json:"lineNumber"`
-	Quantity              int        `json:"quantity"`
-	UnitCostMinor         int64      `json:"unitCostMinor"`
-	CostCurrency          string     `json:"costCurrency"`
-	BaseSalePriceMinor    int64      `json:"baseSalePriceMinor"`
-	BaseSaleCurrency      string     `json:"baseSaleCurrency"`
-	BrandCode             string     `json:"brandCode"`
-	BrandName             string     `json:"brandName"`
-	MaterialCode          string     `json:"materialCode"`
-	MovementCode          string     `json:"movementCode"`
-	ConditionCode         string     `json:"conditionCode"`
-	ModelNumber           string     `json:"modelNumber"`
-	ReferenceNumber       string     `json:"referenceNumber"`
-	SerialNumber          string     `json:"serialNumber"`
-	ProductType           string     `json:"productType"`
-	ShapeCode             string     `json:"shapeCode"`
-	MarkingCode           string     `json:"markingCode"`
-	SKU                   string     `json:"sku"`
-	AccessoryCodes        []string   `gorm:"-" json:"accessoryCodes"`
-	BeltText              string     `json:"beltText"`
-	DialText              string     `json:"dialText"`
-	BraceletQuantity      *int       `json:"braceletQuantity,omitempty"`
-	Notes                 string     `json:"notes"`
-	GeneratedProductCount int        `json:"generatedProductCount"`
-	GeneratedPartCount    int        `json:"generatedPartCount"`
-	LineItemKind          string     `json:"lineItemKind"`
-	ConvertedTotalJPY     int64      `json:"convertedTotalJpy"`
-	FXRateSnapshotID      string     `json:"fxRateSnapshotId"`
-	FXRateScaled          int64      `json:"fxRateScaled"`
-	FXScale               int64      `json:"fxScale"`
-	FXRateObservedAt      *time.Time `json:"fxRateObservedAt,omitempty"`
-	ProductID             string     `json:"productId,omitempty"`
-	ProductCode           string     `json:"productCode,omitempty"`
-	InventoryStatus       string     `json:"inventoryStatus,omitempty"`
-	PartID                string     `json:"partId,omitempty"`
-	PartCode              string     `json:"partCode,omitempty"`
-	PartStatus            string     `json:"partStatus,omitempty"`
+	AuctionFee            AuctionFeeSnapshot        `gorm:"type:jsonb" json:"auctionFee"`
+	DuplicateSerialReason string                    `json:"duplicateSerialReason"`
+	WeightGrams           string                    `json:"weightGrams"`
+	AccessorySupplements  AccessorySupplementValues `json:"accessorySupplements"`
+	BoxCode               string                    `json:"boxCode"`
+	ID                    string                    `json:"id"`
+	LineNumber            int                       `json:"lineNumber"`
+	Quantity              int                       `json:"quantity"`
+	UnitCostMinor         int64                     `json:"unitCostMinor"`
+	CostCurrency          string                    `json:"costCurrency"`
+	BaseSalePriceMinor    int64                     `json:"baseSalePriceMinor"`
+	BaseSaleCurrency      string                    `json:"baseSaleCurrency"`
+	BrandCode             string                    `json:"brandCode"`
+	BrandName             string                    `json:"brandName"`
+	MaterialCode          string                    `json:"materialCode"`
+	MovementCode          string                    `json:"movementCode"`
+	ConditionCode         string                    `json:"conditionCode"`
+	ModelNumber           string                    `json:"modelNumber"`
+	ReferenceNumber       string                    `json:"referenceNumber"`
+	SerialNumber          string                    `json:"serialNumber"`
+	ProductType           string                    `json:"productType"`
+	ShapeCode             string                    `json:"shapeCode"`
+	MarkingCode           string                    `json:"markingCode"`
+	SKU                   string                    `json:"sku"`
+	AccessoryCodes        []string                  `gorm:"-" json:"accessoryCodes"`
+	BeltText              string                    `json:"beltText"`
+	DialText              string                    `json:"dialText"`
+	BraceletQuantity      *int                      `json:"braceletQuantity,omitempty"`
+	Notes                 string                    `json:"notes"`
+	GeneratedProductCount int                       `json:"generatedProductCount"`
+	GeneratedPartCount    int                       `json:"generatedPartCount"`
+	LineItemKind          string                    `json:"lineItemKind"`
+	ConvertedTotalJPY     int64                     `json:"convertedTotalJpy"`
+	FXRateSnapshotID      string                    `json:"fxRateSnapshotId"`
+	FXRateScaled          int64                     `json:"fxRateScaled"`
+	FXScale               int64                     `json:"fxScale"`
+	FXRateObservedAt      *time.Time                `json:"fxRateObservedAt,omitempty"`
+	ProductID             string                    `json:"productId,omitempty"`
+	ProductCode           string                    `json:"productCode,omitempty"`
+	InventoryStatus       string                    `json:"inventoryStatus,omitempty"`
+	PartID                string                    `json:"partId,omitempty"`
+	PartCode              string                    `json:"partCode,omitempty"`
+	PartStatus            string                    `json:"partStatus,omitempty"`
 }
 
 type PurchaseSlipRecord struct {
+	RegistrationUSDRate   float64              `gorm:"-" json:"registrationUsdJpyRate,omitempty"`
+	StaffName             string               `json:"staffName,omitempty"`
 	ID                    string               `json:"id"`
 	SlipNumber            string               `json:"slipNumber"`
 	SupplierCode          string               `json:"supplierCode"`
@@ -303,11 +315,27 @@ func (r *Repository) DeletedPurchaseSlipsPage(ctx context.Context, organizationI
 }
 
 func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseID string) (PurchaseSlipRecord, error) {
+	return r.purchaseSlipDetail(ctx, organizationID, purchaseID, false)
+}
+
+// DeletedPurchaseSlip reads archived lines without making them available to
+// normal purchase mutations or inventory selection.
+func (r *Repository) DeletedPurchaseSlip(ctx context.Context, organizationID, purchaseID string) (PurchaseSlipRecord, error) {
+	return r.purchaseSlipDetail(ctx, organizationID, purchaseID, true)
+}
+
+func (r *Repository) purchaseSlipDetail(ctx context.Context, organizationID, purchaseID string, archived bool) (PurchaseSlipRecord, error) {
+	statusCondition := "p.status<>'cancelled'"
+	productCondition := " AND product.deleted_at IS NULL"
+	if archived {
+		statusCondition = "p.status='cancelled'"
+		productCondition = ""
+	}
 	var record PurchaseSlipRecord
 	result := r.db.WithContext(ctx).Table("purchase_slips AS p").
 		Select(`p.id,p.slip_number,COALESCE(pr.role_code,'') AS supplier_code,COALESCE(NULLIF(p.supplier_name_text,''),bp.legal_name,'') AS supplier_name,
 			COALESCE(sp.staff_code,'') AS staff_code,p.purchase_date,p.purchase_tax_mode,p.tax_category,p.payment_method,p.tax_rate_basis_points,
-			p.status,p.is_simple,p.notes,
+			p.status,p.is_simple,p.notes,p.cancelled_at,COALESCE(p.cancelled_by,'') AS cancelled_by,COALESCE(p.cancel_reason,'') AS cancel_reason,COALESCE(sp.display_name,'') AS staff_name,
 			p.confirmed_at,p.issued_at,COALESCE(p.issued_by,'') AS issued_by,p.paid_at,COALESCE(p.paid_by,'') AS paid_by,
 			COALESCE(p.issue_fx_rate_snapshot_id,'') AS issue_fx_rate_snapshot_id,
 			COALESCE(p.issue_fx_rate_scaled,0) AS issue_fx_rate_scaled,
@@ -319,25 +347,30 @@ func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseI
 		Joins("LEFT JOIN business_partners bp ON bp.id=pr.partner_id AND bp.organization_id=p.organization_id").
 		Joins("LEFT JOIN staff_profiles sp ON sp.id=p.purchase_staff_profile_id AND sp.organization_id=p.organization_id").
 		Joins(purchaseArrivalSummaryJoin).
-		Where("p.organization_id=? AND p.id=? AND p.status<>'cancelled'", organizationID, purchaseID).Take(&record)
+		Where("p.organization_id=? AND p.id=?", organizationID, purchaseID).Where(statusCondition).Take(&record)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return PurchaseSlipRecord{}, ErrPurchaseNotFound
 	}
 	if result.Error != nil {
 		return PurchaseSlipRecord{}, result.Error
 	}
+	registrationRate, err := r.exchangeRateAtCreation(ctx, organizationID, "USD", record.CreatedAt)
+	if err != nil {
+		return PurchaseSlipRecord{}, err
+	}
+	record.RegistrationUSDRate = registrationRate
 	type lineRow struct {
 		PurchaseLineRecord
 		AccessoryCodesJSON string `gorm:"column:accessory_codes_json"`
 	}
 	var rows []lineRow
 	if err := r.db.WithContext(ctx).Table("purchase_slip_lines AS l").
-		Select(`l.id,l.line_number,l.quantity,l.unit_cost_minor,l.cost_currency,l.base_sale_price_minor,
+		Select(`l.auction_fee,l.id,l.box_code,l.line_number,l.quantity,l.unit_cost_minor,l.cost_currency,l.base_sale_price_minor,
 			l.base_sale_currency,COALESCE(b.code,'') AS brand_code,l.brand_text AS brand_name,
 			COALESCE(m.code,'') AS material_code,COALESCE(mv.code,'') AS movement_code,
 			COALESCE(c.code,'') AS condition_code,COALESCE(ps.code,'') AS shape_code,COALESCE(mk.code,'') AS marking_code,l.model_number,l.reference_number,l.serial_number,
-			l.product_type,l.sku,l.accessory_codes::TEXT AS accessory_codes_json,l.belt_text,l.dial_text,
-			l.bracelet_quantity,l.notes,l.generated_product_count,l.generated_part_count,l.line_item_kind,l.converted_total_jpy,
+			l.product_type,l.sku,l.weight_grams,l.accessory_supplements,l.accessory_codes::TEXT AS accessory_codes_json,l.belt_text,l.dial_text,
+			l.bracelet_quantity,l.duplicate_serial_reason,l.notes,l.generated_product_count,l.generated_part_count,l.line_item_kind,l.converted_total_jpy,
 			COALESCE(l.fx_rate_snapshot_id,'') AS fx_rate_snapshot_id,COALESCE(l.fx_rate_scaled,0) AS fx_rate_scaled,
 			COALESCE(l.fx_scale,0) AS fx_scale,fx.observed_at AS fx_rate_observed_at,
 			COALESCE(product.id,'') AS product_id,COALESCE(product.product_code,'') AS product_code,
@@ -351,7 +384,7 @@ func (r *Repository) PurchaseSlip(ctx context.Context, organizationID, purchaseI
 		Joins("LEFT JOIN product_shapes ps ON ps.id=l.shape_id").
 		Joins("LEFT JOIN markings mk ON mk.id=l.marking_id").
 		Joins("LEFT JOIN exchange_rate_snapshots fx ON fx.id=l.fx_rate_snapshot_id").
-		Joins("LEFT JOIN products product ON product.purchase_slip_line_id=l.id AND product.deleted_at IS NULL").
+		Joins("LEFT JOIN products product ON product.purchase_slip_line_id=l.id"+productCondition).
 		Joins("LEFT JOIN parts part ON part.purchase_slip_line_id=l.id").
 		Where("l.purchase_slip_id=?", purchaseID).Order("l.line_number").Scan(&rows).Error; err != nil {
 		return PurchaseSlipRecord{}, err
@@ -444,28 +477,27 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 				return err
 			}
 		}
+		feeRule, err := resolveAuctionFee(tx, input.OrganizationID, supplierRoleID, "purchase", input.AuctionFeeRule)
+		if err != nil {
+			return err
+		}
 		staffID, err := lookupStaffProfile(tx, input.OrganizationID, input.ActorUserID, input.StaffCode)
 		if err != nil {
 			return err
 		}
-		sequence, err := nextDocumentSequence(tx, input.OrganizationID, "purchase", date.Year(), now)
+		var slipNumber string
+		purchaseID, slipNumber, err = returnedDraftNumber(tx, input.OrganizationID, "purchase_slips", "SD", "pur", date, now, input.rebuild)
 		if err != nil {
 			return err
 		}
-		purchaseID, err = database.NewID("pur")
-		if err != nil {
-			return err
-		}
-		slipNumber := fmt.Sprintf("PI-%04d-%04d", date.Year(), sequence)
 		if err := tx.Exec(`INSERT INTO purchase_slips(
 			id,organization_id,slip_number,supplier_role_id,supplier_name_text,purchase_staff_profile_id,purchase_date,status,is_simple,
 			purchase_tax_mode,tax_category,payment_method,tax_rate_basis_points,notes,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,'draft',FALSE,?,?,?,?,?,?,?,?)`, purchaseID, input.OrganizationID, slipNumber,
+		) VALUES(?,?,?,?,?,?,?,'draft',FALSE,?,?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET supplier_role_id=EXCLUDED.supplier_role_id,supplier_name_text=EXCLUDED.supplier_name_text,purchase_staff_profile_id=EXCLUDED.purchase_staff_profile_id,purchase_date=EXCLUDED.purchase_date,purchase_tax_mode=EXCLUDED.purchase_tax_mode,tax_category=EXCLUDED.tax_category,payment_method=EXCLUDED.payment_method,tax_rate_basis_points=EXCLUDED.tax_rate_basis_points,notes=EXCLUDED.notes,status=EXCLUDED.status,updated_at=EXCLUDED.updated_at,cancelled_at=NULL,cancelled_by=NULL,cancel_reason=''`, purchaseID, input.OrganizationID, slipNumber,
 			nullIfEmpty(supplierRoleID), supplierName, staffID, date, purchaseTaxMode, taxCategory, paymentMethod, taxRateBasisPoints, strings.TrimSpace(input.Notes), input.ActorUserID, now, now).Error; err != nil {
 			return fmt.Errorf("insert purchase slip: %w", err)
 		}
 
-		seenSerials := map[string]bool{}
 		for index, line := range input.Lines {
 			if line.Quantity != 1 {
 				return ErrPurchaseQuantity
@@ -473,24 +505,12 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 			if line.UnitCostMinor < 0 || line.BaseSalePriceMinor < 0 {
 				return fmt.Errorf("invalid purchase line %d", index+1)
 			}
-			if line.Quantity > 1 && strings.TrimSpace(line.SerialNumber) != "" {
-				return ErrQuantitySerialConflict
+			adjusted, feeSnapshot, err := calculateAuctionFee(line.UnitCostMinor, strings.ToUpper(strings.TrimSpace(line.CostCurrency)), "purchase", feeRule)
+			if err != nil {
+				return err
 			}
+			line.UnitCostMinor = adjusted
 			serial := strings.TrimSpace(line.SerialNumber)
-			if serial != "" {
-				key := strings.ToUpper(serial)
-				if seenSerials[key] {
-					return ErrDuplicateSerial
-				}
-				seenSerials[key] = true
-				var count int64
-				if err := tx.Table("products").Where("organization_id=? AND UPPER(serial_number)=? AND deleted_at IS NULL AND inventory_status<>'cancelled'", input.OrganizationID, key).Count(&count).Error; err != nil {
-					return err
-				}
-				if count > 0 && strings.TrimSpace(line.DuplicateSerialReason) == "" {
-					return ErrDuplicateSerialReason
-				}
-			}
 			brandID, brandName, err := lookupCatalog(tx, "brands", input.OrganizationID, line.BrandCode, false)
 			if err != nil {
 				return err
@@ -519,8 +539,16 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 			if err != nil {
 				return err
 			}
+			weight, err := normalizeProductWeight(line.WeightGrams)
+			if err != nil {
+				return err
+			}
+			supplements, err := normalizeAccessorySupplements(tx, input.OrganizationID, line.AccessoryCodes, line.AccessorySupplements)
+			if err != nil {
+				return err
+			}
 			accessoryJSON, _ := json.Marshal(normalizeCodes(line.AccessoryCodes))
-			lineID, err := database.NewID("pul")
+			lineID, err := returnedDraftLineID(input.rebuild, index, "pul")
 			if err != nil {
 				return err
 			}
@@ -532,25 +560,37 @@ func (r *Repository) CreatePurchase(ctx context.Context, input PurchaseCreateInp
 				}
 			}
 			costCurrency := strings.ToUpper(strings.TrimSpace(line.CostCurrency))
-			convertedCostJPY, fxRateID, fxRateScaled, fxScale, err := purchaseCostSnapshot(
-				tx, input.OrganizationID, line.UnitCostMinor, line.Quantity, costCurrency)
+			convertedCostJPY, fxRateID, fxRateScaled, fxScale, err := returnedPurchaseCostSnapshot(
+				tx, input.OrganizationID, line.UnitCostMinor, line.Quantity, costCurrency, input.rebuild, index)
 			if err != nil {
+				return err
+			}
+			if err := validateRegistrationBox(line.BoxCode); err != nil {
 				return err
 			}
 			if err := tx.Exec(`INSERT INTO purchase_slip_lines(
 				id,purchase_slip_id,line_number,quantity,unit_cost_minor,cost_currency,base_sale_price_minor,
 				base_sale_currency,brand_id,material_id,movement_id,condition_id,shape_id,marking_id,brand_text,model_number,
 				reference_number,serial_number,product_type,sku,accessory_codes,notes,belt_text,dial_text,bracelet_quantity,duplicate_serial_reason,
-				generated_product_count,converted_total_jpy,fx_rate_snapshot_id,fx_rate_scaled,fx_scale,created_at
-			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSONB),?,?,?,?,?,0,?,?,?,?,?)`, lineID, purchaseID, index+1,
+				generated_product_count,converted_total_jpy,fx_rate_snapshot_id,fx_rate_scaled,fx_scale,created_at,box_code
+			) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSONB),?,?,?,?,?,0,?,?,?,?,?,?)`, lineID, purchaseID, index+1,
 				line.Quantity, line.UnitCostMinor, costCurrency,
 				line.BaseSalePriceMinor, strings.ToUpper(strings.TrimSpace(line.BaseSaleCurrency)), nullIfEmpty(brandID),
 				nullIfEmpty(materialID), nullIfEmpty(movementID), nullIfEmpty(conditionID), nullIfEmpty(shapeID), nullIfEmpty(markingID), brandName,
 				strings.TrimSpace(line.ModelNumber), strings.TrimSpace(line.ReferenceNumber), serial, productType,
 				strings.TrimSpace(line.SKU), string(accessoryJSON), strings.TrimSpace(line.Notes), strings.TrimSpace(line.BeltText),
 				strings.TrimSpace(line.DialText), line.BraceletQuantity,
-				strings.TrimSpace(line.DuplicateSerialReason), convertedCostJPY, fxRateID, fxRateScaled, fxScale, now).Error; err != nil {
+				strings.TrimSpace(line.DuplicateSerialReason), convertedCostJPY, fxRateID, fxRateScaled, fxScale, now, strings.TrimSpace(line.BoxCode)).Error; err != nil {
 				return fmt.Errorf("insert purchase line %d: %w", index+1, err)
+			}
+			if err := tx.Table("purchase_slip_lines").Where("id=?", lineID).UpdateColumn("weight_grams", weight).Error; err != nil {
+				return err
+			}
+			if err := saveAuctionFeeSnapshot(tx, "purchase_slip_lines", lineID, returnedAuctionFee(input.rebuild, index, feeSnapshot)); err != nil {
+				return err
+			}
+			if err := saveAccessorySupplementValues(tx, "purchase_slip_lines", lineID, supplements); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -585,9 +625,11 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 			return ErrPurchaseState
 		}
 		type line struct {
+			WeightGrams                                                                             string
+			AccessorySupplements                                                                    AccessorySupplementValues
 			ID, SKU, BrandID, BrandText, ModelNumber, ReferenceNumber, SerialNumber, ProductType    string
 			MaterialID, MovementID, ConditionID, ShapeID, MarkingID, CostCurrency, BaseSaleCurrency string
-			AccessoryCodesJSON, Notes, BeltText, DialText, DuplicateSerialReason                    string
+			AccessoryCodesJSON, Notes, BeltText, DialText, DuplicateSerialReason, BoxCode           string
 			BraceletQuantity                                                                        *int
 			Quantity                                                                                int
 			UnitCostMinor, BaseSalePriceMinor                                                       int64
@@ -596,8 +638,8 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 		if err := tx.Raw(`SELECT id,sku,COALESCE(brand_id,'') AS brand_id,brand_text,model_number,reference_number,serial_number,product_type,
 			COALESCE(material_id,'') AS material_id,COALESCE(movement_id,'') AS movement_id,
 			COALESCE(condition_id,'') AS condition_id,COALESCE(shape_id,'') AS shape_id,COALESCE(marking_id,'') AS marking_id,cost_currency,base_sale_currency,
-			accessory_codes::TEXT AS accessory_codes_json,notes,belt_text,dial_text,bracelet_quantity,
-			duplicate_serial_reason,quantity,
+			weight_grams,accessory_supplements,accessory_codes::TEXT AS accessory_codes_json,notes,belt_text,dial_text,bracelet_quantity,
+			duplicate_serial_reason,quantity,box_code,
 			unit_cost_minor,base_sale_price_minor
 			FROM purchase_slip_lines WHERE purchase_slip_id=? ORDER BY line_number FOR UPDATE`, purchaseID).Scan(&lines).Error; err != nil {
 			return err
@@ -645,6 +687,15 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 					item.BraceletQuantity, item.Notes, now, now).Error; err != nil {
 					return fmt.Errorf("insert product from purchase line: %w", err)
 				}
+				if err := tx.Table("products").Where("id=?", productID).UpdateColumn("weight_grams", item.WeightGrams).Error; err != nil {
+					return err
+				}
+				if err := saveAccessorySupplementValues(tx, "products", productID, item.AccessorySupplements); err != nil {
+					return err
+				}
+				if err := assignCreatedProductBox(tx, organizationID, productID, item.BoxCode, actorUserID, now); err != nil {
+					return err
+				}
 				for _, accessoryID := range accessoryIDs {
 					if err := tx.Exec(`INSERT INTO product_accessories(product_id,accessory_id,quantity) VALUES(?,?,1)`, productID, accessoryID).Error; err != nil {
 						return err
@@ -667,8 +718,11 @@ func (r *Repository) ConfirmPurchase(ctx context.Context, organizationID, purcha
 				return err
 			}
 		}
-		return tx.Exec(`UPDATE purchase_slips SET status='confirmed',confirmed_at=?,confirmed_by=?,updated_at=?
-			WHERE organization_id=? AND id=?`, now, actorUserID, now, organizationID, purchaseID).Error
+		// Cash is settled as part of confirmation, in the same transaction as product creation.
+		return tx.Exec(`UPDATE purchase_slips SET status='confirmed',confirmed_at=?,confirmed_by=?,updated_at=?,
+			paid_at=CASE WHEN payment_method='cash' THEN COALESCE(paid_at,?) ELSE paid_at END,
+			paid_by=CASE WHEN payment_method='cash' THEN COALESCE(paid_by,?) ELSE paid_by END
+			WHERE organization_id=? AND id=?`, now, actorUserID, now, now, actorUserID, organizationID, purchaseID).Error
 	})
 	if err != nil {
 		return PurchaseSlipRecord{}, err

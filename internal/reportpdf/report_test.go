@@ -30,7 +30,7 @@ func TestRenderCreatesFixedLayoutPDF(t *testing.T) {
 func TestRenderPaginatesLongDocuments(t *testing.T) {
 	lines := make([]Line, 30)
 	for index := range lines {
-		lines[index] = Line{Number: index + 1, Description: "商品", Amount: "¥1,000", Tax: "対象外"}
+		lines[index] = Line{Number: index + 1, Description: "商品", Amount: "¥1,000", Tax: "TAX FREE"}
 	}
 	contents, err := Render(Document{Title: "委託伝票", Number: "CO-2026-0001", Lines: lines})
 	if err != nil {

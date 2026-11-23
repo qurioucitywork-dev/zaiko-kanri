@@ -24,6 +24,9 @@ var (
 )
 
 type SingleProductInput struct {
+	WeightGrams           string
+	AccessorySupplements  AccessorySupplementValues
+	BoxCode               string
 	OrganizationID        string
 	ActorUserID           string
 	ProductCode           string
@@ -123,19 +126,7 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			return err
 		}
 
-		if strings.TrimSpace(input.SerialNumber) != "" {
-			var duplicates int64
-			if err := tx.Table("products").Where(
-				"organization_id = ? AND serial_number = ? AND deleted_at IS NULL AND inventory_status <> 'cancelled'",
-				input.OrganizationID, strings.TrimSpace(input.SerialNumber)).Count(&duplicates).Error; err != nil {
-				return err
-			}
-			if duplicates > 0 && strings.TrimSpace(input.DuplicateSerialReason) == "" {
-				return ErrDuplicateSerialReason
-			}
-		}
-
-		documentSequence, err := nextDocumentSequence(tx, input.OrganizationID, "purchase", date.Year(), now)
+		slipNumber, err := nextDailyDocumentNumber(tx, input.OrganizationID, "SD", date, now)
 		if err != nil {
 			return err
 		}
@@ -180,7 +171,7 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			return err
 		}
 		result.PurchaseSlipID = purchaseID
-		result.PurchaseSlipNumber = fmt.Sprintf("PI-%04d-%04d", date.Year(), documentSequence)
+		result.PurchaseSlipNumber = slipNumber
 		createdProductID = productID
 
 		if err := tx.Exec(`
@@ -236,6 +227,26 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			}
 			return fmt.Errorf("insert product: %w", err)
 		}
+		weight, err := normalizeProductWeight(input.WeightGrams)
+		if err != nil {
+			return err
+		}
+		if err := tx.Table("products").Where("id=?", productID).UpdateColumn("weight_grams", weight).Error; err != nil {
+			return err
+		}
+		if err := tx.Table("purchase_slip_lines").Where("id=?", lineID).UpdateColumn("weight_grams", weight).Error; err != nil {
+			return err
+		}
+		supplements, err := normalizeAccessorySupplements(tx, input.OrganizationID, input.AccessoryCodes, input.AccessorySupplements)
+		if err != nil {
+			return err
+		}
+		if err := saveAccessorySupplementValues(tx, "products", productID, supplements); err != nil {
+			return err
+		}
+		if err := saveAccessorySupplementValues(tx, "purchase_slip_lines", lineID, supplements); err != nil {
+			return err
+		}
 		for _, accessoryID := range accessoryIDs {
 			if err := tx.Exec(`INSERT INTO product_accessories(product_id,accessory_id,quantity) VALUES(?,?,1)`, productID, accessoryID).Error; err != nil {
 				return fmt.Errorf("insert product accessory: %w", err)
@@ -251,7 +262,7 @@ func (r *Repository) CreateSingleProduct(ctx context.Context, input SingleProduc
 			eventID, input.OrganizationID, productID, reason, input.ActorUserID, now).Error; err != nil {
 			return fmt.Errorf("insert inventory event: %w", err)
 		}
-		return nil
+		return assignCreatedProductBox(tx, input.OrganizationID, productID, input.BoxCode, input.ActorUserID, now)
 	})
 	if err != nil {
 		return SingleProductResult{}, err
@@ -271,34 +282,6 @@ func (r *Repository) ProductByID(ctx context.Context, organizationID, id string)
 		return Product{}, ErrMasterNotFound
 	}
 	return product, result.Error
-}
-
-func nextDocumentSequence(tx *gorm.DB, organizationID, documentType string, year int, now time.Time) (int, error) {
-	var sequence int
-	config, ok := map[string]struct {
-		table      string
-		dateColumn string
-	}{
-		"purchase":         {"purchase_slips", "purchase_date"},
-		"sale":             {"sales_slips", "sale_date"},
-		"shipment":         {"shipment_slips", "shipment_date"},
-		"consignment":      {"consignment_slips", "consignment_date"},
-		"return":           {"return_slips", "transaction_date"},
-		"sales_adjustment": {"sales_adjustment_slips", "adjustment_date"},
-	}[documentType]
-	if !ok {
-		return 0, fmt.Errorf("unsupported document sequence type %q", documentType)
-	}
-	query := fmt.Sprintf(`
-		INSERT INTO document_sequences(organization_id,document_type,business_year,last_sequence,updated_at)
-		SELECT ?,?,?,COALESCE(MAX((regexp_match(slip_number, '([0-9]+)$'))[1]::INTEGER),0)+1,?
-		FROM %s
-		WHERE organization_id=? AND EXTRACT(YEAR FROM %s)=?
-		ON CONFLICT (organization_id,document_type,business_year)
-		DO UPDATE SET last_sequence=document_sequences.last_sequence+1,updated_at=EXCLUDED.updated_at
-		RETURNING last_sequence`, config.table, config.dateColumn)
-	err := tx.Raw(query, organizationID, documentType, year, now, organizationID, year).Scan(&sequence).Error
-	return sequence, err
 }
 
 func nextProductSequence(tx *gorm.DB, organizationID string, date time.Time, now time.Time) (int, error) {
@@ -364,11 +347,11 @@ func lookupSupplierRole(tx *gorm.DB, organizationID, code string) (string, error
 
 func lookupStaffProfile(tx *gorm.DB, organizationID, actorUserID, code string) (string, error) {
 	query := tx.Table("staff_profiles").Select("id").Where("organization_id = ?", organizationID)
+	// A login account never supplies a buyer implicitly. The caller selects one.
 	if strings.TrimSpace(code) == "" {
-		query = query.Where("user_id = ?", actorUserID)
-	} else {
-		query = query.Where("staff_code = ?", strings.ToUpper(strings.TrimSpace(code)))
+		return "", ErrStaffNotFound
 	}
+	query = query.Where("staff_code = ?", strings.ToUpper(strings.TrimSpace(code)))
 	var id string
 	result := query.Scan(&id)
 	if result.Error != nil || id == "" {
@@ -415,6 +398,12 @@ func lookupAccessories(tx *gorm.DB, organizationID string, codes []string) ([]st
 		var row struct{ ID, Name string }
 		result := tx.Table("accessories").Select("id,name").
 			Where("organization_id = ? AND code = ? AND is_active", organizationID, code).Take(&row)
+		// Retired catalog entries can remain on existing products and pending slips.
+		// They are returned separately from current master choices by the API.
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) && strings.HasPrefix(code, "ACC-9") {
+			result = tx.Table("accessories").Select("id,name").
+				Where("organization_id = ? AND code = ? AND is_legacy", organizationID, code).Take(&row)
+		}
 		if result.Error != nil || row.ID == "" {
 			return nil, nil, ErrMasterCodeNotFound
 		}

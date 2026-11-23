@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/persistence"
 )
 
@@ -107,13 +108,13 @@ func (s *Server) apiSaveStocktake(w http.ResponseWriter, r *http.Request) {
 			updates[line.ID] = struct{ Reason, Note string }{line.Reason, line.Note}
 		}
 	}
-	session, err := s.repository.SaveStocktake(r.Context(), user.OrganizationID, r.PathValue("id"), updates, input.ResolvedIDs)
+	session, err := s.repository.SaveStocktakeWithActor(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, user.Role == database.RoleAdmin || hasAdminPageGrant(r), updates, input.ResolvedIDs)
 	if errors.Is(err, persistence.ErrStocktakeNotFound) {
 		writeAPIError(w, http.StatusNotFound, "stocktake_not_found", "進行中の棚卸がありません。")
 		return
 	}
 	if err != nil {
-		writeAPIError(w, http.StatusInternalServerError, "stocktake_save_failed", "棚卸途中データを保存できませんでした。")
+		writeAPIError(w, http.StatusConflict, "stocktake_save_failed", "棚卸を保存できませんでした。承認待ちの理由や処理権限を確認してください。")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": session})
@@ -127,7 +128,7 @@ func (s *Server) apiCompleteStocktake(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeAPIError(w, http.StatusConflict, "stocktake_unresolved", "理由未入力の不一致があります。不一致リストを確認してください。")
+		writeAPIError(w, http.StatusConflict, "stocktake_unresolved", "理由未入力・承認待ち・差戻しの不一致があります。不一致リストと承認一覧を確認してください。")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"session": session})

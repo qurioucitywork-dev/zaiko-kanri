@@ -22,7 +22,7 @@ let _activeBoxNo = null;
 /**
  * 現在の boxes / inventory の状態を publishedSnapshot に焼き付ける。
  * ゲスト画面はこのスナップショットだけを参照する。追加・編集は公開更新時に反映し、
- * 出荷済・売上済の商品は事故防止のため確定時に自動で除外する。
+ * 在庫中・出荷中の商品を公開し、それ以外のステータスはゲストに表示しない。
  */
 async function publishGuestSnapshot() {
   if (window.ZaikoAPI) {
@@ -46,7 +46,7 @@ async function publishGuestSnapshot() {
     .filter(box => (box.publicTo || []).length > 0)
     .map(box => {
       const items = APP_DATA.inventory
-        .filter(item => item.boxNo === box.no && item.status === '在庫中')
+        .filter(item => item.boxNo === box.no && isBoxProductGuestVisible(item,box.no))
         .map(item => ({
           code:       item.code,
           brand:      item.brand,
@@ -296,7 +296,7 @@ function openBoxLineupModal(no) {
       </div>`;
   } else {
     const rows = items.map(item => `
-      <tr>
+      <tr class="${isBoxProductGuestVisible(item,no) ? '' : 'box-product-hidden'}" title="${isBoxProductGuestVisible(item,no) ? 'ゲストに表示' : 'ゲストに非表示'}">
         <td><code style="font-size:11px;">${item.code}</code></td>
         <td><b>${item.brand}</b></td>
         <td>${item.model}</td>
@@ -332,6 +332,7 @@ function closeBoxLineupModal() {
 // BOX編集モーダル（商品追加・削除）
 // =====================================================
 
+let _boxEditSaving = false;
 let _boxEditFilteredItems = [];  // フィルタ後の候補リスト
 
 function openBoxEditModal(no) {
@@ -377,7 +378,7 @@ function closeBoxEditModal() {
 
 // ── 登録済み商品テーブルを描画 ──
 function renderBoxEditCurrent(no) {
-  const items = APP_DATA.inventory.filter(item => item.boxNo === no);
+  const items = APP_DATA.inventory.filter(item => Number(item.boxNo) === Number(no));
   const tbody = document.getElementById('boxEditCurrentBody');
   const badge = document.getElementById('boxEditCurrentCount');
 
@@ -389,7 +390,7 @@ function renderBoxEditCurrent(no) {
   }
 
   tbody.innerHTML = items.map(item => `
-    <tr id="box-curr-row-${item.code.replace(/[^a-zA-Z0-9]/g, '_')}">
+    <tr class="${isBoxProductGuestVisible(item,no) ? '' : 'box-product-hidden'}" id="box-curr-row-${item.code.replace(/[^a-zA-Z0-9]/g, '_')}">
       <td><code style="font-size:11px;color:var(--primary-light);">${item.code}</code></td>
       <td>${item.brand}</td>
       <td>${item.model}</td>
@@ -402,33 +403,78 @@ function renderBoxEditCurrent(no) {
           title="このBOXから外す">
           <i class="fa-solid fa-minus"></i> 外す
         </button>
+        <button class="btn btn-outline btn-sm box-visibility-toggle" data-code="${String(item.code).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;')}"
+          ${!isGuestVisibleProductStatus(item.status) || _boxEditSaving ? 'disabled' : ''}
+          onclick="toggleBoxProductVisibility(this.dataset.code)"
+          title="${getBoxProductVisibility(item,no).visibilityState === 'waiting' ? '入荷して在庫中になると自動表示します' : isGuestVisibleProductStatus(item.status) ? 'ゲストへの表示を切り替えます' : 'このステータスの商品は表示できません'}">
+          ${isBoxProductGuestVisible(item,no) ? '非表示にする' : '表示する'}
+        </button>
+        <small class="box-visibility-label">${isBoxProductGuestVisible(item,no) ? '表示中' : getBoxProductVisibility(item,no).visibilityState==='waiting' ? '非表示（入荷待ち）' : '非表示'}</small>
       </td>
     </tr>`).join('');
 }
 
 // ── 商品をBOXから外す ──
 async function removeItemFromBox(code) {
+  if (_boxEditSaving || _activeBoxNo == null) return;
+  const no = _activeBoxNo;
   const item = APP_DATA.inventory.find(i => i.code === code);
-  if (!item) return;
-  item.boxNo = null;
-  if (typeof persistGuestBoxState === 'function') persistGuestBoxState();
-  if (window.ZaikoAPI) {
-    try {
-      await window.ZaikoAPI.saveBoxes(APP_DATA.boxes || []);
-    } catch (error) {
-      await window.ZaikoAPI.hydrateAdmin().catch(() => {});
-      showToast('error', 'BOXから外せませんでした', error.message || '入力内容を確認してください');
-      return;
-    }
+  if (!item || Number(item.boxNo) !== Number(no)) return;
+  if (!await _saveBoxItemAssignments([code], null, 'BOXから外せませんでした')) return;
+  if (_activeBoxNo === no) {
+    renderBoxEditCurrent(no);
+    _syncBoxEditAddRow(code);
   }
-
-  renderBoxEditCurrent(_activeBoxNo);
-  _syncBoxEditAddRow(code);  // 追加候補行を更新
   _refreshAfterBoxEdit();
-  showToast('success', 'BOXから外しました', `${item.brand} ${item.model}`);
+  showToast('success', 'BOXから外しました', item.brand + ' ' + item.model);
+}
+
+// Save/reload is shared by additions and removals, with rollback on failed writes.
+async function _saveBoxItemAssignments(codes, boxNo, errorTitle) {
+  if (boxNo != null) {
+    try { assertBoxAssignableProducts(APP_DATA.inventory.filter(item => codes.includes(item.code))); }
+    catch (error) { showToast('error', errorTitle, error.message); return false; }
+  }
+  const previous = new Map(APP_DATA.inventory.map(item => [item.code, item.boxNo]));
+  _boxEditSaving = true;
+  _updateBoxEditSelectedCount();
+  try {
+    codes.forEach(code => { const item = APP_DATA.inventory.find(item => item.code === code); if (item) item.boxNo = boxNo; });
+    if (window.ZaikoAPI) await window.ZaikoAPI.saveBoxes(APP_DATA.boxes || []);
+    else codes.forEach(code => {
+      (APP_DATA.boxes || []).forEach(box => { box.productVisibility=(box.productVisibility || []).filter(state => state.productCode!==code); });
+      const item=APP_DATA.inventory.find(item=>item.code===code);if(item && boxNo!=null)getBoxProductVisibility(item,boxNo);
+    });
+    if (typeof persistGuestBoxState === 'function') persistGuestBoxState();
+    return true;
+  } catch (error) {
+    APP_DATA.inventory.forEach(item => { if (previous.has(item.code)) item.boxNo = previous.get(item.code); });
+    if (window.ZaikoAPI) await window.ZaikoAPI.hydrateAdmin().catch(() => {});
+    if (typeof persistGuestBoxState === 'function') persistGuestBoxState();
+    if (_activeBoxNo != null) {
+      renderBoxEditCurrent(_activeBoxNo);
+      _renderBoxEditAddList();
+      document.querySelectorAll('.be-item-check').forEach(input => { input.checked = codes.includes(input.dataset.code); });
+      _onBeItemCheckChange();
+    }
+    _refreshAfterBoxEdit();
+    showToast('error', errorTitle, error.message || '入力内容を確認してください');
+    return false;
+  } finally {
+    _boxEditSaving = false;
+    _updateBoxEditSelectedCount();
+  }
 }
 
 // ── フィルタを適用して追加候補を描画 ──
+function handleBoxEditFilterKeydown(event) {
+  // A candidate selection consumes Enter first; IME confirmation is not a search.
+  if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229 || event.defaultPrevented) return;
+  if (!event.target.matches('input, select')) return;
+  event.preventDefault();
+  applyBoxEditFilter();
+}
+
 function applyBoxEditFilter() {
   const dateFrom = document.getElementById('beFilterDateFrom').value;
   const dateTo   = document.getElementById('beFilterDateTo').value;
@@ -436,6 +482,7 @@ function applyBoxEditFilter() {
   const keyword  = document.getElementById('beFilterKeyword').value.trim().toLowerCase();
 
   _boxEditFilteredItems = APP_DATA.inventory.filter(item => {
+    if (!isBoxAssignableProductStatus(item.status)) return false;
     // 入荷日フィルタ
     if (dateFrom && item.purchaseDate < dateFrom) return false;
     if (dateTo   && item.purchaseDate > dateTo)   return false;
@@ -472,6 +519,8 @@ function clearBoxEditFilter() {
 
 // ── 追加候補リストを描画 ──
 function _renderBoxEditAddList() {
+  // Resolve current records after API hydration; cached objects no longer belong to inventory.
+  _boxEditFilteredItems = _boxEditFilteredItems.map(old => APP_DATA.inventory.find(item => item.code === old.code)).filter(Boolean);
   const tbody = document.getElementById('boxEditAddBody');
   if (_boxEditFilteredItems.length === 0) {
     tbody.innerHTML = '<tr><td colspan="8" class="box-edit-empty">条件に一致する商品がありません</td></tr>';
@@ -550,32 +599,22 @@ function _updateBoxEditSelectedCount() {
   const span = document.getElementById('boxEditSelectedCount');
   const btn  = document.getElementById('boxEditAddBtn');
   if (span) span.textContent = `${n}件選択中`;
-  if (btn)  btn.disabled = n === 0;
+  if (btn)  btn.disabled = _boxEditSaving || n === 0;
 }
 
 // ── 選択した商品を一括追加 ──
 async function addCheckedItemsToBox() {
   const no = _activeBoxNo;
-  if (no == null) return;
-
+  if (no == null || _boxEditSaving) return;
   const codes = [...document.querySelectorAll('.be-item-check:checked')]
-    .map(c => c.dataset.code);
+    .map(c => c.dataset.code).filter(code => APP_DATA.inventory.some(item => item.code === code));
   if (codes.length === 0) return;
-
-  let added = 0;
-  codes.forEach(code => {
-    const item = APP_DATA.inventory.find(i => i.code === code);
-    if (item) { item.boxNo = no; added++; }
-  });
-  if (typeof persistGuestBoxState === 'function') persistGuestBoxState();
-  if (window.ZaikoAPI) {
-    try {
-      await window.ZaikoAPI.saveBoxes(APP_DATA.boxes || []);
-    } catch (error) {
-      await window.ZaikoAPI.hydrateAdmin().catch(() => {});
-      showToast('error', 'BOXへ追加できませんでした', error.message || '入力内容を確認してください');
-      return;
-    }
+  if (!await _saveBoxItemAssignments(codes, no, 'BOXへ追加できませんでした')) return;
+  const added = codes.length;
+  if (_activeBoxNo !== no) {
+    _refreshAfterBoxEdit();
+    showToast('success', 'BOX' + no + 'に追加しました', added + '点の商品を追加');
+    return;
   }
 
   // 全選択チェックをリセット
@@ -780,4 +819,24 @@ function initBoxFilterSelect(selectId) {
         const label = b.name?.trim() ? `BOX${b.no}：${b.name}` : `BOX${b.no}`;
         return `<option value="${b.no}">${label}</option>`;
       }).join('');
+}
+
+async function toggleBoxProductVisibility(code) {
+ if (_boxEditSaving || _activeBoxNo == null) return;
+ const no=_activeBoxNo,item=APP_DATA.inventory.find(item=>item.code===code && Number(item.boxNo)===Number(no));
+ if (!item || !isGuestVisibleProductStatus(item.status)) return;
+ const visible=!isBoxProductGuestVisible(item,no);
+ _boxEditSaving=true;renderBoxEditCurrent(no);
+ try {
+  const box=APP_DATA.boxes.find(box=>Number(box.no)===Number(no));
+  if(window.ZaikoAPI) await window.ZaikoAPI.setBoxProductVisibility(box.code,code,visible);
+  else {
+   const state=getBoxProductVisibility(item,no);
+   Object.assign(state,{visibilityState:visible?'visible':'hidden',guestVisible:visible,basisStatus:boxProductStatusKey(item.status),lastStatus:boxProductStatusKey(item.status)});
+   persistGuestBoxState();
+   if (!visible) unpublishGuestProducts([code]);
+  }
+  showToast('success','表示設定を保存しました',visible?'ゲストに表示します':'ゲストに表示しません');
+ }catch(error){showToast('error','表示設定を保存できませんでした',error.message);}
+ finally{_boxEditSaving=false;if(_activeBoxNo===no)renderBoxEditCurrent(no);}
 }

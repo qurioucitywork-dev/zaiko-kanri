@@ -19,19 +19,21 @@ var (
 )
 
 type CostAdjustmentProductDraft struct {
-	BrandCode         string   `json:"brandCode"`
-	ModelNumber       string   `json:"modelNumber"`
-	ReferenceNumber   string   `json:"referenceNumber"`
-	SerialNumber      string   `json:"serialNumber"`
-	MaterialCode      string   `json:"materialCode"`
-	MovementCode      string   `json:"movementCode"`
-	ConditionCode     string   `json:"conditionCode"`
-	AccessoryCodes    []string `json:"accessoryCodes"`
-	BeltText          string   `json:"beltText"`
-	DialText          string   `json:"dialText"`
-	Notes             string   `json:"notes"`
-	InternalComment   string   `json:"internalComment"`
-	SalePriceUSDMinor int64    `json:"salePriceUsdMinor"`
+	WeightGrams          string                    `json:"weightGrams"`
+	BrandCode            string                    `json:"brandCode"`
+	ModelNumber          string                    `json:"modelNumber"`
+	ReferenceNumber      string                    `json:"referenceNumber"`
+	SerialNumber         string                    `json:"serialNumber"`
+	MaterialCode         string                    `json:"materialCode"`
+	MovementCode         string                    `json:"movementCode"`
+	ConditionCode        string                    `json:"conditionCode"`
+	AccessoryCodes       []string                  `json:"accessoryCodes"`
+	AccessorySupplements AccessorySupplementValues `json:"accessorySupplements"`
+	BeltText             string                    `json:"beltText"`
+	DialText             string                    `json:"dialText"`
+	Notes                string                    `json:"notes"`
+	InternalComment      string                    `json:"internalComment"`
+	SalePriceUSDMinor    int64                     `json:"salePriceUsdMinor"`
 }
 
 type CostAdjustmentPartDraft struct {
@@ -229,16 +231,7 @@ func costAdjustmentSlipPrefix(adjustmentType string) string {
 }
 
 func nextCostAdjustmentSlipNumber(tx *gorm.DB, organizationID string, date, now time.Time, adjustmentType string) (string, error) {
-	var sequence int
-	result := tx.Raw(`INSERT INTO document_sequences(organization_id,document_type,business_year,last_sequence,updated_at)
-		VALUES(?,'cost_adjustment',?,1,?)
-		ON CONFLICT (organization_id,document_type,business_year)
-		DO UPDATE SET last_sequence=document_sequences.last_sequence+1,updated_at=EXCLUDED.updated_at
-		RETURNING last_sequence`, organizationID, date.Year(), now).Scan(&sequence)
-	if result.Error != nil {
-		return "", result.Error
-	}
-	return fmt.Sprintf("%s-%04d-%04d", costAdjustmentSlipPrefix(adjustmentType), date.Year(), sequence), nil
+	return nextDailyDocumentNumber(tx, organizationID, costAdjustmentSlipPrefix(adjustmentType), date, now)
 }
 
 func combinedPartInternalComment(existing, targetProductCode string) string {
@@ -641,6 +634,10 @@ func (r *Repository) ConfirmCostAdjustmentCombine(ctx context.Context, input Cos
 func (r *Repository) createCostAdjustmentProduct(tx *gorm.DB, source Product, adjustmentID, slipNumber, itemID string,
 	output CostAdjustmentOutputDraft, date, now time.Time, input CostAdjustmentConfirmInput) (CostAdjustmentOutputResult, error) {
 	draft := output.Product
+	weight, err := normalizeProductWeight(draft.WeightGrams)
+	if err != nil {
+		return CostAdjustmentOutputResult{}, err
+	}
 	brandID, brandName, err := lookupCatalog(tx, "brands", input.OrganizationID, draft.BrandCode, true)
 	if err != nil {
 		return CostAdjustmentOutputResult{}, err
@@ -661,15 +658,9 @@ func (r *Repository) createCostAdjustmentProduct(tx *gorm.DB, source Product, ad
 	if err != nil {
 		return CostAdjustmentOutputResult{}, err
 	}
-	if serial := strings.TrimSpace(draft.SerialNumber); serial != "" {
-		var duplicates int64
-		if err := tx.Table("products").Where("organization_id=? AND UPPER(serial_number)=? AND deleted_at IS NULL AND inventory_status<>'cancelled'",
-			input.OrganizationID, strings.ToUpper(serial)).Count(&duplicates).Error; err != nil {
-			return CostAdjustmentOutputResult{}, err
-		}
-		if duplicates > 0 {
-			return CostAdjustmentOutputResult{}, ErrDuplicateSerialReason
-		}
+	supplements, err := normalizeAccessorySupplements(tx, input.OrganizationID, draft.AccessoryCodes, draft.AccessorySupplements)
+	if err != nil {
+		return CostAdjustmentOutputResult{}, err
 	}
 	code := input.ReservedProductCode
 	if code == "" {
@@ -705,6 +696,12 @@ func (r *Repository) createCostAdjustmentProduct(tx *gorm.DB, source Product, ad
 		supplierID, nullIfEmpty(supplierRoleID), nullIfEmpty(source.PurchaseStaffID), nil, date,
 		output.AllocatedCostJPYMinor, int64(0), conditionName, strings.Join(accessoryNames, ", "),
 		strings.TrimSpace(draft.BeltText), strings.TrimSpace(draft.DialText), appendCostAdjustmentSlipNumber(draft.Notes, slipNumber), comment, adjustmentID, now, now).Error; err != nil {
+		return CostAdjustmentOutputResult{}, err
+	}
+	if err := saveAccessorySupplementValues(tx, "products", productID, supplements); err != nil {
+		return CostAdjustmentOutputResult{}, err
+	}
+	if err := tx.Table("products").Where("id=?", productID).UpdateColumn("weight_grams", weight).Error; err != nil {
 		return CostAdjustmentOutputResult{}, err
 	}
 	for _, accessoryID := range accessoryIDs {

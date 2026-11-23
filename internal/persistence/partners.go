@@ -17,7 +17,17 @@ var (
 	ErrPartnerNotFound = errors.New("partner not found")
 )
 
-var partnerCodePattern = regexp.MustCompile(`^CLI-[0-9]{3,}$`)
+var partnerCodePattern = regexp.MustCompile("^[0-9]{4}$")
+var partnerCodeInputPattern = regexp.MustCompile("^[0-9]{1,4}$")
+
+func normalizePartnerCode(code string) string {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if partnerCodeInputPattern.MatchString(code) {
+		return strings.Repeat("0", 4-len(code)) + code
+	}
+	return code
+}
+
 var buyerCodePattern = regexp.MustCompile(`^B[0-9]{3,}$`)
 var supplierCodePattern = regexp.MustCompile(`^S[0-9]{3,}$`)
 var invoiceNumberPattern = regexp.MustCompile(`^T[0-9]{13}$`)
@@ -31,6 +41,7 @@ type PartnerRoleRecord struct {
 }
 
 type PartnerRecord struct {
+	AuctionFees          AuctionFeeSettings  `gorm:"type:jsonb" json:"auctionFees"`
 	ID                   string              `json:"id"`
 	PartnerCode          string              `json:"partnerCode"`
 	LegalName            string              `json:"legalName"`
@@ -59,6 +70,7 @@ type PartnerRoleInput struct {
 }
 
 type PartnerCreateInput struct {
+	AuctionFees          AuctionFeeSettings `json:"auctionFees"`
 	PartnerCode          string             `json:"partnerCode"`
 	LegalName            string             `json:"legalName"`
 	RepresentativeName   string             `json:"representativeName"`
@@ -77,6 +89,7 @@ type PartnerCreateInput struct {
 }
 
 type PartnerUpdateInput struct {
+	AuctionFees          *AuctionFeeSettings `json:"auctionFees"`
 	LegalName            *string             `json:"legalName"`
 	RepresentativeName   *string             `json:"representativeName"`
 	Email                *string             `json:"email"`
@@ -99,7 +112,7 @@ func (r *Repository) Partners(ctx context.Context, organizationID string, includ
 	var records []PartnerRecord
 	query := r.db.WithContext(ctx).Table("business_partners").
 		Select(`id,partner_code,legal_name,representative_name,email,phone,contact_phone,postal_code,address,
-			invoice_number,antique_license_number,region_type,closing_day,is_other,notes,status,created_at,updated_at`).Where("organization_id=?", organizationID)
+			invoice_number,antique_license_number,region_type,closing_day,is_other,notes,status,created_at,updated_at,auction_fees`).Where("organization_id=?", organizationID)
 	if !includeInactive {
 		query = query.Where("status='active'")
 	}
@@ -168,6 +181,12 @@ func nextPartnerCode(tx *gorm.DB, organizationID, kind string) (string, error) {
 	if err := tx.Raw(query, organizationID).Scan(&next).Error; err != nil {
 		return "", err
 	}
+	if kind == "partner" {
+		if next > 9999 {
+			return "", ErrPartnerInvalid
+		}
+		return fmt.Sprintf("%04d", next), nil
+	}
 	return fmt.Sprintf("%s%03d", prefix, next), nil
 }
 
@@ -214,7 +233,12 @@ func validatePartnerFields(name, address, email, invoice, regionType string, clo
 }
 
 func (r *Repository) CreatePartner(ctx context.Context, organizationID, actorUserID string, input PartnerCreateInput) (PartnerRecord, error) {
-	input.PartnerCode = strings.ToUpper(strings.TrimSpace(input.PartnerCode))
+	fees, feeErr := normalizeAuctionFees(input.AuctionFees)
+	if feeErr != nil {
+		return PartnerRecord{}, feeErr
+	}
+	input.AuctionFees = fees
+	input.PartnerCode = normalizePartnerCode(input.PartnerCode)
 	input.LegalName = strings.TrimSpace(input.LegalName)
 	input.RepresentativeName = strings.TrimSpace(input.RepresentativeName)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
@@ -262,6 +286,9 @@ func (r *Repository) CreatePartner(ctx context.Context, organizationID, actorUse
 			input.InvoiceNumber, input.AntiqueLicenseNumber, input.RegionType, input.ClosingDay, input.IsOther, input.Notes, actorUserID, actorUserID, now, now).Error; err != nil {
 			return err
 		}
+		if err := tx.Table("business_partners").Where("id=?", partnerID).UpdateColumn("auction_fees", input.AuctionFees).Error; err != nil {
+			return err
+		}
 		for _, role := range input.Roles {
 			if role.RoleCode == "" {
 				role.RoleCode, err = nextPartnerCode(tx, organizationID, role.RoleType)
@@ -298,6 +325,13 @@ func (r *Repository) UpdatePartner(ctx context.Context, organizationID, partnerI
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().UTC()
 		updates := map[string]any{"updated_by": actorUserID, "updated_at": now}
+		if input.AuctionFees != nil {
+			fees, err := normalizeAuctionFees(*input.AuctionFees)
+			if err != nil {
+				return err
+			}
+			updates["auction_fees"] = fees
+		}
 		stringFields := []struct {
 			Value  *string
 			Column string

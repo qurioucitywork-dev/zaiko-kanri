@@ -181,6 +181,18 @@ func HashPassword(password string) (string, error) {
 	return string(hash), err
 }
 
+// Guest passwords follow the eight-character minimum advertised by guest forms.
+// Keep the stronger staff/bootstrap policy in HashPassword unchanged.
+var ErrGuestPasswordInvalid = errors.New("ゲストのパスワードは8文字以上、UTF-8で72バイト以内で入力してください。")
+
+func HashGuestPassword(password string) (string, error) {
+	if len([]rune(password)) < 8 || len(password) > 72 {
+		return "", ErrGuestPasswordInvalid
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(hash), err
+}
+
 func VerifyPassword(hash, password string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil
 }

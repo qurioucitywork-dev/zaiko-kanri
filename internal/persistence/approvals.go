@@ -21,27 +21,29 @@ type ApprovalCreateInput struct {
 }
 
 type ApprovalRequestRecord struct {
-	ID              string     `json:"id"`
-	ApprovalType    string     `json:"approvalType"`
-	TargetType      string     `json:"targetType"`
-	TargetID        string     `json:"targetId"`
-	RequestedAction string     `json:"requestedAction"`
-	Status          string     `json:"status"`
-	RequestedBy     string     `json:"requestedBy"`
-	RequesterName   string     `json:"requesterName"`
-	RequestedAt     time.Time  `json:"requestedAt"`
-	DecidedBy       string     `json:"decidedBy,omitempty"`
-	DeciderName     string     `json:"deciderName,omitempty"`
-	DecidedAt       *time.Time `json:"decidedAt,omitempty"`
-	DecisionNote    string     `json:"decisionNote"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
+	ResubmissionJSON string     `json:"resubmissionJson,omitempty"`
+	SnapshotJSON     string     `json:"snapshotJson"`
+	ID               string     `json:"id"`
+	ApprovalType     string     `json:"approvalType"`
+	TargetType       string     `json:"targetType"`
+	TargetID         string     `json:"targetId"`
+	RequestedAction  string     `json:"requestedAction"`
+	Status           string     `json:"status"`
+	RequestedBy      string     `json:"requestedBy"`
+	RequesterName    string     `json:"requesterName"`
+	RequestedAt      time.Time  `json:"requestedAt"`
+	DecidedBy        string     `json:"decidedBy,omitempty"`
+	DeciderName      string     `json:"deciderName,omitempty"`
+	DecidedAt        *time.Time `json:"decidedAt,omitempty"`
+	DecisionNote     string     `json:"decisionNote"`
+	UpdatedAt        time.Time  `json:"updatedAt"`
 }
 
 func (r *Repository) ApprovalRequests(ctx context.Context, organizationID, userID, role, status string) ([]ApprovalRequestRecord, error) {
 	query := r.db.WithContext(ctx).Table("approval_requests AS a").
 		Select(`a.id,a.approval_type,a.target_type,a.target_id,a.requested_action,a.status,a.requested_by,
 			rq.display_name AS requester_name,a.requested_at,COALESCE(a.decided_by,'') AS decided_by,
-			COALESCE(dc.display_name,'') AS decider_name,a.decided_at,a.decision_note,a.updated_at`).
+			COALESCE(dc.display_name,'') AS decider_name,a.decided_at,a.decision_note,a.updated_at,a.snapshot_json, COALESCE((SELECT aa.note FROM approval_actions aa WHERE aa.approval_request_id=a.id AND aa.action='requested' ORDER BY aa.created_at DESC,aa.id DESC LIMIT 1),'') AS resubmission_json`).
 		Joins("JOIN users rq ON rq.id=a.requested_by").Joins("LEFT JOIN users dc ON dc.id=a.decided_by").
 		Where("a.organization_id=?", organizationID)
 	if role != database.RoleAdmin {
@@ -60,7 +62,7 @@ func (r *Repository) ApprovalRequest(ctx context.Context, organizationID, approv
 	result := r.db.WithContext(ctx).Table("approval_requests AS a").
 		Select(`a.id,a.approval_type,a.target_type,a.target_id,a.requested_action,a.status,a.requested_by,
 			rq.display_name AS requester_name,a.requested_at,COALESCE(a.decided_by,'') AS decided_by,
-			COALESCE(dc.display_name,'') AS decider_name,a.decided_at,a.decision_note,a.updated_at`).
+			COALESCE(dc.display_name,'') AS decider_name,a.decided_at,a.decision_note,a.updated_at,a.snapshot_json, COALESCE((SELECT aa.note FROM approval_actions aa WHERE aa.approval_request_id=a.id AND aa.action='requested' ORDER BY aa.created_at DESC,aa.id DESC LIMIT 1),'') AS resubmission_json`).
 		Joins("JOIN users rq ON rq.id=a.requested_by").Joins("LEFT JOIN users dc ON dc.id=a.decided_by").
 		Where("a.organization_id=? AND a.id=?", organizationID, approvalID).Take(&record)
 	if errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -75,11 +77,12 @@ func (r *Repository) CreateApproval(ctx context.Context, organizationID, actorUs
 	input.TargetID = strings.TrimSpace(input.TargetID)
 	input.RequestedAction = strings.TrimSpace(input.RequestedAction)
 	allowed := map[string]string{
-		"purchase.confirm": "purchase_slip",
-		"sale.confirm":     "sales_slip",
-		"shipment.confirm": "shipment_slip",
-		"return.confirm":   "return_slip",
-		"access.approve":   "access_request",
+		"purchase.confirm":    "purchase_slip",
+		"sale.confirm":        "sales_slip",
+		"shipment.confirm":    "shipment_slip",
+		"consignment.confirm": "consignment_slip",
+		"return.confirm":      "return_slip",
+		"access.approve":      "access_request",
 	}
 	if input.ApprovalType == "" || input.TargetID == "" || allowed[input.RequestedAction] != input.TargetType {
 		return ApprovalRequestRecord{}, ErrApprovalInvalid
@@ -100,6 +103,10 @@ func (r *Repository) CreateApproval(ctx context.Context, organizationID, actorUs
 	case "shipment_slip":
 		var record ShipmentSlipRecord
 		record, err = r.ShipmentSlip(ctx, organizationID, input.TargetID)
+		status, snapshot = record.Status, record
+	case "consignment_slip":
+		var record ConsignmentSlipRecord
+		record, err = r.ConsignmentSlip(ctx, organizationID, input.TargetID)
 		status, snapshot = record.Status, record
 	case "return_slip":
 		var record ReturnSlipRecord
@@ -153,7 +160,7 @@ func (r *Repository) CreateApproval(ctx context.Context, organizationID, actorUs
 	return r.ApprovalRequest(ctx, organizationID, approvalID)
 }
 
-func (r *Repository) DecideApproval(ctx context.Context, organizationID, approvalID, actorUserID, decision, note string) (ApprovalRequestRecord, error) {
+func (r *Repository) decideApproval(ctx context.Context, organizationID, approvalID, actorUserID, decision, note string) (ApprovalRequestRecord, error) {
 	record, err := r.ApprovalRequest(ctx, organizationID, approvalID)
 	if err != nil {
 		return ApprovalRequestRecord{}, err
@@ -186,11 +193,22 @@ func (r *Repository) DecideApproval(ctx context.Context, organizationID, approva
 				return ApprovalRequestRecord{}, ErrApprovalInvalid
 			}
 			_, err = r.ConfirmShipment(ctx, organizationID, record.TargetID, actorUserID)
+		case "consignment_slip":
+			if record.RequestedAction != "consignment.confirm" {
+				return ApprovalRequestRecord{}, ErrApprovalInvalid
+			}
+			_, err = r.ConfirmConsignment(ctx, organizationID, record.TargetID, actorUserID)
 		case "return_slip":
 			if record.RequestedAction != "return.confirm" {
 				return ApprovalRequestRecord{}, ErrApprovalInvalid
 			}
 			_, err = r.ConfirmReturn(ctx, organizationID, record.TargetID, actorUserID)
+		case "stocktake_line":
+			if record.RequestedAction != "stocktake.mismatch" {
+				return ApprovalRequestRecord{}, ErrApprovalInvalid
+			}
+		case "document_change":
+			err = r.ApplyApprovedDocumentChange(ctx, organizationID, actorUserID, record)
 		case "access_request":
 			if record.RequestedAction != "access.approve" {
 				return ApprovalRequestRecord{}, ErrApprovalInvalid
@@ -216,6 +234,11 @@ func (r *Repository) DecideApproval(ctx context.Context, organizationID, approva
 		if result.RowsAffected == 0 {
 			return ErrMarketImportState
 		}
+		if record.TargetType == "stocktake_line" {
+			if err := decideStocktakeLine(tx, organizationID, record, decision, now); err != nil {
+				return err
+			}
+		}
 		if record.TargetType == "market_import" {
 			targetStatus := "rejected"
 			if decision == "returned" {
@@ -226,7 +249,7 @@ func (r *Repository) DecideApproval(ctx context.Context, organizationID, approva
 				return err
 			}
 		}
-		if decision == "rejected" {
+		if decision == "rejected" && !isRevisableApprovalTarget(record.TargetType) {
 			if err := cancelRejectedApprovalTarget(tx, organizationID, record, now); err != nil {
 				return err
 			}
@@ -247,6 +270,8 @@ func (r *Repository) DecideApproval(ctx context.Context, organizationID, approva
 
 func cancelRejectedApprovalTarget(tx *gorm.DB, organizationID string, record ApprovalRequestRecord, now time.Time) error {
 	switch record.TargetType {
+	case "consignment_slip":
+		return tx.Exec("UPDATE consignment_slips SET status='cancelled',updated_at=? WHERE organization_id=? AND id=? AND status='draft'", now, organizationID, record.TargetID).Error
 	case "purchase_slip":
 		return tx.Exec(`UPDATE purchase_slips SET status='cancelled',updated_at=? WHERE organization_id=? AND id=? AND status='draft'`,
 			now, organizationID, record.TargetID).Error

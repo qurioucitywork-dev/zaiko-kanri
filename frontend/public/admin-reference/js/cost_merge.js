@@ -184,7 +184,7 @@
     section.querySelector('.ca-split-slip-heading small').textContent = 'BOX商品の元原価は履歴として保持し、現在在庫集計から除外します';
     section.querySelector('.ca-split-slip-badge').textContent = merge?.slipNumber || '明細';
     const item = merge?.items[0];
-    document.getElementById('ca-split-slip-lines').innerHTML = inputs.map((p,i)=>`<tr><td>${i+1}</td><td>${_escHtml(p.code)}</td><td>${_escHtml(p.sku||'—')}</td><td>原価合わせ元商品</td><td>${money(p.purchasePrice)}<small>（履歴原価・現在在庫集計対象外）</small></td></tr>`).join('') + (item ? `<tr><td>新</td><td>${_escHtml(item.managementCode)}</td><td>${_escHtml(item.sku||'—')}</td><td>原価合わせした商品</td><td><strong class="ca-merge-auto-cost">${money(item.allocatedCostJpyMinor)}</strong><small>（BOX商品の原価合計から自動算出）</small></td></tr>` : '');
+    document.getElementById('ca-split-slip-lines').innerHTML = inputs.map((p,i)=>`<tr><td>${i+1}</td><td>${_escHtml(p.code)}</td><td>${_escHtml(p.sku||'—')}</td>${_costAdjustmentProductInfoCells(p)}<td>原価合わせ元商品</td><td>${money(p.purchasePrice)}<small>（履歴原価・現在在庫集計対象外）</small></td></tr>`).join('') + (item ? `<tr><td>新</td><td>${_escHtml(item.managementCode)}</td><td>${_escHtml(item.sku||'—')}</td>${_costAdjustmentProductInfoCells(item.product || {})}<td>原価合わせした商品</td><td><strong class="ca-merge-auto-cost">${money(item.allocatedCostJpyMinor)}</strong><small>（BOX商品の原価合計から自動算出）</small></td></tr>` : '');
     document.getElementById('ca-split-slip-total').textContent = money(item?.allocatedCostJpyMinor);
     document.getElementById('ca-split-slip-status').textContent = merge?.finalized ? '確定済み' : '確定前の明細です。新商品の情報を入力してください。原価はBOX商品の合計から自動算出されます';
     _costAdjustmentUpdateStartButton(); costAdjustmentRenderAllocationSummary();
@@ -197,7 +197,7 @@
       const item = merge.items[0], p = item.product;
       const result = await window.ZaikoAPI.request(`/cost-merges/${encodeURIComponent(merge.id)}/confirm`, {
         method:'POST', body:JSON.stringify({ sku:item.sku, output:{ position:1,kind:'product',allocatedCostJpyMinor:item.allocatedCostJpyMinor,
-          product:{ ...p,modelNumber:p.modelName,beltText:p.beltMaterial,dialText:p.dial,accessoryCodes:p.accessories,
+          product:{ ...p,modelNumber:p.modelName,beltText:p.beltMaterial,dialText:p.dial,accessoryCodes:_costAdjustmentAccessoryCodes(p.accessories),
             modelName:undefined,beltMaterial:undefined,dial:undefined,accessories:undefined } } }),
       });
       merge.finalized = true; merge.slipNumber = result.slipNumber;

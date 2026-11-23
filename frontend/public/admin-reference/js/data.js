@@ -1538,6 +1538,7 @@ normalizeSeedSalePricesToUSD(APP_DATA);
 // =====================================================
 
 function formatPrice(n) {
+  if (n != null && !Number.isFinite(Number(n))) return '未設定';
   if (n == null || n === '') return '—';
   return '¥' + Number(n).toLocaleString();
 }
@@ -1549,6 +1550,7 @@ function convertJPYToSalePriceUSD(n) {
 }
 
 function formatSalePrice(n) {
+  if (n != null && !Number.isFinite(Number(n))) return '未設定';
   if (n == null || n === '') return '—';
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -1621,6 +1623,7 @@ function _buildBoxBadge(boxNo) {
 // Toast 通知
 // =====================================================
 function showToast(type, title, msg, duration = 3000) {
+  if (String(msg || '').startsWith('承認申請を送信しました。')) { type='success'; title='承認申請を送信しました'; }
   const icons = {
     success: '<i class="fa-solid fa-circle-check"></i>',
     error: '<i class="fa-solid fa-circle-xmark"></i>',
@@ -1681,4 +1684,9 @@ function navigateTo(page) {
   };
   const titleEl = document.getElementById('pageTitle');
   if (titleEl) titleEl.textContent = pageNames[page] || page;
+}
+
+// Never format a missing online exchange rate as a number.
+function formatConfiguredRate(value) {
+  return Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value).toLocaleString('ja-JP', {minimumFractionDigits: 2, maximumFractionDigits: 4}) : '未設定';
 }

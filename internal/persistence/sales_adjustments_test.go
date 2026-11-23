@@ -94,8 +94,8 @@ func salesAdjustmentFixture(t *testing.T, db *gorm.DB, temporary bool) {
 		create = "CREATE TEMP TABLE "
 	}
 	for _, definition := range []string{
-		`document_sequences (organization_id TEXT,document_type TEXT,business_year INTEGER,last_sequence INTEGER,updated_at TIMESTAMP,PRIMARY KEY(organization_id,document_type,business_year))`,
-		`sales_slips (id TEXT PRIMARY KEY,organization_id TEXT,slip_number TEXT,sale_date TIMESTAMP,display_currency TEXT,status TEXT,buyer_role_id TEXT,notes TEXT,tax_mode TEXT DEFAULT 'out_of_scope',tax_rate_basis_points INTEGER DEFAULT 0)`,
+		`daily_document_sequences (organization_id TEXT,prefix TEXT,business_date DATE,last_sequence INTEGER,updated_at TIMESTAMP,PRIMARY KEY(organization_id,prefix,business_date))`,
+		`sales_slips (id TEXT PRIMARY KEY,organization_id TEXT,slip_number TEXT,sale_date TIMESTAMP,display_currency TEXT,status TEXT,buyer_role_id TEXT,notes TEXT,tax_mode TEXT DEFAULT 'out_of_scope',tax_rate_basis_points INTEGER DEFAULT 0,paid_at TIMESTAMP)`,
 		`sales_lines (id TEXT PRIMARY KEY,sales_slip_id TEXT,product_id TEXT,line_number INTEGER,sale_currency TEXT,unit_price_minor BIGINT,fx_rate_scaled BIGINT,fx_scale BIGINT)`,
 		`products (id TEXT PRIMARY KEY,organization_id TEXT,product_code TEXT,brand TEXT,model_number TEXT,internal_comment TEXT,updated_at TIMESTAMP)`,
 		`partner_roles (id TEXT PRIMARY KEY,role_code TEXT,partner_id TEXT)`,
@@ -108,7 +108,7 @@ func salesAdjustmentFixture(t *testing.T, db *gorm.DB, temporary bool) {
 		}
 	}
 	for _, statement := range []string{
-		`INSERT INTO sales_slips VALUES ('s1','org1','SI-2026-0005','2026-08-18','USD','confirmed','buyer1','元の備考','out_of_scope',0)`,
+		`INSERT INTO sales_slips VALUES ('s1','org1','SI-2026-0005','2026-08-18','USD','confirmed','buyer1','元の備考','out_of_scope',0,NULL)`,
 		`INSERT INTO partner_roles VALUES ('buyer1','BUYER-01','bp1')`,
 		`INSERT INTO business_partners VALUES ('bp1','取引先')`,
 		`INSERT INTO products VALUES ('p1','org1','1808260001','ブランド1','モデル1','元のコメント1',NULL),('p2','org1','1808260002','ブランド2','モデル2','元のコメント2',NULL)`,
@@ -212,11 +212,22 @@ func TestSalesAdjustmentCreateWithLineReasonsPostgres(t *testing.T) {
 	salesAdjustmentFixture(t, tx, true)
 	repo := &Repository{db: tx, driver: "postgres"}
 	input := SalesAdjustmentInput{OrganizationID: "org1", ActorUserID: "u1", Direction: "decrease", Lines: []SalesAdjustmentLineInput{{SaleLineID: "l1", AdjustmentAmountMinor: 200, Reason: "傷のため"}, {SaleLineID: "l2", AdjustmentAmountMinor: 350, Reason: "付属品変更"}}}
+	if _, err := repo.CreateSalesAdjustment(context.Background(), "s1", input); !errors.Is(err, ErrSalePaymentRequired) {
+		t.Fatalf("unpaid adjustment: %v", err)
+	}
+	var unpaidCount int64
+	tx.Table("sales_adjustment_slips").Count(&unpaidCount)
+	if unpaidCount != 0 {
+		t.Fatalf("unpaid adjustment wrote %d slips", unpaidCount)
+	}
+	if err := tx.Exec("UPDATE sales_slips SET paid_at=? WHERE id='s1'", time.Now().UTC()).Error; err != nil {
+		t.Fatal(err)
+	}
 	got, err := repo.CreateSalesAdjustment(context.Background(), "s1", input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(got.SlipNumber, "-0001") || len(got.Lines) != 2 || got.TotalMinor != 550 || got.Lines[0].Reason != "傷のため" || got.Lines[1].Reason != "付属品変更" {
+	if !strings.HasSuffix(got.SlipNumber, "001") || len(got.Lines) != 2 || got.TotalMinor != 550 || got.Lines[0].Reason != "傷のため" || got.Lines[1].Reason != "付属品変更" {
 		t.Fatalf("adjustment=%+v", got)
 	}
 	if !strings.Contains(got.Reason, "1808260001 修正理由: 傷のため") || !strings.Contains(got.Reason, "1808260002 修正理由: 付属品変更") {
@@ -238,7 +249,7 @@ func TestSalesAdjustmentCreateWithLineReasonsPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(second.SlipNumber, "-0002") {
+	if !strings.HasSuffix(second.SlipNumber, "002") {
 		t.Fatalf("second sequence=%q", second.SlipNumber)
 	}
 	if second.Lines[0].BeforeSalePriceMinor != 9000 || second.Lines[0].AfterSalePriceMinor != 9100 {

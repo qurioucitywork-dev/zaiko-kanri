@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import {readFile} from 'node:fs/promises';
+const bridge=await readFile(process.argv[2] || new URL('../public/admin-reference/js/api_bridge.js',import.meta.url),'utf8');
+const ctx=vm.createContext({pendingApprovalTargetIds:new Set(),inventoryByCode:new Map(),latestRate:200,statusLabel:{confirmed:'処理済'}});
+const begin=bridge.indexOf('  function findSourceSaleForReturn('),end=bridge.indexOf('  function saleView(',begin);
+assert.ok(begin>=0&&end>begin);vm.runInContext(bridge.slice(begin,end),ctx);
+const sale=(id,buyer,created,currency='USD')=>({slipNumber:id,buyerCode:buyer,createdAt:created,confirmedAt:created,saleDate:'2026-09-17',
+ status:'confirmed',displayCurrency:currency,lines:[{productCode:'P1',unitPriceMinor:currency==='USD'?2500:400000,saleCurrency:currency},{productCode:'P2',unitPriceMinor:100,saleCurrency:currency}]});
+const old=sale('UD-OLD','A','2026-09-17T07:00:00Z'),correct=sale('UD-CORRECT','A','2026-09-17T08:00:00Z');
+const resale=sale('UD-RESALE','A','2026-09-17T10:00:00Z','JPY'),otherBuyer=sale('UD-OTHER','B','2026-09-17T08:30:00Z','JPY');
+const draft={...sale('UD-DRAFT','A','2026-09-17T08:45:00Z'),status:'draft'};
+const revision={...sale('UR-REVISION','A','2026-09-17T08:50:00Z'),documentType:'sales_revision'};
+const ret={id:'r1',slipNumber:'UH-RETURN',operationType:'return',buyerCode:'A',transactionDate:'2026-09-17',createdAt:'2026-09-17T09:00:00Z',
+ status:'confirmed',lines:[{productCode:'P1',brand:'ROLEX',modelNumber:'モデル'}]};
+const sales=[resale,otherBuyer,draft,revision,old,correct];
+assert.equal(ctx.findSourceSaleForReturn(ret,sales),correct,'same product must use matching buyer and latest confirmed sale before return');
+assert.equal(ctx.findSourceSaleForReturn({...ret,notes:'元売上伝票: UD-OLD'},sales),old,'valid stored reference takes priority');
+assert.equal(ctx.findSourceSaleForReturn({...ret,notes:'元売上伝票: UD-RENAMED'},sales),correct,'legacy renamed number uses transaction identity');
+assert.equal(ctx.findSourceSaleForReturn({...ret,notes:'元売上伝票: UD-RESALE'},sales),correct,'cannot reference later resale even through notes');
+assert.equal(ctx.findSourceSaleForReturn({...ret,notes:'元売上伝票: UD-OTHER'},sales),correct,'cannot reference another buyer');
+assert.equal(ctx.findSourceSaleForReturn({...ret,lines:[{productCode:'P1'},{productCode:'MISSING'}]},sales),null);
+assert.equal(ctx.findSourceSaleForReturn({...ret,operationType:'purchase_return'},sales),null);
+assert.equal(ctx.findSourceSaleForReturn({...ret,lines:[]},sales),null);
+assert.equal(ctx.findSourceSaleForReturn({...ret,createdAt:null},[{...correct,createdAt:null,confirmedAt:null,saleDate:'2026-09-18'}]),null);
+ctx.saleDetails=sales;ctx.returnDetails=[ret];
+const mappingStart=bridge.indexOf('    const returnViews = returnDetails.map(');
+const mappingEnd=bridge.indexOf('    APP_DATA.purchaseReturns =',mappingStart);
+assert.ok(mappingStart>=0&&mappingEnd>mappingStart);
+vm.runInContext(bridge.slice(mappingStart,mappingEnd)+'\nresult=returnViews;',ctx);
+assert.equal(ctx.result[0].id,'UH-RETURN');assert.equal(ctx.result[0].slipId,'UD-CORRECT');
+assert.equal(ctx.result[0].items.length,1);assert.equal(ctx.result[0].items[0].salePrice,2500);
+assert.equal(sales[0],resale,'do not reorder source data');
+console.log('PASS: returns resolve original sale using stored reference, buyer, returned products and transaction time; later resale, draft, adjustment and wrong buyer cannot override it.');

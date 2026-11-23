@@ -25,6 +25,9 @@ type ProductFileRecord struct {
 }
 
 func (r *Repository) PrepareProductFile(ctx context.Context, organizationID, productID string) (int, error) {
+	if err := lockProductForContentEdit(r.db.WithContext(ctx), organizationID, productID); err != nil {
+		return 0, err
+	}
 	var productCount int64
 	if err := r.db.WithContext(ctx).Table("products").Where(
 		"organization_id=? AND id=? AND deleted_at IS NULL", organizationID, productID).Count(&productCount).Error; err != nil {
@@ -47,6 +50,9 @@ func (r *Repository) PrepareProductFile(ctx context.Context, organizationID, pro
 func (r *Repository) CreateProductFile(ctx context.Context, organizationID, actorUserID string, record ProductFileRecord) (ProductFileRecord, error) {
 	now := time.Now().UTC()
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockProductForContentEdit(tx, organizationID, record.ProductID); err != nil {
+			return err
+		}
 		var count int64
 		if err := tx.Table("product_files").Where("organization_id=? AND product_id=?", organizationID, record.ProductID).Count(&count).Error; err != nil {
 			return err
@@ -104,6 +110,9 @@ func (r *Repository) DeleteProductFile(ctx context.Context, organizationID, file
 		if result.Error != nil {
 			return result.Error
 		}
+		if err := lockProductForContentEdit(tx, organizationID, deleted.ProductID); err != nil {
+			return err
+		}
 		if err := tx.Exec("DELETE FROM product_files WHERE organization_id=? AND id=?", organizationID, fileID).Error; err != nil {
 			return err
 		}
@@ -118,6 +127,9 @@ func (r *Repository) DeleteProductFile(ctx context.Context, organizationID, file
 // dropping images while another edit is in progress.
 func (r *Repository) ReorderProductFiles(ctx context.Context, organizationID, productID string, fileIDs []string) ([]ProductFileRecord, error) {
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockProductForContentEdit(tx, organizationID, productID); err != nil {
+			return err
+		}
 		var current []string
 		if err := tx.Table("product_files").Where("organization_id=? AND product_id=?", organizationID, productID).
 			Order("sort_order,id").Pluck("id", &current).Error; err != nil {

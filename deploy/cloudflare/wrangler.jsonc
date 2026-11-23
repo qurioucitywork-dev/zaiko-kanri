@@ -1,0 +1,53 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "qurioucity-zaiko-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-21",
+  "account_id": "e6baa09043fb756e7961f7b835ade231",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "containers": [
+    {
+      "class_name": "ZaikoContainer",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": {
+          "dockerfile": "./Dockerfile",
+          "build_context": "."
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "APP",
+        "class_name": "ZaikoContainer"
+      }
+    ]
+  },
+  "exports": {
+    "ZaikoContainer": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "r2_buckets": [
+    {
+      "binding": "IMAGES",
+      "bucket_name": "qurioucity-zaiko-test-images"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
+  },
+  "vars": {
+    "PUBLIC_BASE_URL": "https://qurioucity-zaiko-test.qurioucitywork.workers.dev",
+    "ORGANIZATION_CODE": "CLEAN"
+  }
+}

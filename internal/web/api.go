@@ -53,7 +53,7 @@ func writeAPIError(w http.ResponseWriter, status int, code, message string) {
 // execute the sensitive mutation directly.
 func requireAPIAdmin(w http.ResponseWriter, r *http.Request, operation string) (database.User, bool) {
 	user, ok := currentUser(r.Context())
-	if !ok || user.Role != database.RoleAdmin {
+	if !ok || (user.Role != database.RoleAdmin && !(user.Role == database.RoleWorker && hasAdminPageGrant(r))) {
 		writeAPIError(w, http.StatusForbidden, "admin_approval_required",
 			operation+"には管理者権限または管理者承認が必要です。")
 		return database.User{}, false
@@ -187,7 +187,18 @@ func (s *Server) apiAuthenticated(permission string, next http.Handler) http.Han
 				return
 			}
 		}
-		if permission != "" && !s.apiHasPermission(r.Context(), session.User, permission) {
+		if session.User.Role == database.RoleWorker {
+			r = s.withVerifiedPageAccess(r, session.User.OrganizationID, session.User.ID)
+		}
+		if session.User.Role == database.RoleWorker && r.Method != "GET" && r.Method != "HEAD" && !hasAdminPageGrant(r) {
+			for _, page := range []string{"master", "box", "stocktake", "cost-adjustment"} {
+				if adminPageAllows(page, r.URL.Path, r.Method) {
+					writeAPIError(w, 403, "admin_page_password_required", "この操作には画面アクセス時の管理者PW認証が必要です。")
+					return
+				}
+			}
+		}
+		if permission != "" && !s.apiHasPermission(r.Context(), session.User, permission) && !hasAdminPageGrant(r) {
 			writeAPIError(w, http.StatusForbidden, "permission_denied", "この操作を行う権限がありません。")
 			return
 		}

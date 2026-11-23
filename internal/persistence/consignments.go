@@ -3,7 +3,6 @@ package persistence
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -12,13 +11,46 @@ import (
 )
 
 var (
+	ErrConsignmentPrice           = errors.New("invalid consignment sale price")
 	ErrConsignmentNotFound        = errors.New("consignment slip not found")
 	ErrConsignmentState           = errors.New("consignment slip cannot be changed in its current state")
 	ErrConsignmentProductNotFound = errors.New("product is not included in consignment slip")
 	ErrConsignmentReturnState     = errors.New("consignment product cannot be returned in its current state")
 )
 
+type ConsignmentPriceInput struct {
+	ProductCode       string `json:"productCode"`
+	SalePriceUSDMinor *int64 `json:"salePriceUsdMinor"`
+}
+
+// Omitted prices retain the legacy inventory defaults; explicit zero is a price.
+func consignmentInputPrices(codes []string, items []ConsignmentPriceInput) (map[string]int64, error) {
+	prices := make(map[string]int64)
+	if items == nil {
+		return prices, nil
+	}
+	if len(items) != len(codes) {
+		return nil, ErrConsignmentPrice
+	}
+	allowed := make(map[string]bool, len(codes))
+	for _, code := range codes {
+		allowed[code] = true
+	}
+	for _, item := range items {
+		code := strings.ToUpper(strings.TrimSpace(item.ProductCode))
+		_, duplicate := prices[code]
+		if !allowed[code] || duplicate || item.SalePriceUSDMinor == nil || *item.SalePriceUSDMinor < 0 || *item.SalePriceUSDMinor > 1000000000000 {
+			return nil, ErrConsignmentPrice
+		}
+		prices[code] = *item.SalePriceUSDMinor
+	}
+	return prices, nil
+}
+
 type ConsignmentCreateInput struct {
+	rebuild         *returnedDraftIdentity // Set only inside the owner-checked resubmission transaction.
+	draft           bool
+	Items           []ConsignmentPriceInput `json:"items,omitempty"`
 	OrganizationID  string
 	ActorUserID     string
 	ConsigneeCode   string   `json:"consigneeCode"`
@@ -28,6 +60,7 @@ type ConsignmentCreateInput struct {
 }
 
 type ConsignmentLineRecord struct {
+	ConsignmentPending    bool   `json:"consignmentPending"`
 	ID                    string `json:"id"`
 	LineNumber            int    `json:"lineNumber"`
 	ProductID             string `json:"productId"`
@@ -39,24 +72,26 @@ type ConsignmentLineRecord struct {
 }
 
 type ConsignmentSlipRecord struct {
-	ID               string                  `json:"id"`
-	SlipNumber       string                  `json:"slipNumber"`
-	ConsigneeCode    string                  `json:"consigneeCode"`
-	ConsigneeName    string                  `json:"consigneeName"`
-	ConsignmentDate  DateString              `json:"consignmentDate"`
-	Status           string                  `json:"status"`
-	Notes            string                  `json:"notes"`
-	DisplayCurrency  string                  `json:"displayCurrency"`
-	FXRateSnapshotID string                  `json:"fxRateSnapshotId,omitempty"`
-	FXRateScaled     int64                   `json:"fxRateScaled"`
-	FXScale          int64                   `json:"fxScale"`
-	IssuedAt         *time.Time              `json:"issuedAt,omitempty"`
-	IssuedBy         string                  `json:"issuedBy,omitempty"`
-	ConfirmedAt      time.Time               `json:"confirmedAt"`
-	CreatedAt        time.Time               `json:"createdAt"`
-	UpdatedAt        time.Time               `json:"updatedAt"`
-	Lines            []ConsignmentLineRecord `gorm:"-" json:"lines,omitempty"`
-	OfficialPDF      *OfficialDocumentRef    `gorm:"-" json:"officialPdf,omitempty"`
+	Revisions        []ConsignmentRevisionRecord `gorm:"-" json:"revisions,omitempty"`
+	ProcessingStatus string                      `json:"processingStatus"`
+	ID               string                      `json:"id"`
+	SlipNumber       string                      `json:"slipNumber"`
+	ConsigneeCode    string                      `json:"consigneeCode"`
+	ConsigneeName    string                      `json:"consigneeName"`
+	ConsignmentDate  DateString                  `json:"consignmentDate"`
+	Status           string                      `json:"status"`
+	Notes            string                      `json:"notes"`
+	DisplayCurrency  string                      `json:"displayCurrency"`
+	FXRateSnapshotID string                      `json:"fxRateSnapshotId,omitempty"`
+	FXRateScaled     int64                       `json:"fxRateScaled"`
+	FXScale          int64                       `json:"fxScale"`
+	IssuedAt         *time.Time                  `json:"issuedAt,omitempty"`
+	IssuedBy         string                      `json:"issuedBy,omitempty"`
+	ConfirmedAt      time.Time                   `json:"confirmedAt"`
+	CreatedAt        time.Time                   `json:"createdAt"`
+	UpdatedAt        time.Time                   `json:"updatedAt"`
+	Lines            []ConsignmentLineRecord     `gorm:"-" json:"lines,omitempty"`
+	OfficialPDF      *OfficialDocumentRef        `gorm:"-" json:"officialPdf,omitempty"`
 }
 
 // ReturnConsignmentProduct moves one product on a confirmed consignment back
@@ -99,6 +134,15 @@ func (r *Repository) ReturnConsignmentProduct(ctx context.Context, organizationI
 		if product.InventoryStatus != "consigned" {
 			return ErrConsignmentReturnState
 		}
+		var pending bool
+		if err := tx.Table("consignment_lines AS l").Select("("+consignmentLinePendingSQL+")").
+			Joins("JOIN consignment_slips c ON c.id=l.consignment_slip_id").Joins("JOIN products p ON p.id=l.product_id").
+			Where("c.organization_id=? AND c.id=? AND p.id=?", organizationID, consignmentID, product.ID).Scan(&pending).Error; err != nil {
+			return err
+		}
+		if !pending {
+			return ErrShipmentLineCompleted
+		}
 		now := time.Now().UTC()
 		if err := tx.Exec(`UPDATE products SET inventory_status='in_stock',updated_at=? WHERE id=?`, now, product.ID).Error; err != nil {
 			return err
@@ -130,33 +174,39 @@ func (r *Repository) CreateConsignment(ctx context.Context, input ConsignmentCre
 		return ConsignmentSlipRecord{}, ErrConsignmentState
 	}
 
+	prices, err := consignmentInputPrices(productCodes, input.Items)
+	if err != nil {
+		return ConsignmentSlipRecord{}, err
+	}
 	var consignmentID string
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		consigneeRoleID, err := lookupBuyerRole(tx, input.OrganizationID, input.ConsigneeCode)
 		if err != nil {
 			return err
 		}
-		rate, err := latestFX(tx, input.OrganizationID, "USD")
+		rate, err := returnedDraftFX(tx, input.OrganizationID, "USD", input.rebuild)
 		if err != nil {
 			return err
 		}
 		now := time.Now().UTC()
-		sequence, err := nextDocumentSequence(tx, input.OrganizationID, "consignment", date.Year(), now)
+		var slipNumber string
+		consignmentID, slipNumber, err = returnedDraftNumber(tx, input.OrganizationID, "consignment_slips", "IT", "cns", date, now, input.rebuild)
 		if err != nil {
 			return err
 		}
-		consignmentID, err = database.NewID("cns")
-		if err != nil {
-			return err
+		status := "confirmed"
+		var confirmedAt any = now
+		var confirmedBy any = input.ActorUserID
+		if input.draft {
+			status, confirmedAt, confirmedBy = "draft", nil, nil
 		}
-		slipNumber := fmt.Sprintf("CO-%04d-%04d", date.Year(), sequence)
 		if err := tx.Exec(`INSERT INTO consignment_slips(
 			id,organization_id,slip_number,consignee_role_id,consignment_date,status,notes,
 			display_currency,fx_rate_snapshot_id,fx_rate_scaled,fx_scale,
 			confirmed_at,confirmed_by,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,'confirmed',?,'JPY',?,?,?,?,?,?,?,?)`, consignmentID, input.OrganizationID, slipNumber,
-			consigneeRoleID, date, strings.TrimSpace(input.Notes), rate.ID, rate.RateScaled, rate.Scale,
-			now, input.ActorUserID, input.ActorUserID, now, now).Error; err != nil {
+		) VALUES(?,?,?,?,?,?,?,'JPY',?,?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET consignee_role_id=EXCLUDED.consignee_role_id,consignment_date=EXCLUDED.consignment_date,notes=EXCLUDED.notes,display_currency=EXCLUDED.display_currency,fx_rate_snapshot_id=EXCLUDED.fx_rate_snapshot_id,fx_rate_scaled=EXCLUDED.fx_rate_scaled,fx_scale=EXCLUDED.fx_scale,status=EXCLUDED.status,updated_at=EXCLUDED.updated_at`, consignmentID, input.OrganizationID, slipNumber,
+			consigneeRoleID, date, status, strings.TrimSpace(input.Notes), rate.ID, rate.RateScaled, rate.Scale,
+			confirmedAt, confirmedBy, input.ActorUserID, now, now).Error; err != nil {
 			return err
 		}
 
@@ -178,8 +228,11 @@ func (r *Repository) CreateConsignment(ctx context.Context, input ConsignmentCre
 			if err != nil {
 				return err
 			}
+			if price, supplied := prices[productCode]; supplied {
+				salePriceUSD = price
+			}
 			convertedJPY := convertShipmentUSDToJPYRoundUpToThousand(salePriceUSD, rate.RateScaled, rate.Scale)
-			lineID, err := database.NewID("cnl")
+			lineID, err := returnedDraftLineID(input.rebuild, index, "cnl")
 			if err != nil {
 				return err
 			}
@@ -187,6 +240,9 @@ func (r *Repository) CreateConsignment(ctx context.Context, input ConsignmentCre
 				id,consignment_slip_id,line_number,product_id,quantity,sale_price_usd_minor,converted_sale_price_jpy,created_at
 			) VALUES(?,?,?,?,1,?,?,?)`, lineID, consignmentID, index+1, product.ID, salePriceUSD, convertedJPY, now).Error; err != nil {
 				return err
+			}
+			if input.draft {
+				continue
 			}
 			if err := tx.Exec(`UPDATE products SET inventory_status='consigned',updated_at=? WHERE id=?`, now, product.ID).Error; err != nil {
 				return err
@@ -218,7 +274,7 @@ func (r *Repository) ConsignmentSlips(ctx context.Context, organizationID string
 	err := r.db.WithContext(ctx).Table("consignment_slips AS c").
 		Select(`c.id,c.slip_number,cr.role_code AS consignee_code,bp.legal_name AS consignee_name,
 			c.consignment_date,c.status,c.notes,c.display_currency,c.fx_rate_snapshot_id,c.fx_rate_scaled,c.fx_scale,
-			c.issued_at,COALESCE(c.issued_by,'') AS issued_by,c.confirmed_at,c.created_at,c.updated_at`).
+			c.issued_at,COALESCE(c.issued_by,'') AS issued_by,c.confirmed_at,c.created_at,c.updated_at,`+consignmentProcessingStatusSQL).
 		Joins("JOIN partner_roles cr ON cr.id=c.consignee_role_id").
 		Joins("JOIN business_partners bp ON bp.id=cr.partner_id").
 		Where("c.organization_id=?", organizationID).
@@ -231,7 +287,7 @@ func (r *Repository) ConsignmentSlip(ctx context.Context, organizationID, consig
 	result := r.db.WithContext(ctx).Table("consignment_slips AS c").
 		Select(`c.id,c.slip_number,cr.role_code AS consignee_code,bp.legal_name AS consignee_name,
 			c.consignment_date,c.status,c.notes,c.display_currency,c.fx_rate_snapshot_id,c.fx_rate_scaled,c.fx_scale,
-			c.issued_at,COALESCE(c.issued_by,'') AS issued_by,c.confirmed_at,c.created_at,c.updated_at`).
+			c.issued_at,COALESCE(c.issued_by,'') AS issued_by,c.confirmed_at,c.created_at,c.updated_at,`+consignmentProcessingStatusSQL).
 		Joins("JOIN partner_roles cr ON cr.id=c.consignee_role_id").
 		Joins("JOIN business_partners bp ON bp.id=cr.partner_id").
 		Where("c.organization_id=? AND c.id=?", organizationID, consignmentID).Take(&record)
@@ -242,10 +298,18 @@ func (r *Repository) ConsignmentSlip(ctx context.Context, organizationID, consig
 		return ConsignmentSlipRecord{}, result.Error
 	}
 	if err := r.db.WithContext(ctx).Table("consignment_lines AS l").
-		Select("l.id,l.line_number,l.product_id,p.product_code,p.brand,p.model_number,l.sale_price_usd_minor,l.converted_sale_price_jpy").
+		Select("l.id,l.line_number,l.product_id,p.product_code,p.brand,p.model_number,l.sale_price_usd_minor,l.converted_sale_price_jpy,("+consignmentLinePendingSQL+") AS consignment_pending").
+		Joins("JOIN consignment_slips c ON c.id=l.consignment_slip_id").
 		Joins("JOIN products p ON p.id=l.product_id").Where("l.consignment_slip_id=?", consignmentID).
 		Order("l.line_number").Scan(&record.Lines).Error; err != nil {
 		return ConsignmentSlipRecord{}, err
+	}
+	if r.db.Migrator().HasTable("audit_logs") {
+		if err := r.db.WithContext(ctx).Table("audit_logs AS a").Select("a.created_at AS revised_at,COALESCE(u.display_name,'管理者') AS actor_name,a.reason").
+			Joins("LEFT JOIN users u ON u.id=a.actor_user_id").Where("a.organization_id=? AND a.target_type='consignment_slip' AND a.target_id=? AND a.action='consignment.revised' AND a.result='success'", organizationID, consignmentID).
+			Order("a.created_at,a.id").Scan(&record.Revisions).Error; err != nil {
+			return ConsignmentSlipRecord{}, err
+		}
 	}
 	return record, nil
 }
@@ -255,7 +319,7 @@ func (r *Repository) ConsignmentSlip(ctx context.Context, organizationID, consig
 func (r *Repository) IssueConsignment(ctx context.Context, organizationID, consignmentID, actorUserID string) (ConsignmentSlipRecord, error) {
 	now := time.Now().UTC()
 	result := r.db.WithContext(ctx).Exec(`UPDATE consignment_slips SET issued_at=?,issued_by=?,updated_at=?
-		WHERE organization_id=? AND id=?`, now, actorUserID, now, organizationID, consignmentID)
+		WHERE organization_id=? AND id=? AND status='confirmed'`, now, actorUserID, now, organizationID, consignmentID)
 	if result.Error != nil {
 		return ConsignmentSlipRecord{}, result.Error
 	}
@@ -264,3 +328,13 @@ func (r *Repository) IssueConsignment(ctx context.Context, organizationID, consi
 	}
 	return r.ConsignmentSlip(ctx, organizationID, consignmentID)
 }
+
+const consignmentLinePendingSQL = `c.status='confirmed' AND c.confirmed_at IS NOT NULL
+ AND p.inventory_status='consigned'
+ AND NOT EXISTS (SELECT 1 FROM inventory_events e WHERE e.organization_id=c.organization_id
+   AND e.product_id=l.product_id AND e.created_at>=c.confirmed_at AND e.from_status='consigned' AND e.to_status<>'consigned')
+ AND NOT EXISTS (SELECT 1 FROM consignment_lines nl JOIN consignment_slips nc ON nc.id=nl.consignment_slip_id
+   WHERE nl.product_id=l.product_id AND nc.organization_id=c.organization_id AND nc.status='confirmed' AND nc.confirmed_at>c.confirmed_at)`
+const consignmentProcessingStatusSQL = `CASE WHEN c.status='draft' OR
+ (c.status='confirmed' AND EXISTS (SELECT 1 FROM consignment_lines l JOIN products p ON p.id=l.product_id
+   WHERE l.consignment_slip_id=c.id AND ` + consignmentLinePendingSQL + `)) THEN 'processing' ELSE 'completed' END AS processing_status`

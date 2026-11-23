@@ -41,19 +41,21 @@ type CostAdjustmentSlipLine struct {
 }
 
 type CostAdjustmentSlip struct {
-	ID                string                   `json:"id"`
-	SlipNumber        string                   `json:"slipNumber"`
-	AdjustmentType    string                   `json:"adjustmentType"`
-	AdjustmentDate    DateString               `json:"adjustmentDate"`
-	SourceProductCode string                   `json:"sourceProductCode"`
-	SourceBrand       string                   `json:"sourceBrand"`
-	SourceModel       string                   `json:"sourceModel"`
-	SourceCostJPY     int64                    `json:"sourceCostJpyMinor"`
-	AdjustedCostJPY   int64                    `json:"adjustedCostJpyMinor"`
-	Status            string                   `json:"status"`
-	Notes             string                   `json:"notes"`
-	ConfirmedAt       *time.Time               `json:"confirmedAt,omitempty"`
-	Lines             []CostAdjustmentSlipLine `json:"lines" gorm:"-"`
+	ProcessingStatus    string                   `json:"processingStatus"`
+	PendingProductCount int64                    `json:"pendingProductCount"`
+	ID                  string                   `json:"id"`
+	SlipNumber          string                   `json:"slipNumber"`
+	AdjustmentType      string                   `json:"adjustmentType"`
+	AdjustmentDate      DateString               `json:"adjustmentDate"`
+	SourceProductCode   string                   `json:"sourceProductCode"`
+	SourceBrand         string                   `json:"sourceBrand"`
+	SourceModel         string                   `json:"sourceModel"`
+	SourceCostJPY       int64                    `json:"sourceCostJpyMinor"`
+	AdjustedCostJPY     int64                    `json:"adjustedCostJpyMinor"`
+	Status              string                   `json:"status"`
+	Notes               string                   `json:"notes"`
+	ConfirmedAt         *time.Time               `json:"confirmedAt,omitempty"`
+	Lines               []CostAdjustmentSlipLine `json:"lines" gorm:"-"`
 }
 
 // ListCostAdjustmentSlips returns confirmed cost-management documents without
@@ -66,7 +68,10 @@ func (r *Repository) ListCostAdjustmentSlips(ctx context.Context, organizationID
 	if err := r.db.WithContext(ctx).Raw(`SELECT ca.id,ca.slip_number,ca.adjustment_type,ca.adjustment_date,
 		ca.source_product_code,COALESCE(p.brand,'' ) AS source_brand,COALESCE(p.model_number,'') AS source_model,
 		ca.source_cost_jpy_minor AS source_cost_jpy,ca.allocated_cost_jpy_minor AS adjusted_cost_jpy,
-		ca.status,COALESCE(ca.notes,'') AS notes,ca.confirmed_at
+		ca.status,COALESCE(ca.notes,'') AS notes,ca.confirmed_at,
+        (SELECT COUNT(*) FROM products pending
+         WHERE pending.organization_id=ca.organization_id AND pending.cost_adjustment_id=ca.id
+           AND pending.deleted_at IS NULL AND pending.inventory_status='cost_adjustment') AS pending_product_count
 		FROM cost_adjustments ca
 		LEFT JOIN products p ON p.id=ca.source_product_id AND p.organization_id=ca.organization_id
 		WHERE ca.organization_id=? AND ca.status='confirmed'
@@ -75,6 +80,10 @@ func (r *Repository) ListCostAdjustmentSlips(ctx context.Context, organizationID
 	}
 	for index := range records {
 		record := &records[index]
+		record.ProcessingStatus = "completed"
+		if record.PendingProductCount > 0 {
+			record.ProcessingStatus = "processing"
+		}
 		record.Lines = []CostAdjustmentSlipLine{}
 		if record.AdjustmentType == "direct_increase" || record.AdjustmentType == "direct_decrease" {
 			if err := r.db.WithContext(ctx).Raw(`SELECT position,'product' AS kind,product_code AS management_code,

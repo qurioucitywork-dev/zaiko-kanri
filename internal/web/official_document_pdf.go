@@ -152,17 +152,17 @@ func purchasePDF(record persistence.PurchaseSlipRecord) reportpdf.Document {
 		if len(item.AccessoryCodes) > 0 {
 			description += "　付属品: " + strings.Join(item.AccessoryCodes, ", ")
 		}
-		tax := "対象外"
+		tax := "TAX FREE"
 		if taxCategory == persistence.PurchaseTaxCategoryConsumptionTax {
 			tax = "消費税(10%)"
 		} else if taxCategory == persistence.PurchaseTaxCategoryEquivalent {
 			tax = "消費税相当額(参考)"
 		}
 		lines = append(lines, reportpdf.Line{Number: item.LineNumber, Description: description,
-			Amount: amount("JPY", lineAmount), Tax: tax})
+			Amount: amount("JPY", lineAmount), Tax: tax, ProductCode: purchaseLineManagementCode(item)})
 	}
 	taxAmount := int64(0)
-	taxLabel := "対象外"
+	taxLabel := "TAX FREE"
 	if taxCategory == persistence.PurchaseTaxCategoryConsumptionTax {
 		taxAmount = subtotal * int64(record.TaxRateBasisPoints) / 10000
 		taxLabel = "消費税（10%）"
@@ -193,7 +193,7 @@ func salePDF(record persistence.SaleSlipRecord) reportpdf.Document {
 		if item.Accessories != "" {
 			description += "　付属品: " + item.Accessories
 		}
-		tax := "対象外"
+		tax := "TAX FREE"
 		if record.TaxMode == "taxable" {
 			tax = "消費税(10%)"
 		}
@@ -223,16 +223,23 @@ func consignmentPDF(record persistence.ConsignmentSlipRecord) reportpdf.Document
 		}
 		total += value
 		lines = append(lines, reportpdf.Line{Number: item.LineNumber, Description: strings.TrimSpace(item.Brand + " / " + item.ModelNumber),
-			Amount: amount("JPY", value), Tax: "対象外", ProductCode: item.ProductCode})
+			Amount: amount("JPY", value), Tax: "TAX FREE", ProductCode: item.ProductCode})
 	}
 	return reportpdf.Document{Title: "委託伝票", Number: record.SlipNumber, TransactionDate: string(record.ConsignmentDate),
 		PartnerLabel: "委託先", PartnerName: record.ConsigneeName, Currency: "JPY", Subtotal: amount("JPY", total),
-		TaxAmount: amount("JPY", 0), Total: amount("JPY", total), TaxLabel: "対象外", Notes: record.Notes, Lines: lines}
+		TaxAmount: amount("JPY", 0), Total: amount("JPY", total), TaxLabel: "TAX FREE", Notes: record.Notes, Lines: lines}
 }
 
 func saleTaxLabel(mode string) string {
 	if mode == "taxable" {
 		return "消費税（10%）"
 	}
-	return "対象外"
+	return "TAX FREE"
+}
+
+func purchaseLineManagementCode(item persistence.PurchaseLineRecord) string {
+	if item.ProductCode != "" {
+		return item.ProductCode
+	}
+	return item.PartCode
 }

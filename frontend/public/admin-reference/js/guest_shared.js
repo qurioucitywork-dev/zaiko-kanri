@@ -9,7 +9,53 @@ const PURCHASE_REQUEST_AVAILABLE_STATUS = '在庫中';
 const PURCHASE_REQUEST_RESERVED_STATUS = '取置中';
 const PURCHASE_REQUEST_CLOSED_STATUSES = new Set(['却下', '取消', '取消済']);
 
+// The existing shipping workflow stores 出荷中 as 出荷済 / shipped.
+function isGuestVisibleProductStatus(status) {
+  return ['在庫中', '出荷中', '出荷済', 'in_stock', 'shipped'].includes(String(status || '').trim());
+}
+function isBoxAssignableProductStatus(status) {
+  return isGuestVisibleProductStatus(status) || ['仕入中', 'purchasing'].includes(String(status || '').trim());
+}
+
+function boxProductStatusKey(status) {
+ return ({'仕入中':'purchasing','在庫中':'in_stock','出荷済':'shipped','出荷中':'shipped','取置中':'reserved'})[status] || status;
+}
+function getBoxProductVisibility(item, no = item?.boxNo) {
+ if (!item) return {guestVisible:false,visibilityState:'hidden'};
+ const box = (APP_DATA.boxes || []).find(box => Number(box.no) === Number(no));
+ const status = boxProductStatusKey(item.status);
+ if (!box) return {guestVisible:false,visibilityState:'hidden'};
+ if (!Array.isArray(box.productVisibility)) box.productVisibility = [];
+ let state = box.productVisibility.find(record => record.productCode === item.code);
+ if (window.ZaikoAPI) return state || {guestVisible:isGuestVisibleProductStatus(item.status),visibilityState:isGuestVisibleProductStatus(item.status)?'visible':'hidden'};
+ if (!['purchasing','in_stock','shipped','reserved'].includes(status)) {
+  item.boxNo = null;
+  box.productVisibility = box.productVisibility.filter(record => record.productCode !== item.code);
+  return {guestVisible:false,visibilityState:'hidden'};
+ }
+ if (!state) {
+  state = {productCode:item.code,basisStatus:status,lastStatus:status,visibilityState:status==='purchasing'?'waiting':status==='reserved'?'hidden':'visible'};
+  box.productVisibility.push(state);
+ }
+ if (status !== state.lastStatus) {
+  if (state.visibilityState==='waiting' && state.basisStatus==='purchasing' && status==='in_stock') {
+   state.visibilityState='visible';state.basisStatus='in_stock';
+  } else if (status==='reserved' || status==='purchasing' || status!==state.basisStatus) state.visibilityState='hidden';
+  state.lastStatus=status;
+ }
+ state.guestVisible=state.visibilityState==='visible' && isGuestVisibleProductStatus(item.status);
+ return state;
+}
+function isBoxProductGuestVisible(item, no = item?.boxNo) { return getBoxProductVisibility(item,no).guestVisible === true; }
+
+function assertBoxAssignableProducts(items) {
+  const invalid = items.filter(item => !isBoxAssignableProductStatus(item.status));
+  if (invalid.length) throw new Error('BOXに登録できる商品は仕入中・在庫中・出荷済のみです。対象外: '
+    + invalid.map(item => item.code + '（' + (item.status || '状態未設定') + '）').join('、'));
+}
+
 function _guestReadStorage(key) {
+  if (window.ZaikoAPI) return null;
   try {
     const raw = localStorage.getItem(key);
     return raw ? JSON.parse(raw) : null;
@@ -207,7 +253,7 @@ function persistGuestSnapshot() {
 }
 
 /**
- * 出荷・売上が確定した商品を、公開済みのゲストスナップショットから即時除外する。
+ * 公開対象外になった商品をゲストスナップショットから除外する。出荷中は公開を維持する。
  * 在庫へ戻った場合は自動再公開せず、管理者が公開更新した時だけ再掲載する。
  */
 function unpublishGuestProducts(productCodes) {
@@ -218,15 +264,22 @@ function unpublishGuestProducts(productCodes) {
   if (codes.size === 0 || !snapshot || !Array.isArray(snapshot.boxes)) return 0;
 
   let removedCount = 0;
+  let statusChanged = false;
   const boxes = snapshot.boxes.map(box => ({
     ...box,
     items: (box.items || []).filter(item => {
-      const remove = codes.has(String(item.code || ''));
+      const targeted = codes.has(String(item.code || ''));
+      const current = targeted && (APP_DATA.inventory || []).find(product => product.code === item.code);
+      if (current && isBoxProductGuestVisible(current,box.no) && item.status !== current.status) {
+        item.status = current.status;
+        statusChanged = true;
+      }
+      const remove = targeted && !isBoxProductGuestVisible(current,box.no);
       if (remove) removedCount += 1;
       return !remove;
     }),
   }));
-  if (removedCount === 0) return 0;
+  if (removedCount === 0 && !statusChanged) return 0;
 
   const now = new Date();
   APP_DATA.publishedSnapshot = {

@@ -45,6 +45,9 @@ func (s *Server) apiProductFileUpload(w http.ResponseWriter, r *http.Request) {
 	productID := r.PathValue("id")
 	if _, err := s.repository.PrepareProductFile(r.Context(), user.OrganizationID, productID); err != nil {
 		status, code, message := http.StatusNotFound, "product_not_found", "商品が見つかりません。"
+		if errors.Is(err, persistence.ErrPurchaseReturnProductLocked) {
+			status, code, message = http.StatusConflict, "purchase_return_product_locked", "仕入返品処理中の商品画像は変更できません。"
+		}
 		if errors.Is(err, persistence.ErrProductFileLimit) {
 			status, code, message = http.StatusConflict, "file_limit", "商品画像は最大10枚です。"
 		}
@@ -171,4 +174,28 @@ func (s *Server) apiProductFilesReorder(w http.ResponseWriter, r *http.Request) 
 		TargetType: "product", TargetID: productID, Action: "product_files.reordered", AfterJSON: string(after),
 		Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent()})
 	writeJSON(w, http.StatusOK, map[string]any{"items": records, "total": len(records)})
+}
+
+func (s *Server) apiGuestProductFile(w http.ResponseWriter, r *http.Request) {
+	user, _ := currentUser(r.Context())
+	w.Header().Set("Cache-Control", "private, no-store")
+	if user.Role != database.RoleGuest {
+		writeAPIError(w, http.StatusForbidden, "guest_required", "ゲストアカウントでログインしてください。")
+		return
+	}
+	record, err := s.repository.GuestProductFile(r.Context(), user.OrganizationID, user.ID, r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "file_not_found", "画像が見つかりません。")
+		return
+	}
+	object, err := s.objects.Get(r.Context(), record.ObjectKey)
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "file_not_found", "画像が見つかりません。")
+		return
+	}
+	defer object.Body.Close()
+	w.Header().Set("Content-Type", record.ContentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Length", strconv.FormatInt(record.SizeBytes, 10))
+	_, _ = io.Copy(w, object.Body)
 }

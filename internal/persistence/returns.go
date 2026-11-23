@@ -2,8 +2,8 @@ package persistence
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
@@ -17,18 +17,21 @@ var (
 )
 
 type ReturnCreateInput struct {
-	OrganizationID  string
-	ActorUserID     string
-	OperationType   string   `json:"operationType"`
-	TransactionDate string   `json:"transactionDate"`
-	BuyerCode       string   `json:"buyerCode"`
-	SupplierCode    string   `json:"supplierCode"`
-	PurchaseSlipNo  string   `json:"sourcePurchaseSlipNumber"`
-	Carrier         string   `json:"carrier"`
-	TrackingNumber  string   `json:"trackingNumber"`
-	Reason          string   `json:"reason"`
-	Notes           string   `json:"notes"`
-	ProductCodes    []string `json:"productCodes"`
+	rebuild              *returnedDraftIdentity // Set only inside the owner-checked resubmission transaction.
+	OrganizationID       string
+	ActorUserID          string
+	OperationType        string                 `json:"operationType"`
+	TransactionDate      string                 `json:"transactionDate"`
+	BuyerCode            string                 `json:"buyerCode"`
+	SupplierCode         string                 `json:"supplierCode"`
+	PurchaseSlipNo       string                 `json:"sourcePurchaseSlipNumber"`
+	Carrier              string                 `json:"carrier"`
+	TrackingNumber       string                 `json:"trackingNumber"`
+	Reason               string                 `json:"reason"`
+	Notes                string                 `json:"notes"`
+	ProductCodes         []string               `json:"productCodes"`
+	SourceSaleSlipNumber string                 `json:"sourceSaleSlipNumber"`
+	AdjustmentLines      []ReturnAdjustmentLine `json:"adjustmentLines"`
 }
 
 type ReturnLineRecord struct {
@@ -45,27 +48,29 @@ type ReturnLineRecord struct {
 }
 
 type ReturnSlipRecord struct {
-	ID                  string             `json:"id"`
-	SlipNumber          string             `json:"slipNumber"`
-	OperationType       string             `json:"operationType"`
-	TransactionDate     DateString         `json:"transactionDate"`
-	BuyerCode           string             `json:"buyerCode,omitempty"`
-	BuyerName           string             `json:"buyerName,omitempty"`
-	SupplierCode        string             `json:"supplierCode,omitempty"`
-	SupplierName        string             `json:"supplierName,omitempty"`
-	PurchaseSlipID      string             `json:"sourcePurchaseSlipId,omitempty"`
-	PurchaseSlipNo      string             `json:"sourcePurchaseSlipNumber,omitempty"`
-	Carrier             string             `json:"carrier"`
-	TrackingNumber      string             `json:"trackingNumber"`
-	Status              string             `json:"status"`
-	Reason              string             `json:"reason"`
-	Notes               string             `json:"notes"`
-	ConfirmedAt         *time.Time         `json:"confirmedAt,omitempty"`
-	TrackingConfirmedAt *time.Time         `json:"trackingConfirmedAt,omitempty"`
-	TrackingConfirmedBy string             `json:"trackingConfirmedBy,omitempty"`
-	CreatedAt           time.Time          `json:"createdAt"`
-	UpdatedAt           time.Time          `json:"updatedAt"`
-	Lines               []ReturnLineRecord `gorm:"-" json:"lines,omitempty"`
+	AdjustmentJSON      string                   `json:"-" gorm:"column:adjustment_details"`
+	AdjustmentDetails   *ReturnAdjustmentDetails `json:"adjustmentDetails,omitempty" gorm:"-"`
+	ID                  string                   `json:"id"`
+	SlipNumber          string                   `json:"slipNumber"`
+	OperationType       string                   `json:"operationType"`
+	TransactionDate     DateString               `json:"transactionDate"`
+	BuyerCode           string                   `json:"buyerCode,omitempty"`
+	BuyerName           string                   `json:"buyerName,omitempty"`
+	SupplierCode        string                   `json:"supplierCode,omitempty"`
+	SupplierName        string                   `json:"supplierName,omitempty"`
+	PurchaseSlipID      string                   `json:"sourcePurchaseSlipId,omitempty"`
+	PurchaseSlipNo      string                   `json:"sourcePurchaseSlipNumber,omitempty"`
+	Carrier             string                   `json:"carrier"`
+	TrackingNumber      string                   `json:"trackingNumber"`
+	Status              string                   `json:"status"`
+	Reason              string                   `json:"reason"`
+	Notes               string                   `json:"notes"`
+	ConfirmedAt         *time.Time               `json:"confirmedAt,omitempty"`
+	TrackingConfirmedAt *time.Time               `json:"trackingConfirmedAt,omitempty"`
+	TrackingConfirmedBy string                   `json:"trackingConfirmedBy,omitempty"`
+	CreatedAt           time.Time                `json:"createdAt"`
+	UpdatedAt           time.Time                `json:"updatedAt"`
+	Lines               []ReturnLineRecord       `gorm:"-" json:"lines,omitempty"`
 }
 
 func (r *Repository) CreateReturn(ctx context.Context, input ReturnCreateInput) (ReturnSlipRecord, error) {
@@ -74,7 +79,7 @@ func (r *Repository) CreateReturn(ctx context.Context, input ReturnCreateInput) 
 		return ReturnSlipRecord{}, err
 	}
 	productCodes := normalizeCodes(input.ProductCodes)
-	if len(productCodes) == 0 || len(productCodes) > 100 ||
+	if !validReturnAdjustments(input) ||
 		(input.OperationType != "return" && input.OperationType != "takeout" && input.OperationType != "purchase_return") {
 		return ReturnSlipRecord{}, ErrReturnState
 	}
@@ -83,6 +88,10 @@ func (r *Repository) CreateReturn(ctx context.Context, input ReturnCreateInput) 
 	}
 	var returnID string
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		adjustmentJSON, snapshotErr := returnAdjustmentSnapshot(tx, input)
+		if snapshotErr != nil {
+			return snapshotErr
+		}
 		var buyerRoleID string
 		var supplierRoleID string
 		var purchaseSlipID string
@@ -109,21 +118,20 @@ func (r *Repository) CreateReturn(ctx context.Context, input ReturnCreateInput) 
 			}
 		}
 		now := time.Now().UTC()
-		sequence, err := nextDocumentSequence(tx, input.OrganizationID, "return", date.Year(), now)
+		var slipNumber string
+		returnID, slipNumber, err = returnedDraftNumber(tx, input.OrganizationID, "return_slips", returnSlipPrefix(input.OperationType), "rtn", date, now, input.rebuild)
 		if err != nil {
 			return err
 		}
-		returnID, err = database.NewID("rtn")
-		if err != nil {
-			return err
-		}
-		slipNumber := fmt.Sprintf("RT-%04d-%04d", date.Year(), sequence)
 		if err := tx.Exec(`INSERT INTO return_slips(
 			id,organization_id,slip_number,operation_type,transaction_date,buyer_role_id,supplier_role_id,source_purchase_slip_id,status,reason,notes,
 			carrier,tracking_number,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?)`, returnID, input.OrganizationID, slipNumber, input.OperationType,
+		) VALUES(?,?,?,?,?,?,?,?,'draft',?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET transaction_date=EXCLUDED.transaction_date,buyer_role_id=EXCLUDED.buyer_role_id,supplier_role_id=EXCLUDED.supplier_role_id,source_purchase_slip_id=EXCLUDED.source_purchase_slip_id,reason=EXCLUDED.reason,notes=EXCLUDED.notes,carrier=EXCLUDED.carrier,tracking_number=EXCLUDED.tracking_number,status=EXCLUDED.status,updated_at=EXCLUDED.updated_at`, returnID, input.OrganizationID, slipNumber, input.OperationType,
 			date, nullIfEmpty(buyerRoleID), nullIfEmpty(supplierRoleID), nullIfEmpty(purchaseSlipID), strings.TrimSpace(input.Reason), strings.TrimSpace(input.Notes),
 			strings.TrimSpace(input.Carrier), strings.TrimSpace(input.TrackingNumber), input.ActorUserID, now, now).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("UPDATE return_slips SET adjustment_details=? WHERE id=? AND organization_id=?", adjustmentJSON, returnID, input.OrganizationID).Error; err != nil {
 			return err
 		}
 		for index, productCode := range productCodes {
@@ -169,7 +177,7 @@ func (r *Repository) CreateReturn(ctx context.Context, input ReturnCreateInput) 
 					return err
 				}
 			}
-			lineID, _ := database.NewID("rtl")
+			lineID, _ := returnedDraftLineID(input.rebuild, index, "rtl")
 			if err := tx.Exec(`INSERT INTO return_lines(
 				id,return_slip_id,line_number,product_id,from_status,to_status,created_at
 			) VALUES(?,?,?,?,?,?,?)`, lineID, returnID, index+1, product.ID, product.InventoryStatus, toStatus, now).Error; err != nil {
@@ -206,7 +214,7 @@ func (r *Repository) ReturnSlips(ctx context.Context, organizationID string, lim
 func (r *Repository) ReturnSlip(ctx context.Context, organizationID, returnID string) (ReturnSlipRecord, error) {
 	var record ReturnSlipRecord
 	result := r.db.WithContext(ctx).Table("return_slips AS r").
-		Select(`r.id,r.slip_number,r.operation_type,r.transaction_date,COALESCE(br.role_code,'') AS buyer_code,
+		Select(`r.adjustment_details,r.id,r.slip_number,r.operation_type,r.transaction_date,COALESCE(br.role_code,'') AS buyer_code,
 			COALESCE(bp.legal_name,'') AS buyer_name,COALESCE(sr.role_code,'') AS supplier_code,
 			COALESCE(sp.legal_name,'') AS supplier_name,COALESCE(r.source_purchase_slip_id,'') AS purchase_slip_id,
 			COALESCE(ps.slip_number,'') AS purchase_slip_no,r.carrier,r.tracking_number,r.status,r.reason,r.notes,r.confirmed_at,
@@ -226,6 +234,11 @@ func (r *Repository) ReturnSlip(ctx context.Context, organizationID, returnID st
 		Joins("JOIN products p ON p.id=l.product_id").Where("l.return_slip_id=?", returnID).
 		Order("l.line_number").Scan(&record.Lines).Error; err != nil {
 		return ReturnSlipRecord{}, err
+	}
+	if record.AdjustmentJSON != "" && record.AdjustmentJSON != "{}" {
+		if err := json.Unmarshal([]byte(record.AdjustmentJSON), &record.AdjustmentDetails); err != nil {
+			return ReturnSlipRecord{}, err
+		}
 	}
 	return record, nil
 }
@@ -392,4 +405,16 @@ func (r *Repository) ConfirmReturn(ctx context.Context, organizationID, returnID
 		return ReturnSlipRecord{}, err
 	}
 	return r.ReturnSlip(ctx, organizationID, returnID)
+}
+
+// returnSlipNumber keeps takeout numbering independent of the two return labels.
+func returnSlipPrefix(operationType string) string {
+	prefix := "RT"
+	switch operationType {
+	case "return":
+		prefix = "UH"
+	case "purchase_return":
+		prefix = "SH"
+	}
+	return prefix
 }

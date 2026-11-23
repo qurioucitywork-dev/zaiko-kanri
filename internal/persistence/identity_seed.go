@@ -153,9 +153,9 @@ func (r *Repository) SeedPreviewIdentity(ctx context.Context, adminPassword, wor
 				return err
 			}
 			if err := tx.Exec(`
-				INSERT INTO staff_profiles(id,organization_id,user_id,staff_code,is_purchase_staff,created_at,updated_at)
-				VALUES(?,?,?,?,TRUE,?,?) ON CONFLICT (user_id) DO NOTHING`,
-				seed.StaffID, organizationID, userID, seed.StaffCode, now, now).Error; err != nil {
+				INSERT INTO staff_profiles(id,organization_id,user_id,staff_code,display_name,is_purchase_staff,created_at,updated_at)
+				VALUES(?,?,?,?,?,TRUE,?,?) ON CONFLICT (user_id) DO NOTHING`,
+				seed.StaffID, organizationID, userID, seed.StaffCode, seed.Display, now, now).Error; err != nil {
 				return err
 			}
 		}

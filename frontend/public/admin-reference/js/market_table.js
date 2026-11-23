@@ -928,7 +928,7 @@ function marketImportCsvText(text, fileName = 'CSVファイル') {
       marketFxRateScaled: basic.marketFxRateScaled,
       marketFxScale: basic.marketFxScale,
       sku: value('sku'),
-      accessories: _marketParseAccessories(value('accessories')).map(code => (APP_DATA.accessoryRecords || []).find(record => record.code === code || record.name === code)?.name || code),
+      accessories: _marketParseAccessories(value('accessories')).map(code => allAccessoryMasterRecords().find(record => record.code === code || record.name === code)?.name || code),
       braceletQty: _marketNormalizeBraceletQuantity(value('braceletQty')),
       note: value('note'),
       sourceFile: fileName,
@@ -1184,7 +1184,7 @@ function _marketNormalizeDraftAccessories(value) {
   const values = Array.isArray(value) ? value : _marketParseAccessories(value);
   return [...new Set(values.map(item => {
     const normalized = String(item || '').trim();
-    return (APP_DATA.accessoryRecords || []).find(record => record.code === normalized || record.name === normalized)?.name || normalized;
+    return allAccessoryMasterRecords().find(record => record.code === normalized || record.name === normalized)?.name || normalized;
   }).filter(Boolean))];
 }
 
@@ -1642,7 +1642,7 @@ function marketExportCSV() {
     ...rows.map(row => [
       row.importDate, MARKET_CATEGORY_LABELS[_marketNormalizeCategory(row.marketCategory || row.source)], row.brandCode || getBrandCodeByName(row.brand), row.ref || '', row.model,
       row.material || '', row.movement || '', row.condition || '', row.warrantyYearMonth || '',
-      row.auctionCode || '', row.marketPrice || 0, row.marketCurrency || 'JPY', _marketFXRate(row), row.sku || '', (row.accessories || []).map(name => (APP_DATA.accessoryRecords || []).find(record => record.name === name || record.code === name)?.code || name).join('・'), row.braceletQty ?? '', row.note || '',
+      row.auctionCode || '', row.marketPrice || 0, row.marketCurrency || 'JPY', _marketFXRate(row), row.sku || '', (row.accessories || []).map(name => allAccessoryMasterRecords().find(record => record.name === name || record.code === name)?.code || name).join('・'), row.braceletQty ?? '', row.note || '',
     ]),
   ];
   const csv = output.map(row => row.map(value => `"${String(value ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');

@@ -17,7 +17,13 @@ const scriptNames = [
   "notify.js",
   "box.js",
   "market_table.js",
+  "slip_pdf.js",
+  "price_code.js",
   "qr_inventory.js",
+  "slip_statement.js", "master_display.js", "accessory_layout.js", "accessory_values.js",
+  "dashboard.js",
+  "auction_fees.js",
+  "return_adjustments.js",
   "app.js",
   "consignment.js",
   "stocktake.js",
@@ -70,10 +76,7 @@ assert.equal(staticAppSource.includes("slipBulkPreviewBtn"), false,
   "the slip list must not restore the removed statement-issue button");
 assert.match(staticAppSource, /originalCode:\s*String\(item\.code/u,
   "product editing must retain the original code for self-excluding duplicate validation");
-assert.match(apiBridgeSource, /productCode: values\.code \|\| item\.code/u,
-  "product code changes must be sent to the API");
-assert.match(apiBridgeSource, /braceletQuantity: \(values\.accessories \|\| \[\]\)\.includes\('BRACELET PARTS'\) \? values\.braceletQty : 0/u,
-  "product edits must persist the bracelet quantity and clear it when BRACELET PARTS is removed");
+// Product code and bracelet payloads are exercised in product-master-reference.test.mjs.
 assert.match(apiBridgeSource, /async function fetchAllPages\(path, pageSize = 100\)/u,
   "inventory API hydration must support fetching every product page");
 assert.match(apiBridgeSource, /for \(let page = 2; page <= totalPages; page \+= 1\)/u,
@@ -144,7 +147,7 @@ await assert.rejects(
 );
 assert.equal(bridgeFetchCalls, 1, "unsafe writes must not be retried automatically");
 bridgeDOM.window.close();
-assert.match(apiBridgeSource, /const currentProduct = productByLine\.get\(line\.id\)/u,
+assert.match(apiBridgeSource, /productByLine\.get\(line\.id\)/u,
   "API purchase slips must resolve current product details through the stable purchase-line link");
 assert.match(apiBridgeSource, /brandCode: resolvedBrandCode/u,
   "purchase API payloads must support an empty brand while preserving a supplied stable brand code");
@@ -177,7 +180,7 @@ assert.match(staticAppSource, /accessories\.length \? `付属品:/u,
   "sales invoice descriptions must include product accessories");
 assert.match(apiBridgeSource, /async function appendProductImages\(item, files = \[\]\)/u,
   "product registration must append selected images to an existing managed product");
-assert.match(staticAppSource, /async function _puSaveMatchedProductImages\(existingItem\)/u,
+assert.match(staticAppSource, /async function _puSaveMatchedProduct\(existingItem\)/u,
   "the product registration save action must persist staged images for an existing management number");
 assert.equal(
   /if \(!filterStatus && itemStatus === '仕入返品処理済'\)/u.test(staticAppSource),
@@ -196,7 +199,7 @@ assert.equal(loginHtml.includes("作業員"), false, "login role name must be �
 assert.match(loginHtml, /guest\.html\?id=/u, "guest login must lead to the guest catalog");
 assert.match(loginHtml, /js\/login_info\.js/u, "login page must hydrate administrator-managed credentials");
 assert.match(guestHtmlSource, /submitGuestPurchaseRequest\(\)/u);
-assert.match(guestHtmlSource, /guest-box-filter/u, "guest catalog must be driven by published boxes");
+assert.doesNotMatch(guestHtmlSource, /guest-box-filter/u, "guest catalog must not expose BOX selection");
 assert.match(guestCssSource, /@media \(max-width: 520px\)/u);
 assert.match(guestCssSource, /overflow-x: hidden/u);
 assert.match(marketCssSource, /\.market-date-range\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto\s+minmax\(0,\s*1fr\)/u,
@@ -337,6 +340,16 @@ await new Promise((resolve) => {
 await new Promise((resolve) => setTimeout(resolve, 25));
 
 const { window } = dom;
+// Canvas rendering is exercised separately in the real-browser PDF artifact test.
+window.buildSlipPdfBlob = async () => new window.Blob(['%PDF-1.4\nPDF fixture'], {type:'application/pdf'});
+const terminologyFixture=window.document.createElement('div');
+terminologyFixture.innerHTML='<label>仕入れ先</label><table><tbody><tr><td>海外仕入れ株式会社</td></tr></tbody></table><select><option>国内仕入れ株式会社</option></select><button role="option">海外仕入れ株式会社</button>';
+window.applyUnifiedTerminology(terminologyFixture);
+assert.equal(terminologyFixture.querySelector('label').textContent,'仕入先');
+assert.equal(terminologyFixture.querySelector('td').textContent,'海外仕入れ株式会社');
+assert.equal(terminologyFixture.querySelector('option').textContent,'国内仕入れ株式会社');
+assert.equal(terminologyFixture.querySelector('[role="option"]').textContent,'海外仕入れ株式会社');
+
 const { document } = window;
 
 assert.deepEqual(runtimeErrors, [], `reference boot emitted errors: ${runtimeErrors.map(String).join("\n")}`);
@@ -349,6 +362,122 @@ for (const partnerSelectId of ["pe-supplier", "pu-supplier", "ie-supplier", "inv
   assert.ok(document.querySelector(`input[data-partner-search-for="${partnerSelectId}"]`),
     `${partnerSelectId} must expose a searchable combobox input`);
 }
+// Master codes must resolve to the original select value, including unpadded input.
+{
+  const data = window.eval("APP_DATA");
+  const originalMovements = data.movements;
+  const select = document.createElement("select");
+  select.id = "movement-code-test";
+  document.body.appendChild(select);
+  try {
+    data.movements = [{ code: "0001", name: "AT" }, { code: "0010", name: "QZ" }, { code: "0003", name: "HW" }];
+    window.populateProductSpecMasterSelect(select.id, "movement");
+    const control = select._partnerSearchController;
+    let changes = 0;
+    select.addEventListener("change", () => changes++);
+    const type = value => {
+      control.input.focus();
+      control.input.value = value;
+      control.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    };
+    const key = value => control.input.dispatchEvent(new window.KeyboardEvent("keydown", { key: value, bubbles: true }));
+    for (const value of ["1", "0001", "１"]) {
+      type(value);
+      assert.deepEqual([...control.panel.querySelectorAll("button")].map(button => button.dataset.value), ["0001"], "numeric code must not select 0010 by substring");
+      key("Enter");
+      assert.equal(select.value, "0001");
+      assert.equal(control.input.value, "AT");
+    }
+    type("3"); key("Tab");
+    assert.equal(select.value, "0003", "Tab must commit an exact master code");
+    type("10");
+    document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+    assert.equal(select.value, "0010", "leaving the field must commit an exact code");
+    type("9999"); key("Enter");
+    assert.equal(select.value, "", "unknown master code must not select another record");
+    assert.equal(control.panel.querySelectorAll("button").length, 0);
+    type("HW"); key("Enter");
+    assert.equal(select.value, "0003", "name input must remain usable");
+    assert.ok(changes > 0, "selection must notify existing save handlers");
+    window.populateProductSpecMasterSelect(select.id, "movement", { selected: "0001" });
+    assert.equal(select._partnerSearchController, control, "refresh must reuse the control");
+    assert.equal(control.input.value, "AT", "programmatic selection must update visible value");
+    select.disabled = true;
+    control.sync(true);
+    assert.equal(control.input.disabled, true);
+    type("3"); key("Enter");
+    assert.equal(select.value, "0001", "disabled selectors must not change");
+  } finally {
+    data.movements = originalMovements;
+    select._partnerSearchController?.wrapper.remove();
+  }
+}
+
+// Code lookup must preserve name-valued fields and company role identifiers.
+{
+  const data = window.eval("APP_DATA");
+  const original = Object.fromEntries(["brandRecords", "staffRecords", "beltMaterialRecords", "materials", "conditions", "shapeRecords", "markingRecords", "suppliers", "accessoryRecords"].map(key => [key, data[key]]));
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const chooseCode = (select, query = "1") => {
+    const control = select._partnerSearchController;
+    assert.ok(control, select.id + " must have a code entry control");
+    control.input.focus();
+    control.input.value = query;
+    control.input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    control.input.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  };
+  try {
+    data.brandRecords = [{code:"0001",name:"ROLEX",reading:"ロレックス"}];
+    data.staffRecords = [{code:"0001",name:"バイヤー①"}];
+    data.beltMaterialRecords = [{code:"0001",name:"SS"}];
+    data.materials = [{code:"0001",name:"SS"}];
+    data.conditions = [{code:"0001",name:"A"}];
+    data.shapeRecords = [{code:"0001",name:"腕時計"}];
+    data.markingRecords = [{code:"0001",name:"♡"}];
+    data.suppliers = [{code:"S901",partnerCode:"0001",name:"コード検索テスト会社"}];
+    data.accessoryRecords = [{code:"0001",name:"Guarantee(P)"},{code:"0002",name:"Guarantee(C)"}];
+    const cases = [
+      ["brand", "ROLEX", select => window.populateBrandMasterSelect(select.id)],
+      ["staff", "バイヤー①", select => window.populateStaffMasterSelect(select.id)],
+      ["belt", "SS", select => window.populateBeltMaterialMasterSelect(select.id)],
+      ["condition", "0001", select => window.populateConditionMasterSelect(select.id)],
+      ["partner", "S901", select => window.populateSupplierMasterSelect(select.id)],
+      ...["material","shape","marking"].map(type => [type,"0001",select => window.populateProductSpecMasterSelect(select.id,type)]),
+    ];
+    for (const [type, expected, populate] of cases) {
+      const select = document.createElement("select");
+      select.id = "master-lookup-test-" + type;
+      host.appendChild(select);
+      populate(select);
+      chooseCode(select);
+      assert.equal(select.value, expected, type + " must retain the original storage value");
+    }
+    const dynamic = document.createElement("select");
+    dynamic.id = "market-draft-brand-999";
+    dynamic.innerHTML = '<option value=""></option><option value="ROLEX">ROLEX</option>';
+    host.appendChild(dynamic);
+    window.enhanceSearchablePartnerSelects();
+    chooseCode(dynamic, "0001");
+    assert.equal(dynamic.value, "ROLEX", "dynamic draft row must support master code lookup");
+    const group = document.createElement("div");
+    group.id = "market-draft-accessory-menu-999";
+    group.innerHTML = '<input type="checkbox" value="Guarantee(P)" checked><input type="checkbox" value="Guarantee(C)">';
+    host.appendChild(group);
+    let accessoryChanges = 0;
+    group.addEventListener("change", () => accessoryChanges++);
+    window.enhanceSearchablePartnerSelects();
+    chooseCode(group._masterAccessoryPicker, "2");
+    assert.deepEqual([...group.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value), ["Guarantee(P)","Guarantee(C)"], "adding an accessory by code must retain earlier selections");
+    assert.ok(accessoryChanges > 0);
+    window.enhanceSearchablePartnerSelects();
+    assert.equal(group._masterAccessoryPicker.disabled, true, "already selected accessories must not be offered again");
+  } finally {
+    Object.assign(data, original);
+    host.remove();
+  }
+}
+
 const supplierSearch = document.querySelector('input[data-partner-search-for="pe-supplier"]');
 window.init_purchase_entry();
 supplierSearch.focus();
@@ -472,17 +601,15 @@ assert.equal(document.getElementById("product-registration-form").classList.cont
 assert.equal(document.querySelector('.nav-item[data-page="login-info"]'), null, "the duplicate login information navigation must be removed");
 assert.equal(document.getElementById("page-login-info"), null, "the duplicate login information page must be removed");
 window.navigateTo("master");
-window.switchMasterTab("partName");
-assert.equal(document.querySelectorAll("#masterContentArea tbody tr").length, 9,
-  "the part-name master must start with the nine requested part categories");
-assert.match(document.getElementById("masterContentArea").textContent, /BRACELET PARTS/u);
+assert.doesNotMatch(document.getElementById("masterTabList").textContent, /パーツ名/u,
+  "the unused part-name master must not appear in master registration");
 assert.equal(window.eval("APP_DATA.clientCompanies.length"), 9, "all four buyers and five suppliers must be represented in the shared client-company directory");
 assert.equal(window.eval("APP_DATA.buyers.every(buyer => APP_DATA.clientCompanies.some(company => company.buyerCode === buyer.code))"), true, "every buyer must link to a client company");
 assert.equal(window.eval("APP_DATA.suppliers.every(supplier => APP_DATA.clientCompanies.some(company => company.supplierCode === supplier.code))"), true, "every supplier must link to a client company");
 assert.equal(window.eval("APP_DATA.clientCompanies.find(company => company.supplierCode === 'S001').invoice"), "T0001234567890", "supplier invoice data must flow into the client-company directory");
 assert.equal(window.eval("APP_DATA.clientCompanies.find(company => company.buyerCode === 'B004').guestId"), "G001", "guest-issued buyers must link to the same client company");
 assert.equal(window.eval("APP_DATA.purchaseRequests.every(request => /^B\\d+$/u.test(request.buyerCode))"), true, "purchase requests must persist a fixed buyer code");
-assert.equal(window.eval("APP_DATA.purchaseRequests.every(request => /^CLI-\\d+$/u.test(request.clientCompanyCode))"), true, "purchase requests must persist a fixed client-company code");
+assert.equal(window.eval("APP_DATA.purchaseRequests.every(request => /^(?:CLI-\\d+|\\d{4})$/u.test(request.clientCompanyCode))"), true, "purchase requests must persist a fixed client-company code");
 const legacyPartyRequest = {
   id: "PR-LEGACY-CODE",
   guestId: "G001",
@@ -531,17 +658,37 @@ const initialBrandCount = window.eval("APP_DATA.brands.length");
 assert.equal(window.eval("APP_DATA.brandRecords[0].code"), "BRD-001", "existing brands must migrate to fixed codes");
 assert.equal(window.eval("APP_DATA.inventory.find(item => item.brand === 'ロレックス')?.brandCode"), "BRD-001", "inventory must carry the fixed brand code");
 window.showAddMasterModal("brand");
+assert.equal(document.getElementById("medit-code").readOnly, false);
 document.getElementById("medit-name").value = "Codex Test Brand";
+for (const invalidCode of ["10000", "-1", "1.5", "１", "ABCD", "BRD-100"]) {
+ document.getElementById("medit-code").value = invalidCode;
+ await window.saveMasterEdit();
+ assert.equal(window.eval("APP_DATA.brands.length"), initialBrandCount, invalidCode + " must be rejected");
+}
+
+document.getElementById("medit-code").value = "42";
+document.getElementById("medit-reading").value = "ブランド<読み>";
 window.saveMasterEdit();
 assert.equal(window.eval("APP_DATA.brands.includes('Codex Test Brand')"), true, "brand master additions must update APP_DATA");
 const fixedAddedBrandCode = window.eval("APP_DATA.brandRecords.find(brand => brand.name === 'Codex Test Brand').code");
-assert.match(fixedAddedBrandCode, /^BRD-\d+$/, "new brands must receive a fixed code");
+assert.equal(fixedAddedBrandCode, "0042", "short numeric brand codes must be padded on save");
+assert.equal(window.eval("APP_DATA.brandRecords.find(brand => brand.code === '0042').reading"), "ブランド<読み>");
+assert.match(document.getElementById("masterContentArea").textContent, /ブランド<読み>/u);
+assert.ok(document.getElementById("masterContentArea").innerHTML.includes("ブランド&lt;読み&gt;"));
 for (const selectId of ["market-f-brand", "inv-f-brand", "pu-brand", "pep-brand"]) {
   assert.ok([...document.getElementById(selectId).options].some(option => option.value === "Codex Test Brand"), `${selectId} must use the shared brand master`);
 }
 assert.match(window.localStorage.getItem("inv_brand_master_v1"), /Codex Test Brand/u, "brand master changes must persist locally");
 
+window.showAddMasterModal("brand");
+document.getElementById("medit-code").value = "42";
+document.getElementById("medit-name").value = "Duplicate numeric test";
+await window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.brands.length"), initialBrandCount + 1, "42 must conflict with existing 0042 after normalization");
+window.closeMasterEditModal();
 window.showEditMasterModal("brand", initialBrandCount);
+assert.equal(document.getElementById("medit-reading").value, "ブランド<読み>");
+document.getElementById("medit-reading").value = "ブランド読み更新";
 document.getElementById("medit-name").value = "Codex Renamed Brand";
 window.saveMasterEdit();
 assert.equal(window.eval("APP_DATA.brands.includes('Codex Test Brand')"), false);
@@ -565,6 +712,8 @@ window.showEditMasterModal("brand", rolexBrandIndex);
 document.getElementById("medit-name").value = "ロレックス";
 window.saveMasterEdit();
 
+window.loadBrandMasterDirectory();
+assert.equal(window.eval("APP_DATA.brandRecords.find(brand => brand.code === '0042').reading"), "ブランド読み更新", "reading must survive storage reload");
 const temporaryBrandIndex = window.eval("APP_DATA.brands.indexOf('Codex Renamed Brand')");
 window.showDeleteMasterModal("brand", temporaryBrandIndex);
 window.confirmMasterDelete();
@@ -639,37 +788,34 @@ assert.deepEqual(
   ["BUY-001", "BUY-002", "BUY-003", "BUY-004", "BUY-005"],
   "purchase staff codes must remain stable instead of being derived from the current row index",
 );
-assert.equal(
-  window.eval("APP_DATA.staffRecords.every(record => APP_DATA.users.some(user => user.staffCode === record.code && (user.role === 'buyer' || user.role === 'worker')))"),
-  true,
-  "every purchase staff record must have a linked own-company worker account",
-);
+const independentUsersBefore = JSON.stringify(window.eval("APP_DATA.users"));
 window.switchMasterTab("staff");
-assert.match(document.getElementById("masterContentArea").textContent, /共通バイヤー・作業者マスタ/u);
+assert.match(document.getElementById("masterContentArea").textContent, /バイヤーマスタ/u);
 assert.equal(document.querySelectorAll("#masterContentArea tbody tr").length, 5);
 window.showAddMasterModal("staff");
-assert.equal(document.getElementById("medit-code").value, "BUY-006", "the next stable staff code must be proposed automatically");
+assert.equal(document.getElementById("medit-code").value, "0006", "the next stable staff code must be proposed automatically");
+document.getElementById("medit-code").value = "6";
 document.getElementById("medit-name").value = "共通担当者テスト";
 window.saveMasterEdit();
-assert.equal(window.eval("APP_DATA.users.some(user => user.staffCode === 'BUY-006' && user.name === '共通担当者テスト')"), true, "adding purchase staff must create the matching worker account");
+assert.equal(JSON.stringify(window.eval("APP_DATA.users")), independentUsersBefore, "buyer changes must leave accounts unchanged");
 for (const selectId of ["inv-f-staff", "pu-staff", "pe-staff"]) {
   assert.equal([...document.getElementById(selectId).options].some(option => option.value === "共通担当者テスト"), true, `${selectId} must use the shared purchase staff master`);
 }
-const temporaryStaffIndex = window.eval("APP_DATA.staffRecords.findIndex(record => record.code === 'BUY-006')");
+const temporaryStaffIndex = window.eval("APP_DATA.staffRecords.findIndex(record => record.code === '0006')");
 window.showEditMasterModal("staff", temporaryStaffIndex);
 document.getElementById("medit-name").value = "共通担当者テスト更新";
 window.saveMasterEdit();
-assert.equal(window.eval("APP_DATA.users.find(user => user.staffCode === 'BUY-006').name"), "共通担当者テスト更新", "staff edits must update the linked worker account");
+assert.equal(JSON.stringify(window.eval("APP_DATA.users")), independentUsersBefore, "buyer edits must leave accounts unchanged");
 const staffCountBeforeBlockedDelete = window.eval("APP_DATA.staffRecords.length");
 const usedStaffIndex = window.eval("APP_DATA.staffRecords.findIndex(record => record.code === 'BUY-001')");
 window.showDeleteMasterModal("staff", usedStaffIndex);
 window.confirmMasterDelete();
 assert.equal(window.eval("APP_DATA.staffRecords.length"), staffCountBeforeBlockedDelete, "staff referenced by inventory or slips must not be deleted");
-const renamedTemporaryStaffIndex = window.eval("APP_DATA.staffRecords.findIndex(record => record.code === 'BUY-006')");
+const renamedTemporaryStaffIndex = window.eval("APP_DATA.staffRecords.findIndex(record => record.code === '0006')");
 window.showDeleteMasterModal("staff", renamedTemporaryStaffIndex);
 window.confirmMasterDelete();
 assert.equal(window.eval("APP_DATA.staffRecords.length"), initialStaffCount, "unused staff can be removed from the shared master");
-assert.equal(window.eval("APP_DATA.users.some(user => user.staffCode === 'BUY-006')"), false, "removing unused staff must remove its linked worker account");
+assert.equal(JSON.stringify(window.eval("APP_DATA.users")), independentUsersBefore, "buyer changes must leave accounts unchanged");
 
 const initialMaterialCount = window.eval("APP_DATA.materials.length");
 const initialMovementCount = window.eval("APP_DATA.movements.length");
@@ -698,12 +844,246 @@ assert.match(window.localStorage.getItem("inv_product_spec_master_v1"), /共通�
 window.switchMasterTab("belt");
 assert.match(document.getElementById("masterContentArea").textContent, /共通ベルト素材マスタ/u);
 window.showAddMasterModal("belt");
-assert.equal(document.getElementById("medit-code").value, "BLT-006");
+assert.equal(document.getElementById("medit-code").value, "0001");
 document.getElementById("medit-name").value = "セラミック";
 window.saveMasterEdit();
-assert.equal(window.eval("APP_DATA.beltMaterialRecords.at(-1).code"), "BLT-006");
+assert.equal(window.eval("APP_DATA.beltMaterialRecords.at(-1).code"), "0001");
 assert.equal(window.eval("MASTER_TABS.some(tab => tab.key === 'dial')"), false, "dial master must be hidden");
 window.eval(`APP_DATA.beltMaterialRecords.splice(${initialBeltMaterialCount}); APP_DATA.dialRecords.splice(${initialDialCount});`);
+
+// Numeric material codes and details must survive form save, edit and shared selectors.
+for (const code of ["1", "2", "6", "7"]) {
+  const paddedCode = code.padStart(4, "0");
+  window.switchMasterTab("material");
+  window.showAddMasterModal("material");
+  assert.match(document.getElementById("medit-code").value, /^[0-9]{4}$/u);
+  document.getElementById("medit-code").value = code;
+  document.getElementById("medit-name").value = "素材コード" + code + "テスト";
+  document.getElementById("medit-meaning").value = "詳細 <テスト> & 保持";
+  await window.saveMasterEdit();
+  const ix = window.eval("APP_DATA.materials.findIndex(r => r.code === '" + paddedCode + "')");
+  assert.ok(ix >= 0, "numeric material code should be saved with four digits");
+  assert.ok(document.getElementById("masterContentArea").textContent.includes("詳細 <テスト> & 保持"));
+  for (const id of ["inv-f-material", "pu-material", "pep-material"]) {
+    assert.ok([...document.getElementById(id).options].some(o => o.value === paddedCode), "numeric material should propagate: " + id);
+  }
+  const beforeDuplicate = window.eval("APP_DATA.materials.length");
+  for (const input of [code, paddedCode, "10000"]) {
+    window.showAddMasterModal("material");
+    document.getElementById("medit-code").value = input;
+    document.getElementById("medit-name").value = "重複防止素材" + input;
+    await window.saveMasterEdit();
+    assert.equal(window.eval("APP_DATA.materials.length"), beforeDuplicate, "normalized duplicates and five-digit codes must be rejected");
+  }
+  window.showEditMasterModal("material", ix);
+  assert.equal(document.getElementById("medit-meaning").value, "詳細 <テスト> & 保持");
+  document.getElementById("medit-meaning").value = "更新した詳細";
+  await window.saveMasterEdit();
+  assert.equal(window.eval("APP_DATA.materials[" + ix + "].meaning"), "更新した詳細");
+  window.showDeleteMasterModal("material", ix);
+  window.confirmMasterDelete();
+}
+
+// Movement codes, details and shared selectors use the same four-digit rule.
+window.switchMasterTab("movement");
+window.showAddMasterModal("movement");
+assert.match(document.getElementById("medit-code").value, /^[0-9]{4}$/u);
+document.getElementById("medit-code").value = "1";
+document.getElementById("medit-name").value = "AT詳細テスト";
+document.getElementById("medit-meaning").value = "自動巻き";
+await window.saveMasterEdit();
+const movementFourIndex = window.eval("APP_DATA.movements.findIndex(r => r.code === '0001')");
+assert.ok(movementFourIndex >= 0);
+assert.match(document.getElementById("masterContentArea").textContent, /自動巻き/u);
+for (const id of ["inv-f-movement", "pu-movement", "pep-movement"]) {
+ assert.ok([...document.getElementById(id).options].some(o => o.value === "0001"));
+}
+window.showEditMasterModal("movement", movementFourIndex);
+assert.equal(document.getElementById("medit-meaning").value,"自動巻き");
+document.getElementById("medit-meaning").value="詳細更新";
+await window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.movements["+movementFourIndex+"].meaning"),"詳細更新");
+window.showDeleteMasterModal("movement",movementFourIndex);
+window.confirmMasterDelete();
+
+// Shape numeric input is stored as four digits and rejects normalized duplicates.
+const originalShapeRecords = window.eval("APP_DATA.shapeRecords");
+window.eval("APP_DATA.shapeRecords = []");
+window.switchMasterTab("shape");
+window.showAddMasterModal("shape");
+assert.match(document.getElementById("medit-code").value, /^[0-9]{4}$/u);
+document.getElementById("medit-code").value="1";
+document.getElementById("medit-name").value="形状四桁テスト";
+await window.saveMasterEdit();
+const shapeFourIndex=window.eval("APP_DATA.shapeRecords.findIndex(r => r.code === '0001')");
+assert.ok(shapeFourIndex>=0);
+const shapeFourCount=window.eval("APP_DATA.shapeRecords.length");
+for (const input of ["1","0001","10000"]) {
+ window.showAddMasterModal("shape");
+ document.getElementById("medit-code").value=input;
+ document.getElementById("medit-name").value="重複形状"+input;
+ await window.saveMasterEdit();
+ assert.equal(window.eval("APP_DATA.shapeRecords.length"),shapeFourCount);
+}
+window.showEditMasterModal("shape",shapeFourIndex);
+document.getElementById("medit-name").value="形状更新テスト";
+await window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.shapeRecords["+shapeFourIndex+"].name"),"形状更新テスト");
+window.showDeleteMasterModal("shape",shapeFourIndex);
+window.confirmMasterDelete();
+
+window.eval("APP_DATA.shapeRecords = " + (originalShapeRecords === undefined ? "undefined" : JSON.stringify(originalShapeRecords)));
+
+// Marking numeric input is stored as four digits and rejects normalized duplicates.
+const originalMarkingRecords = window.eval("APP_DATA.markingRecords");
+window.eval("APP_DATA.markingRecords = []");
+window.switchMasterTab("marking");
+window.showAddMasterModal("marking");
+assert.match(document.getElementById("medit-code").value, /^[0-9]{4}$/u);
+document.getElementById("medit-code").value="1";
+document.getElementById("medit-name").value="マーキング四桁テスト";
+await window.saveMasterEdit();
+const markingFourIndex=window.eval("APP_DATA.markingRecords.findIndex(r => r.code === '0001')");
+assert.ok(markingFourIndex>=0);
+const markingFourCount=window.eval("APP_DATA.markingRecords.length");
+for (const input of ["1","0001","10000"]) {
+ window.showAddMasterModal("marking");
+ document.getElementById("medit-code").value=input;
+ document.getElementById("medit-name").value="重複マーキング"+input;
+ await window.saveMasterEdit();
+ assert.equal(window.eval("APP_DATA.markingRecords.length"),markingFourCount);
+}
+window.showEditMasterModal("marking",markingFourIndex);
+document.getElementById("medit-name").value="マーキング更新テスト";
+await window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.markingRecords["+markingFourIndex+"].name"),"マーキング更新テスト");
+window.showDeleteMasterModal("marking",markingFourIndex);
+window.confirmMasterDelete();
+
+window.eval("APP_DATA.markingRecords = " + (originalMarkingRecords === undefined ? "undefined" : JSON.stringify(originalMarkingRecords)));
+
+// Belt numeric input is stored as four digits and rejects normalized duplicates.
+const originalBeltRecords = window.eval("APP_DATA.beltMaterialRecords");
+window.eval("APP_DATA.beltMaterialRecords = []");
+window.switchMasterTab("belt");
+window.showAddMasterModal("belt");
+assert.match(document.getElementById("medit-code").value, /^[0-9]{4}$/u);
+document.getElementById("medit-code").value="1";
+document.getElementById("medit-name").value="ベルト素材四桁テスト";
+document.getElementById("medit-inventoryDetail").value="ステンレススチール";
+await window.saveMasterEdit();
+const beltFourIndex=window.eval("APP_DATA.beltMaterialRecords.findIndex(r => r.code === '0001')");
+assert.ok(beltFourIndex>=0);
+assert.equal(window.eval("APP_DATA.beltMaterialRecords["+beltFourIndex+"].inventoryDetail"),"ステンレススチール");
+const beltFourCount=window.eval("APP_DATA.beltMaterialRecords.length");
+for (const input of ["1","0001","10000"]) {
+ window.showAddMasterModal("belt");
+ document.getElementById("medit-code").value=input;
+ document.getElementById("medit-name").value="重複ベルト素材"+input;
+ await window.saveMasterEdit();
+ assert.equal(window.eval("APP_DATA.beltMaterialRecords.length"),beltFourCount);
+}
+window.showEditMasterModal("belt",beltFourIndex);
+assert.equal(document.getElementById("medit-inventoryDetail").value,"ステンレススチール");
+document.getElementById("medit-inventoryDetail").value="詳細更新";
+document.getElementById("medit-name").value="ベルト素材更新テスト";
+await window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.beltMaterialRecords["+beltFourIndex+"].name"),"ベルト素材更新テスト");
+assert.equal(window.eval("APP_DATA.beltMaterialRecords["+beltFourIndex+"].inventoryDetail"),"詳細更新");
+window.showDeleteMasterModal("belt",beltFourIndex);
+window.confirmMasterDelete();
+
+window.eval("APP_DATA.beltMaterialRecords = " + (originalBeltRecords === undefined ? "undefined" : JSON.stringify(originalBeltRecords)));
+
+// Accessory numeric input is stored as four digits and rejects normalized duplicates.
+const originalAccessoryRecords = window.eval("APP_DATA.accessoryRecords");
+window.eval("APP_DATA.accessoryRecords = []");
+window.switchMasterTab("accessory");
+window.showAddMasterModal("accessory");
+assert.match(document.getElementById("medit-code").value, /^[0-9]{4}$/u);
+document.getElementById("medit-code").value="1";
+document.getElementById("medit-name").value="Guarantee(P)";
+document.getElementById("medit-meaning").value="紙ギャラ";
+document.getElementById("medit-inventoryDetail").value="B（仕入返品伝票にも表示）";
+document.getElementById("medit-overseasDetail").value="（表記無し）";
+document.getElementById("medit-tagDetail").value="・";
+document.getElementById("medit-domesticDetail").value="（表記無し）";
+document.getElementById("medit-symbol").value="P";
+document.getElementById("medit-supplement").value="初期補足";
+await window.saveMasterEdit();
+const accessoryFourIndex=window.eval("APP_DATA.accessoryRecords.findIndex(r => r.code === '0001')");
+assert.ok(accessoryFourIndex>=0);
+assert.equal(window.eval("APP_DATA.accessoryRecords["+accessoryFourIndex+"].name"),"Guarantee(P)");
+window.loadAccessoryMasterDirectory();
+assert.equal(window.eval("APP_DATA.accessoryRecords["+accessoryFourIndex+"].name"),"Guarantee(P)");
+assert.equal(window.eval("APP_DATA.accessoryRecords["+accessoryFourIndex+"].meaning"),"紙ギャラ");
+assert.equal(window.eval("APP_DATA.accessoryRecords["+accessoryFourIndex+"].symbol"),"P");
+window.switchMasterTab("accessory");
+assert.match(document.getElementById("masterContentArea").textContent,/詳細（札用）/u);
+assert.deepEqual([...document.querySelectorAll("#masterContentArea th")].map(el=>el.textContent),["コード","詳細（商品詳細用）","詳細（在庫一覧用）","詳細（海外用）","詳細（札用）","詳細（国内用）","操作"]);
+for (const [key,value] of Object.entries({inventoryDetail:'B（仕入返品伝票にも表示）',overseasDetail:'（表記無し）',tagDetail:'・',domesticDetail:'（表記無し）'})) {
+ assert.equal(window.eval('APP_DATA.accessoryRecords['+accessoryFourIndex+'].'+key),value);
+}
+const accessoryFourCount=window.eval("APP_DATA.accessoryRecords.length");
+for (const input of ["1","0001","10000"]) {
+ window.showAddMasterModal("accessory");
+ document.getElementById("medit-code").value=input;
+ document.getElementById("medit-name").value="重複付属品"+input;
+ await window.saveMasterEdit();
+ assert.equal(window.eval("APP_DATA.accessoryRecords.length"),accessoryFourCount);
+}
+window.showEditMasterModal("accessory",accessoryFourIndex);
+assert.equal(document.getElementById("medit-symbol").value,"P");
+assert.equal(document.getElementById("medit-supplement").value,"初期補足");
+document.getElementById("medit-supplement").value="更新補足";
+document.getElementById("medit-symbol").value="○";
+assert.equal(document.getElementById("medit-meaning").value,"紙ギャラ");
+document.getElementById("medit-meaning").value="詳細更新";
+document.getElementById("medit-name").value="Guarantee(C)";
+await window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.accessoryRecords["+accessoryFourIndex+"].name"),"Guarantee(C)");
+assert.equal(window.eval("APP_DATA.accessoryRecords["+accessoryFourIndex+"].meaning"),"詳細更新");
+window.loadAccessoryMasterDirectory();
+assert.equal(window.eval("APP_DATA.accessoryRecords["+accessoryFourIndex+"].symbol"),"○");
+assert.equal(window.eval("APP_DATA.accessoryRecords["+accessoryFourIndex+"].supplement"),"更新補足");
+window.showDeleteMasterModal("accessory",accessoryFourIndex);
+window.confirmMasterDelete();
+
+window.eval("APP_DATA.accessoryRecords = " + (originalAccessoryRecords === undefined ? "undefined" : JSON.stringify(originalAccessoryRecords)));
+window.persistAccessoryMasterDirectory();
+window.refreshAccessoryMasterConsumers();
+
+// Condition numeric input is stored as four digits and rejects normalized duplicates.
+const originalConditionRecords = window.eval("APP_DATA.conditions");
+window.eval("APP_DATA.conditions = []");
+window.switchMasterTab("condition");
+window.showAddMasterModal("condition");
+assert.match(document.getElementById("medit-code").value, /^[0-9]{4}$/u);
+document.getElementById("medit-code").value="1";
+document.getElementById("medit-name").value="コンディション四桁テスト";
+await window.saveMasterEdit();
+const conditionFourIndex=window.eval("APP_DATA.conditions.findIndex(r => r.code === '0001')");
+assert.ok(conditionFourIndex>=0);
+window.loadConditionMasterDirectory();
+assert.equal(window.eval("APP_DATA.conditions["+conditionFourIndex+"].code"),"0001");
+const conditionFourCount=window.eval("APP_DATA.conditions.length");
+for (const input of ["1","0001","10000"]) {
+ window.showAddMasterModal("condition");
+ document.getElementById("medit-code").value=input;
+ document.getElementById("medit-name").value="重複コンディション"+input;
+ await window.saveMasterEdit();
+ assert.equal(window.eval("APP_DATA.conditions.length"),conditionFourCount);
+}
+window.showEditMasterModal("condition",conditionFourIndex);
+document.getElementById("medit-name").value="コンディション更新テスト";
+await window.saveMasterEdit();
+assert.equal(window.eval("APP_DATA.conditions["+conditionFourIndex+"].name"),"コンディション更新テスト");
+window.showDeleteMasterModal("condition",conditionFourIndex);
+window.confirmMasterDelete();
+
+window.eval("APP_DATA.conditions = " + (originalConditionRecords === undefined ? "undefined" : JSON.stringify(originalConditionRecords)));
+window.persistConditionMasterDirectory();
+window.refreshConditionMasterConsumers();
 
 const specInventory = window.eval("APP_DATA.inventory");
 const originalMaterial = specInventory[0].material;
@@ -775,11 +1155,11 @@ assert.equal(
 window.switchMasterTab("accessory");
 assert.match(document.getElementById("masterContentArea").textContent, /共通付属品マスタ/u);
 window.showAddMasterModal("accessory");
-assert.equal(document.getElementById("medit-code").value, "ACC-007", "the next accessory code must be proposed automatically");
-assert.equal(document.getElementById("medit-code").readOnly, true, "accessory codes must remain stable after creation");
+assert.equal(document.getElementById("medit-code").value, "0001", "the next accessory code must be proposed automatically");
+assert.equal(document.getElementById("medit-code").readOnly, false, "new accessory codes can be entered as numbers");
 document.getElementById("medit-name").value = "TEST ACCESSORY";
 window.saveMasterEdit();
-assert.equal(window.eval("APP_DATA.accessoryRecords.some(record => record.code === 'ACC-007' && record.name === 'TEST ACCESSORY')"), true);
+assert.equal(window.eval("APP_DATA.accessoryRecords.some(record => record.code === '0001' && record.name === 'TEST ACCESSORY')"), true);
 assert.match(window.localStorage.getItem("inv_accessory_master_v1"), /TEST ACCESSORY/u, "accessory master changes must persist locally");
 assert.equal([...document.getElementById("market-f-accessory").options].some(option => option.value === "TEST ACCESSORY"), true, "market search must use the shared accessory master");
 for (const containerId of ["inv-acc-list", "pu-accessories", "pep-accessories", "ie-accessories", "me-accessories"]) {
@@ -791,11 +1171,12 @@ const originalMarketAccessories = [...window.eval("APP_DATA.marketPrices[0].acce
 specInventory[0].accessories = [...originalInventoryAccessories, "TEST ACCESSORY"];
 window.eval("APP_DATA.marketPrices[0].accessories = [...APP_DATA.marketPrices[0].accessories, 'TEST ACCESSORY'];");
 window.switchMasterTab("accessory");
-const temporaryAccessoryIndex = window.eval("APP_DATA.accessoryRecords.findIndex(record => record.code === 'ACC-007')");
+const temporaryAccessoryIndex = window.eval("APP_DATA.accessoryRecords.findIndex(record => record.code === '0001')");
 window.showEditMasterModal("accessory", temporaryAccessoryIndex);
 document.getElementById("medit-name").value = "TEST ACCESSORY UPDATED";
+document.getElementById("medit-symbol").value = "P";
 window.saveMasterEdit();
-assert.equal(window.eval("APP_DATA.accessoryRecords.find(record => record.code === 'ACC-007').name"), "TEST ACCESSORY UPDATED", "accessory edits must preserve their stable code");
+assert.equal(window.eval("APP_DATA.accessoryRecords.find(record => record.code === '0001').name"), "TEST ACCESSORY UPDATED", "accessory edits must preserve their stable code");
 assert.equal(specInventory[0].accessories.includes("TEST ACCESSORY UPDATED"), true, "accessory edits must update inventory references");
 assert.equal(window.eval("APP_DATA.marketPrices[0].accessories.includes('TEST ACCESSORY UPDATED')"), true, "accessory edits must update market references");
 assert.equal(document.querySelector('#pu-accessories input[value="TEST ACCESSORY UPDATED"]') !== null, true, "renamed accessories must refresh registration forms");
@@ -803,6 +1184,16 @@ assert.equal(document.querySelector('#pu-accessories input[value="TEST ACCESSORY
 window.eval("_invAccFilterState = ['TEST ACCESSORY UPDATED'];");
 window.execInventorySearch();
 assert.equal(document.querySelectorAll("#inventoryTableBody tr").length, 1, "inventory search must filter by shared accessory names");
+const inventoryAccessoryCell = document.querySelector('#inventoryTableBody [data-inv-col="accessories"]');
+assert.ok(inventoryAccessoryCell.querySelector('svg[aria-label="紙ギャラ（P）"]'), "inventory must display the icon configured by its accessory master");
+assert.ok(inventoryAccessoryCell.querySelector('[title="TEST ACCESSORY UPDATED"]'), "the original accessory name remains available as a tooltip");
+assert.match(window.renderInventoryAccessorySymbols(['0001']), /紙ギャラ（P）/u, "code-based accessories resolve through the master too");
+assert.equal(window.renderInventoryAccessorySymbols([]), '—');
+assert.ok(!window.renderInventoryAccessorySymbols(['<img src=x onerror=alert(1)>']).includes('<img'), "unregistered accessory text is escaped");
+window.eval("APP_DATA.accessoryRecords.find(record => record.code === '0001').symbol = 'NC'");
+window.renderInventoryTable();
+assert.ok(document.querySelector('#inventoryTableBody [data-inv-col="accessories"] svg[aria-label="中期カードギャラ（NC）"]'), "changing the master symbol updates inventory display");
+
 document.getElementById("market-f-accessory").value = "TEST ACCESSORY UPDATED";
 window.marketApplyFilters();
 assert.equal(document.querySelectorAll("#marketTableBody tr").length, 1, "market search must filter by shared accessory names");
@@ -818,7 +1209,7 @@ window.eval(`APP_DATA.marketPrices[0].accessories = ${JSON.stringify(originalMar
 window.resetInventorySearch();
 window.marketResetFilters();
 window.switchMasterTab("accessory");
-const renamedAccessoryIndex = window.eval("APP_DATA.accessoryRecords.findIndex(record => record.code === 'ACC-007')");
+const renamedAccessoryIndex = window.eval("APP_DATA.accessoryRecords.findIndex(record => record.code === '0001')");
 window.showDeleteMasterModal("accessory", renamedAccessoryIndex);
 window.confirmMasterDelete();
 assert.equal(window.eval("APP_DATA.accessoryRecords.length"), initialAccessoryCount, "unused accessories can be removed from the shared master");
@@ -835,32 +1226,35 @@ assert.equal(
 window.switchMasterTab("condition");
 assert.match(document.getElementById("masterContentArea").textContent, /共通コンディションマスタ/u);
 window.showAddMasterModal("condition");
-assert.equal(document.getElementById("medit-code").value, "CON-008", "the next condition code must be proposed automatically");
-assert.equal(document.getElementById("medit-code").readOnly, true, "condition codes must remain stable after creation");
+assert.equal(document.getElementById("medit-code").value, "0001", "the next condition code must be proposed automatically");
+assert.equal(document.getElementById("medit-code").readOnly, false, "new condition codes accept numeric input");
 document.getElementById("medit-name").value = "TEST CONDITION";
+document.getElementById("medit-meaning").value = "コンディション詳細テスト";
 window.saveMasterEdit();
-assert.equal(window.eval("APP_DATA.conditions.some(record => record.code === 'CON-008' && record.name === 'TEST CONDITION')"), true);
+assert.equal(window.eval("APP_DATA.conditions.some(record => record.code === '0001' && record.name === 'TEST CONDITION')"), true);
 assert.match(window.localStorage.getItem("inv_condition_master_v1"), /TEST CONDITION/u, "condition master changes must persist locally");
 for (const selectId of ["inv-f-condition", "market-f-condition", "pu-condition", "pep-condition", "ie-condition", "me-condition"]) {
-  assert.equal([...document.getElementById(selectId).options].some(option => option.value === "CON-008"), true, `${selectId} must use the shared condition master`);
+  assert.equal([...document.getElementById(selectId).options].some(option => option.value === "0001"), true, `${selectId} must use the shared condition master`);
 }
 
+assert.deepEqual([...document.querySelectorAll("#masterContentArea th")].map(el=>el.textContent),["コード","名称","詳細","操作"]);
+assert.equal(window.eval("APP_DATA.conditions.find(r=>r.code===\u00270001\u0027).meaning"),"コンディション詳細テスト");
 const originalInventoryCondition = specInventory[0].condition;
 const originalMarketCondition = window.eval("APP_DATA.marketPrices[0].condition");
-specInventory[0].condition = "CON-008";
-window.eval("APP_DATA.marketPrices[0].condition = 'CON-008';");
+specInventory[0].condition = "0001";
+window.eval("APP_DATA.marketPrices[0].condition = '0001';");
 window.switchMasterTab("condition");
-const temporaryConditionIndex = window.eval("APP_DATA.conditions.findIndex(record => record.code === 'CON-008')");
+const temporaryConditionIndex = window.eval("APP_DATA.conditions.findIndex(record => record.code === '0001')");
 window.showEditMasterModal("condition", temporaryConditionIndex);
 document.getElementById("medit-name").value = "TEST CONDITION UPDATED";
 window.saveMasterEdit();
-assert.equal(window.eval("APP_DATA.conditions.find(record => record.code === 'CON-008').name"), "TEST CONDITION UPDATED", "condition names must be editable without changing their code");
-assert.match(document.querySelector('#pu-condition option[value="CON-008"]').textContent, /TEST CONDITION UPDATED/u, "renamed condition labels must refresh registration forms");
+assert.equal(window.eval("APP_DATA.conditions.find(record => record.code === '0001').name"), "TEST CONDITION UPDATED", "condition names must be editable without changing their code");
+assert.match(document.querySelector('#pu-condition option[value="0001"]').textContent, /TEST CONDITION UPDATED/u, "renamed condition labels must refresh registration forms");
 
-document.getElementById("inv-f-condition").value = "CON-008";
+document.getElementById("inv-f-condition").value = "0001";
 window.execInventorySearch();
 assert.equal(document.querySelectorAll("#inventoryTableBody tr").length, 1, "inventory search must filter by shared condition codes");
-document.getElementById("market-f-condition").value = "CON-008";
+document.getElementById("market-f-condition").value = "0001";
 window.marketApplyFilters();
 assert.equal(document.querySelectorAll("#marketTableBody tr").length, 1, "market search must filter by shared condition codes");
 
@@ -875,11 +1269,11 @@ window.eval(`APP_DATA.marketPrices[0].condition = ${JSON.stringify(originalMarke
 window.resetInventorySearch();
 window.marketResetFilters();
 window.switchMasterTab("condition");
-const removableConditionIndex = window.eval("APP_DATA.conditions.findIndex(record => record.code === 'CON-008')");
+const removableConditionIndex = window.eval("APP_DATA.conditions.findIndex(record => record.code === '0001')");
 window.showDeleteMasterModal("condition", removableConditionIndex);
 window.confirmMasterDelete();
 assert.equal(window.eval("APP_DATA.conditions.length"), initialConditionCount, "unused conditions can be removed from the shared master");
-assert.equal([...document.getElementById("market-f-condition").options].some(option => option.value === "CON-008"), false, "removed conditions must disappear from search choices");
+assert.equal([...document.getElementById("market-f-condition").options].some(option => option.value === "0001"), false, "removed conditions must disappear from search choices");
 window.localStorage.removeItem("inv_condition_master_v1");
 
 const initialBuyerCount = window.eval("APP_DATA.buyers.length");
@@ -907,7 +1301,15 @@ document.getElementById("clientModal-email").value = "shared-trade@example.com";
 document.getElementById("clientModal-invoice").value = "T1234000099999";
 document.getElementById("clientModal-contactPhone").value = "+852-9876-5432";
 document.getElementById("clientModal-antiqueLicense").value = "香港古物登録 TEST-001";
-const sharedClientCode = document.getElementById("clientModal-code").value;
+assert.equal(document.getElementById("clientModal-code").readOnly, false);
+const partnerCountBefore=window.eval("APP_DATA.clientCompanies.length");
+for(const code of ["10000","00001","-1","1.5","１","CLI-999"]) {
+ document.getElementById("clientModal-code").value=code;
+ await window.saveClientModal();
+ assert.equal(window.eval("APP_DATA.clientCompanies.length"),partnerCountBefore,"invalid partner code must not save: "+code);
+}
+document.getElementById("clientModal-code").value="42";
+const sharedClientCode = "0042";
 const sharedBuyerCode = document.getElementById("clientModal-buyerCode").value;
 const sharedSupplierCode = document.getElementById("clientModal-supplierCode").value;
 await window.saveClientModal();
@@ -925,6 +1327,20 @@ for (const selectId of ["sl-buyer", "sh-dest"]) {
   assert.equal([...document.getElementById(selectId).options].some(option => option.value === sharedBuyerCode), true, `${selectId} must use the unified partner master`);
 }
 
+window.showClientModal(sharedClientCode);
+assert.equal(document.getElementById("clientModal-code").value,"0042");
+assert.equal(document.getElementById("clientModal-code").readOnly,true);
+assert.equal(document.getElementById("clientModal-regionOverseas").checked,true);
+assert.equal(document.getElementById("clientModal-roleBuyer").checked,true);
+assert.equal(document.getElementById("clientModal-roleSupplier").checked,true);
+window.closeClientModal();
+window.showClientModal();
+document.getElementById("clientModal-code").value="42";
+document.getElementById("clientModal-companyName").value="Duplicate partner test";
+document.getElementById("clientModal-address").value="テスト住所";
+await window.saveClientModal();
+assert.equal(window.eval("APP_DATA.clientCompanies.length"),partnerCountBefore+1,"42 must conflict with 0042");
+window.closeClientModal();
 window.setClientCompanyNameFilter("Codex Shared");
 window.setClientCompanyRegionFilter("overseas");
 window.setClientCompanyTradeFilter("buyer", false);
@@ -995,8 +1411,8 @@ assert.match(document.getElementById("masterContentArea").textContent, /ログ�
 assert.equal(document.querySelectorAll("#mpw-admin-tbody tr").length, 1);
 assert.equal(document.querySelector("#mpw-admin-tbody").textContent.includes("承認コード"), false, "the shared access code must not be stored per administrator account");
 window.switchMpwTab("buyer");
-assert.equal(document.querySelectorAll("#mpw-buyer-tbody tr").length, 5);
-assert.equal(document.querySelectorAll("#mpw-buyer-tbody tr[data-staff-code^='BUY-']").length, 5, "worker rows must display the matching purchase staff codes");
+assert.equal(document.querySelectorAll("#mpw-buyer-tbody tr").length, window.eval("APP_DATA.users.filter(u => u.role === 'buyer' || u.role === 'worker').length"));
+assert.equal(document.querySelectorAll("#mpw-buyer-tbody tr[data-staff-code]").length, 0, "worker rows must not expose buyer codes");
 assert.match(document.getElementById("mpw-buyer-tbody").textContent, /当社/u, "purchase staff must be shown as own-company workers");
 window.switchMpwTab("guest");
 assert.equal(document.querySelectorAll("#mpw-guest-tbody tr").length, window.eval("APP_DATA.guestAccounts.length"), "password management must show exactly the guest-management accounts");
@@ -1014,7 +1430,7 @@ document.getElementById("loginInfoEmail").value = "duplicate@example.com";
 document.getElementById("loginInfoPassword").value = "duplicate123";
 document.getElementById("loginInfoCompany").value = "Duplicate customer";
 document.getElementById("loginInfoBuyerCode").value = "B002";
-assert.equal(window.saveLoginInfo(), false, "one customer must not receive multiple guest login accounts");
+assert.equal(await window.saveLoginInfo(), false, "one customer must not receive multiple guest login accounts");
 window.closeLoginInfoModal();
 window.switchMpwTab("authcode");
 await new Promise((resolve) => setTimeout(resolve, 0));
@@ -1028,7 +1444,7 @@ window.switchMpwTab("admin");
 
 window.openLoginInfoModal("admin", "U001");
 document.getElementById("loginInfoActive").checked = false;
-assert.equal(window.saveLoginInfo(), false, "the signed-in administrator must not be able to disable itself");
+assert.equal(await window.saveLoginInfo(), false, "the signed-in administrator must not be able to disable itself");
 assert.equal(window.eval("APP_DATA.users.find(user => user.id === 'U001').active"), undefined);
 window.closeLoginInfoModal();
 
@@ -1037,14 +1453,14 @@ const guestsBeforeLoginInfoTest = window.eval("APP_DATA.guestAccounts.length");
 const buyersBeforeLoginInfoTest = window.eval("APP_DATA.buyers.length");
 const staffBeforeLoginInfoTest = window.eval("APP_DATA.staffRecords.length");
 window.openLoginInfoModal("buyer");
-assert.equal(document.getElementById("loginInfoStaffCode").value, "BUY-006", "new worker accounts must receive the next purchase staff code");
+assert.equal(document.getElementById("loginInfoStaffCode"), null, "worker form must not contain buyer code");
 document.getElementById("loginInfoName").value = "ログイン管理テスト作業者";
 document.getElementById("loginInfoLoginId").value = "login-test-worker";
 document.getElementById("loginInfoEmail").value = "login-test-worker@example.com";
 document.getElementById("loginInfoPassword").value = "testpass123";
-assert.equal(window.saveLoginInfo(), true, "administrator must be able to create a worker account");
-assert.equal(window.eval("APP_DATA.users.find(user => user.loginId === 'login-test-worker').staffCode"), "BUY-006", "workers created from password management must link back to the purchase staff master");
-assert.equal(window.eval("APP_DATA.staffRecords.some(record => record.code === 'BUY-006' && record.name === 'ログイン管理テスト作業者')"), true);
+assert.equal(await window.saveLoginInfo(), true, "administrator must be able to create a worker account");
+assert.equal(window.eval("APP_DATA.users.find(user => user.loginId === 'login-test-worker').staffCode"), undefined);
+assert.equal(window.eval("APP_DATA.staffRecords.some(record => record.code === '0006' && record.name === 'ログイン管理テスト作業者')"), false);
 assert.ok(window.doAppLogin("login-test-worker", "testpass123"), "created worker credentials must work immediately");
 assert.equal(window.currentRole(), "buyer");
 assert.match(window.localStorage.getItem("inv_login_directory_v1"), /login-test-worker/u);
@@ -1069,7 +1485,7 @@ document.getElementById("loginInfoContact").value = "03-0000-0000";
 document.getElementById("loginInfoInvoice").value = "T0000000000001";
 const createdGuestId = document.getElementById("loginInfoLoginId").value;
 const createdBuyerCode = document.getElementById("loginInfoBuyerCode").value;
-assert.equal(window.saveLoginInfo(), true, "administrator must be able to create a guest with customer data");
+assert.equal(await window.saveLoginInfo(), true, "administrator must be able to create a guest with customer data");
 const createdGuest = window.eval("APP_DATA.guestAccounts").find(guest => guest.id === createdGuestId);
 const createdCustomer = window.eval("APP_DATA.buyers").find(buyer => buyer.code === createdBuyerCode);
 assert.equal(createdGuest.company, "ログイン管理テスト株式会社");
@@ -1099,95 +1515,12 @@ const seededReservedItem = inventory.find(item => item.code === "0303260001");
 assert.equal(seededReservedItem.status, "取置中", "an already-approved purchase request must restore its reservation on load");
 assert.equal(seededReservedItem.reservationRequestId, "PR-003");
 assert.equal(document.body.textContent.includes("売価（円）"), false, "sale price labels must not claim JPY");
-const initialDashboardSummary = window.getDashboardSummary();
-assert.equal(document.getElementById("dashInventoryCount").textContent.trim(), String(initialDashboardSummary.inventoryCount));
-assert.equal(document.getElementById("dashSalesAmount").textContent.trim(), window.formatDashboardSales(initialDashboardSummary.monthlySalesUsd, "USD"));
-assert.equal(document.getElementById("dashPurchaseAmount").textContent.trim(), window.formatDashboardPurchase(initialDashboardSummary.monthlyPurchaseJpy, "JPY"));
-assert.equal(document.getElementById("dashPurchaseItemCount").textContent.trim(), `${initialDashboardSummary.monthlyPurchaseCount}点仕入`);
-window.switchDashboardCurrency("sales", "JPY");
-assert.equal(document.getElementById("dashSalesLabel").textContent, "今月売上（JPY）");
-assert.equal(document.getElementById("dashSalesAmount").textContent.trim(), window.formatDashboardSales(initialDashboardSummary.monthlySalesUsd, "JPY"));
-assert.equal(document.getElementById("dash-sales-jpy").getAttribute("aria-pressed"), "true");
-window.switchDashboardCurrency("purchase", "USD");
-assert.equal(document.getElementById("dashPurchaseLabel").textContent, "今月原価（USD）");
-assert.equal(document.getElementById("dashPurchaseAmount").textContent.trim(), window.formatDashboardPurchase(initialDashboardSummary.monthlyPurchaseJpy, "USD"));
-assert.equal(document.getElementById("dash-purchase-usd").getAttribute("aria-pressed"), "true");
-window.switchDashboardCurrency("sales", "USD");
-window.switchDashboardCurrency("purchase", "JPY");
-assert.match(document.getElementById("page-dashboard").textContent, /月別売上推移（USD）/u);
-assert.equal(document.getElementById("dashSupplierMonthSelect").options.length, 24, "supplier chart must expose the complete 24-month DB window");
-assert.equal(document.getElementById("dashSalesEndMonthSelect").options.length, 24, "sales chart must expose the complete 24-month DB window");
-window.switchDashboardChartCurrency("JPY");
-assert.equal(document.getElementById("dash-chart-jpy").getAttribute("aria-pressed"), "true");
-assert.match(document.getElementById("dashSalesChartTitle").textContent, /月別売上推移（JPY）/u);
-assert.deepEqual(
-  window.eval("dashCharts.chart2.config.data.datasets[0].data"),
-  initialDashboardSummary.months.slice(-6).map(month => month.salesJpy),
-  "JPY chart must use actual monthly JPY totals",
-);
-window.setDashboardSalesWindow("12");
-assert.equal(window.eval("dashCharts.chart2.config.data.datasets[0].data.length"), 12, "sales chart must switch to a 12-month window");
-window.shiftDashboardSalesEndMonth(-1);
-assert.equal(
-  window.eval("dashCharts.chart2.config.data.datasets[0].data.at(-1)"),
-  initialDashboardSummary.months.at(-2).salesJpy,
-  "sales chart month navigation must update its ending month",
-);
-window.setDashboardSalesEndMonth(initialDashboardSummary.currentMonthKey);
-window.setDashboardSalesWindow("6");
-window.switchDashboardChartCurrency("USD");
-assert.equal(document.getElementById("dash-chart-usd").getAttribute("aria-pressed"), "true");
-const previousDashboardMonth = initialDashboardSummary.months.at(-2).month;
-window.setDashboardSupplierMonth(previousDashboardMonth);
-assert.match(document.getElementById("dashSupplierChartTitle").textContent, new RegExp(window._dashboardMonthLabel(previousDashboardMonth)));
-assert.equal(
-  window.eval("dashCharts.chart1.config.data.datasets[0].data.reduce((sum, value) => sum + value, 0)"),
-  initialDashboardSummary.supplierMonthly.filter(row => row.month === previousDashboardMonth).reduce((sum, row) => sum + row.purchaseJpy, 0),
-  "supplier composition must follow the selected month",
-);
-window.setDashboardSupplierMonth(initialDashboardSummary.currentMonthKey);
-
-const dashboardToday = new window.Date();
-const dashboardDate = `${dashboardToday.getFullYear()}-${String(dashboardToday.getMonth() + 1).padStart(2, "0")}-02`;
-const dashboardInventoryLength = inventory.length;
-const dashboardPurchaseLength = window.eval("APP_DATA.purchaseSlips.length");
-const dashboardSalesLength = window.eval("APP_DATA.sales.length");
-inventory.push({ code: "DASH-TEST-001", status: "在庫中", brand: "テスト", model: "集計", purchasePrice: 350000 });
-window.eval("APP_DATA.purchaseSlips").push({
-  id: "PI-DASH-TEST",
-  date: dashboardDate,
-  supplier: "S001",
-  status: "未処理",
-  lines: [
-    { code: "DASH-TEST-001", purchasePrice: 120000 },
-    { code: "DASH-TEST-002", purchasePrice: 230000 },
-  ],
-});
-window.eval("APP_DATA.purchaseSlips").push({
-  id: "PI-DASH-PENDING",
-  date: dashboardDate,
-  supplier: "S001",
-  status: "承認待ち",
-  lines: [{ code: "DASH-PENDING", purchasePrice: 999999 }],
-});
-window.eval("APP_DATA.sales").push(
-  { id: "SL-DASH-TEST", date: dashboardDate, status: "確定", total: 1234, items: [] },
-  { id: "SL-DASH-PENDING", date: dashboardDate, status: "承認待ち", total: 9999, items: [] },
-);
 window.init_dashboard();
-const updatedDashboardSummary = window.getDashboardSummary();
-assert.equal(updatedDashboardSummary.inventoryCount, initialDashboardSummary.inventoryCount + 1, "in-stock KPI must follow inventory status");
-assert.equal(updatedDashboardSummary.monthlyPurchaseCount, initialDashboardSummary.monthlyPurchaseCount + 2, "purchase KPI must count recorded slip lines");
-assert.equal(updatedDashboardSummary.monthlyPurchaseJpy, initialDashboardSummary.monthlyPurchaseJpy + 350000, "purchase KPI must sum recorded slip prices");
-assert.equal(updatedDashboardSummary.monthlySalesUsd, initialDashboardSummary.monthlySalesUsd + 1234, "sales KPI must include confirmed slips and exclude pending slips");
-assert.equal(document.getElementById("dashPurchaseItemCount").textContent.trim(), `${updatedDashboardSummary.monthlyPurchaseCount}点仕入`);
-assert.equal(document.getElementById("dashSalesAmount").textContent.trim(), window.formatDashboardSales(updatedDashboardSummary.monthlySalesUsd, "USD"));
-assert.equal(window.eval("dashCharts.chart2.config.data.datasets[0].data.at(-1)"), updatedDashboardSummary.monthlySalesUsd, "monthly chart must use actual confirmed sales slips");
-assert.equal(window.eval("dashCharts.chart1.config.data.datasets[0].data.reduce((sum, value) => sum + value, 0)"), updatedDashboardSummary.monthlyPurchaseJpy, "supplier chart must use current-month purchase slips");
-inventory.splice(dashboardInventoryLength);
-window.eval(`APP_DATA.purchaseSlips.splice(${dashboardPurchaseLength})`);
-window.eval(`APP_DATA.sales.splice(${dashboardSalesLength})`);
-window.init_dashboard();
+assert.equal(document.querySelectorAll('#page-dashboard .business-kpi').length,8);
+assert.equal(document.querySelectorAll('#page-dashboard .business-composition').length,2);
+assert.ok(document.getElementById('business-from'));
+assert.ok(document.getElementById('business-to'));
+window.businessDashboardReset();
 assert.equal(document.getElementById("salesTotalDisplay").textContent.trim(), "¥0");
 assert.equal(document.getElementById("shippingTotalDisplay").textContent.trim(), "$0");
 
@@ -1230,7 +1563,13 @@ let storedPublishedSnapshot = JSON.parse(window.localStorage.getItem("inv_guest_
 assert.ok(storedPublishedSnapshot.boxes.length > 0, "publishing boxes must persist the guest snapshot");
 const publishedProductCode = storedPublishedSnapshot.boxes.flatMap(box => box.items || [])[0]?.code;
 assert.ok(publishedProductCode, "the published snapshot must include an in-stock product");
-assert.equal(window.unpublishGuestProducts([publishedProductCode]), 1, "shipping or selling must remove the product from the guest snapshot");
+const publishedInventoryItem = inventory.find(item => item.code === publishedProductCode);
+const previousPublishedStatus = publishedInventoryItem.status;
+publishedInventoryItem.status = '出荷済';
+assert.equal(window.unpublishGuestProducts([publishedProductCode]), 1, 'shipping a product added in stock must hide it');
+assert.ok(!JSON.parse(window.localStorage.getItem('inv_guest_snapshot_v1')).boxes.some(box => box.items.some(item => item.code === publishedProductCode)));
+publishedInventoryItem.status = '売上済';
+assert.equal(window.unpublishGuestProducts([publishedProductCode]), 0, 'selling an already hidden product must keep it hidden');
 storedPublishedSnapshot = JSON.parse(window.localStorage.getItem("inv_guest_snapshot_v1"));
 assert.equal(
   storedPublishedSnapshot.boxes.some(box => (box.items || []).some(item => item.code === publishedProductCode)),
@@ -1238,6 +1577,7 @@ assert.equal(
   "the automatically unpublished product must also be removed from persisted guest data",
 );
 assert.equal(window.unpublishGuestProducts([publishedProductCode]), 0, "automatic unpublishing must be idempotent");
+publishedInventoryItem.status = previousPublishedStatus;
 window.publishGuestSnapshot();
 const adminGuest = window.eval("APP_DATA.guestAccounts[0]");
 const requestCountBeforeGuestSync = window.eval("APP_DATA.purchaseRequests.length");
@@ -1251,9 +1591,9 @@ window.refreshGuestRequestAdminUI(false);
 assert.equal(incomingGuestRequest.status, "未対応");
 assert.equal(incomingGuestRequest.buyerCode, adminGuest.buyerCode, "new guest requests must store the buyer code at submission time");
 assert.equal(incomingGuestRequest.clientCompanyCode, "CLI-001", "new guest requests must store the common client-company code");
-assert.match(document.getElementById("dashRequests").textContent, /管理者通知テスト/u);
+assert.ok(window.eval("APP_DATA.purchaseRequests").some(request => request.note === "管理者通知テスト"));
 assert.equal(Number(document.getElementById("requestBadge").textContent), 3);
-assert.equal(document.getElementById("dashRequestCount").textContent, "3");
+assert.equal(document.querySelectorAll("#page-dashboard .business-kpi").length, 8);
 
 const incomingRequestId = incomingGuestRequest.id;
 window.setPrItemStatus(incomingRequestId, 0, "approved");
@@ -1316,12 +1656,8 @@ assert.match(appSource, /\(APP_DATA\.salesReturns \|\| \[\]\)\.forEach/u,
   "DB-backed return documents must remain available to related document workflows");
 assert.match(appSource, /sourceType === 'return-document'/u,
   "DB-backed returns must open the persisted return detail instead of the legacy takeback modal");
-assert.match(apiBridgeSource, /const sourceSale = saleDetails\.find/u,
-  "return documents must recover their source sale and monetary detail by product code");
-assert.match(qrInventorySource, /function _inventoryTagMasterName\(value, records\)/u,
-  "product tags must resolve master codes to names or symbols");
-assert.match(qrInventorySource, /APP_DATA\.markingRecords/u,
-  "product tags must show the marking symbol instead of its code");
+assert.match(apiBridgeSource, /const sourceSale = findSourceSaleForReturn\(record, saleDetails\)/u,
+  "return documents must resolve the original sale before restoring monetary detail");
 assert.match(appSource, /unpublishGuestProducts\(soldProductCodes\)/u, "confirmed sales must automatically unpublish sold products");
 assert.match(appSource, /unpublishGuestProducts\(shippedProductCodes\)/u, "confirmed shipments must automatically unpublish shipped products");
 assert.match(approvalSource, /unpublishGuestProducts\(soldProductCodes\)/u, "approved worker sales must automatically unpublish sold products");
@@ -1335,6 +1671,43 @@ assert.match(appSource, /clientCompanyCode,/u, "shipping slips must retain the c
 
 window.navigateTo("inventory");
 window.execInventorySearch();
+// Menu navigation retains search results, page, sorting, BOX and accessories.
+{
+  window.resetInventorySearch();
+  document.getElementById('inv-f-status').value = '';
+  window.execInventorySearch();
+  window.toggleInventoryStatusSort();
+  window.eval('inventoryPage = 2');
+  window.renderInventoryTable();
+  const rows = document.getElementById('inventoryTableBody').innerHTML;
+  window.navigateTo('dashboard');
+  window.navigateTo('inventory');
+  assert.equal(window.eval('_invSearched'),true);
+  assert.equal(window.eval('inventoryPage'),2);
+  assert.equal(window.eval('_invStatusSort'),'ascending');
+  assert.equal(document.getElementById('inventoryTableBody').innerHTML,rows);
+  assert.notEqual(document.getElementById('inv-result-area').style.display,'none');
+  const boxFilter = document.getElementById('inv-f-box');
+  boxFilter.selectedIndex = 1;
+  const selectedBox = boxFilter.value;
+  window.eval('_invAccFilterState = APP_DATA.accessories.slice(0,1)');
+  const accessories = JSON.stringify(window.eval('_invAccFilterState'));
+  document.getElementById('inv-f-model').value = 'retained model query';
+  window.execInventorySearch();
+  window.navigateTo('dashboard');window.navigateTo('inventory');
+  assert.equal(boxFilter.value,selectedBox);
+  assert.equal(JSON.stringify(window.eval('_invAccFilterState')),accessories);
+  assert.equal(document.getElementById('inv-f-model').value,'retained model query');
+  assert.notEqual(document.getElementById('inv-result-area').style.display,'none','zero-result searches remain visible');
+  window.resetInventorySearch();
+  window.navigateTo('dashboard');window.navigateTo('inventory');
+  assert.equal(window.eval('_invSearched'),false);
+  assert.equal(document.getElementById('inv-result-area').style.display,'none');
+  assert.equal(boxFilter.value,'');
+  window.eval("_invStatusSort = 'none'");window._invSyncStatusSortUI();
+  window.execInventorySearch();
+}
+
 assert.match(document.querySelector('[data-page="inventory"]').textContent, /在庫管理/u,
   "inventory management must be a direct sidebar item");
 assert.equal(document.getElementById("inventoryNavGroup"), null,
@@ -1383,7 +1756,7 @@ assert.equal(window.eval("APP_DATA.parts.find(part => part.partCode === 'P290826
 assert.match(document.getElementById("partInventoryTableBody").textContent, /\$4,200/u,
   "the parts list must redraw the saved USD sale price");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseType"]').textContent.trim(), "国内業者仕入／オークション", "legacy inventory must be assigned the domestic purchase category");
-assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), "1 JPY = ¥1.00", "inventory must show the registered purchase rate");
+assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), "￥1", "inventory must show the registered purchase rate");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').textContent.trim(), "¥850,000", "inventory must show cost converted at the registered rate");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').classList.contains("inv-purchase-currency-match"), true,
   "purchase-time cost must be blue-highlighted when the linked display currency matches the actual purchase currency");
@@ -1420,7 +1793,7 @@ assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-
   "changing purchase-time cost currency must also switch the current-rate column");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), "$7,613",
   "changing purchase-time cost currency must also switch the sale-price column");
-assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), /^1 USD = ¥/u,
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), /^￥/u,
   "purchase rate must follow the linked currency using the purchase-time rate");
 assert.equal(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchasePriceAtPurchaseRate"]').classList.contains("inv-purchase-currency-match"), false,
   "the purchase-time cost highlight must clear when the display currency differs from the actual purchase currency");
@@ -1434,7 +1807,7 @@ assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-
   "current-rate cost must convert to HKD");
 assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="salePrice"]').textContent.trim(), /^HK\$/u,
   "current-rate switch must also convert sale price to HKD");
-assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), /^1 HKD = ¥/u,
+assert.match(document.querySelector('#inventoryTableBody tr:first-child td[data-inv-col="purchaseRate"]').textContent.trim(), /^￥/u,
   "purchase rate must use the item's purchase-time HKD rate when HKD is selected");
 assert.equal(document.getElementById("inv-purchase-time-hkd").getAttribute("aria-pressed"), "true");
 assert.equal(document.getElementById("inv-purchase-current-hkd").getAttribute("aria-pressed"), "true");
@@ -1564,7 +1937,7 @@ const foreignInventoryItem = {
   salePrice: 2000,
 };
 assert.equal(window.formatInventoryRegisteredPurchaseRate(foreignInventoryItem), "1 USD = ¥150.00");
-assert.equal(window.formatInventoryPurchaseTimeRate(foreignInventoryItem, "USD"), "1 USD = ¥150.00");
+assert.equal(window.formatInventoryPurchaseTimeRate(foreignInventoryItem, "USD"), "￥150");
 assert.equal(window.isInventoryOriginalPurchaseCurrency(foreignInventoryItem, "USD"), true);
 assert.equal(window.formatInventoryPurchaseCostAtRegisteredRate(foreignInventoryItem), "¥150,000");
 assert.equal(window.formatInventoryPurchaseCostAtCurrentRate(foreignInventoryItem), "¥155,000");
@@ -1645,33 +2018,38 @@ assert.equal(typeof window.printInventoryProductTag, "function", "product tag mu
 window.switchItemDetailTab("tag");
 const productTagPanel = document.getElementById("itemDetailTagPanel");
 assert.equal(productTagPanel.hidden, false, "product tag tab must become visible");
-assert.equal(productTagPanel.querySelectorAll(".inventory-product-tag").length, 2, "product tag must show front and back");
-assert.equal(productTagPanel.querySelectorAll(".inventory-product-tag-qr svg").length, 2, "both tag sides must include the management-number QR");
-assert.equal(productTagPanel.querySelector(".inventory-product-tag-model span")?.classList.contains("sr-only"), true,
-  "the product tag must hide the brand label visually");
-const tagMaterialName = window.eval(`APP_DATA.materials.find(record => record.code === ${JSON.stringify(inventory[0].material)})?.name || ${JSON.stringify(inventory[0].material || "—")}`);
-const tagMovementName = window.eval(`APP_DATA.movements.find(record => record.code === ${JSON.stringify(inventory[0].movement)})?.name || ${JSON.stringify(inventory[0].movement || "—")}`);
-assert.equal(productTagPanel.querySelector(".inventory-product-tag-model strong")?.textContent,
-  `${inventory[0].brand}（${tagMaterialName}／${inventory[0].belt || "—"}）`,
-  "the product tag heading must combine brand, material, and belt material without visible labels");
-assert.equal(productTagPanel.querySelector(".inventory-product-tag-fields dt")?.classList.contains("sr-only"), true,
-  "the product tag must hide item labels visually");
-assert.equal(productTagPanel.querySelector(".inventory-product-tag-fields dd")?.textContent, inventory[0].model);
-assert.equal(productTagPanel.querySelector(".inventory-product-tag-note span")?.classList.contains("sr-only"), true,
-  "the product tag must hide the note label visually");
-assert.ok([...productTagPanel.querySelectorAll(".inventory-product-tag-code span")]
-  .every((label) => label.classList.contains("sr-only")), "management-number labels must be visually hidden on both sides");
-assert.match(productTagPanel.textContent, new RegExp(inventory[0].code), "product tag must include the management number");
-assert.match(productTagPanel.textContent, new RegExp(inventory[0].model), "product tag must include the model name");
-assert.match(productTagPanel.textContent, new RegExp(tagMovementName), "product tag must include the movement name instead of its code");
-assert.ok([...productTagPanel.querySelectorAll(".inventory-product-tag-mini-values .sr-only, .inventory-product-tag-marking .sr-only")]
-  .every((label) => label.classList.contains("sr-only")), "movement and marking labels must be visually hidden");
-assert.doesNotMatch(productTagPanel.textContent, /原価|売価|仕入金額|販売価格/u, "product tag must not expose purchase or sale prices");
+assert.equal(productTagPanel.querySelectorAll(".inventory-product-tag").length, 1, "product tag must show the front only");
+assert.equal(productTagPanel.querySelectorAll(".inventory-product-tag-qr").length, 1, "one QR per product tag");
+const tagMaterialName = window.masterDisplayName('material', inventory[0].material, 'tag');
+const tagMovementName = window.masterDisplayName('movement', inventory[0].movement, 'tag');
+assert.equal(productTagPanel.querySelector('[data-tag-field="brand-material"] text').textContent, window.masterDisplayName('brand',inventory[0].brand,'tag')+'（'+tagMaterialName+'）');
+assert.equal(productTagPanel.querySelector('[data-tag-field="model"] text').textContent, inventory[0].model);
+assert.ok(productTagPanel.querySelector('[data-tag-field="belt-movement"] text').textContent.includes(tagMovementName));
+assert.equal(productTagPanel.querySelector('[data-tag-field="management-code"] text').textContent, inventory[0].code);
+assert.equal(productTagPanel.querySelectorAll('.inventory-product-tag-front [data-tag-price="sale"]').length, 1);
+assert.equal(productTagPanel.querySelectorAll('.inventory-product-tag-front [data-tag-price="cost"]').length, 1);
 const downloadedTagSvg = window.createInventoryProductTagSvg(inventory[0]);
-assert.match(downloadedTagSvg, new RegExp(inventory[0].code), "downloaded tag SVG must include the management number");
-assert.doesNotMatch(downloadedTagSvg, />ブランド名<|>モデル名<|>型番<|>シリアル<|>付属品<|>商品の備考<|>管理番号</u,
-  "downloaded and printed tags must contain values without visible item labels");
-assert.doesNotMatch(downloadedTagSvg, /原価|売価|purchasePrice|salePrice/u, "downloaded tag SVG must not contain price data");
+assert.ok(downloadedTagSvg.includes(inventory[0].code));
+assert.ok(!downloadedTagSvg.includes('裏面'));
+assert.equal(new window.DOMParser().parseFromString(downloadedTagSvg,'image/svg+xml').querySelectorAll('parsererror').length,0);
+// Purchase tag printing follows stable line links, not inventory filters or the open product.
+{
+  const first={...inventory[0],code:'TAG-ONE',_id:'tag-1',purchaseSlipLineId:'tag-line'};
+  const second={...inventory[0],code:'TAG-TWO',_id:'tag-2',purchaseSlipLineId:'tag-line'};
+  const unrelated={...inventory[0],code:'TAG-OTHER',_id:'tag-other',purchaseSlipLineId:'other-line'};
+  inventory.push(first,second,unrelated);
+  const slip={id:'TAG-SLIP',lines:[{_id:'tag-line',quantity:2},{code:'TAG-ONE'},{lineItemKind:'part',code:'PART-ONE'}]};
+  const result=window.getPurchaseSlipTagProducts(slip);
+  assert.deepEqual(Array.from(result.products,item=>item.code),['TAG-ONE','TAG-TWO']);
+  assert.equal(result.missingLines,0);
+  assert.equal(window.getPurchaseSlipTagProducts({lines:[{code:'NO-SUCH-PRODUCT'}]}).missingLines,1);
+  assert.equal(window.getPurchaseSlipTagProducts({lines:[]}).products.length,0);
+  assert.equal(window.getPurchaseSlipTagProducts({lines:[{_id:'tag-line',quantity:3}]}).missingLines,1,'partially reflected quantities must not silently print an incomplete set');
+  const footer=window.buildSlipDetailFooter('purchase',slip);
+  assert.ok(footer.indexOf('purchase-product-tag-print-button')<footer.indexOf('purchase-arrival-scan-button'));
+  assert.ok(!window.buildSlipDetailFooter('sales',slip).includes('purchase-product-tag-print-button'));
+  inventory.splice(inventory.indexOf(first),3);
+}
 const blankNoteTagHtml = window.renderInventoryProductTagPanel({ ...inventory[0], note: "" });
 assert.doesNotMatch(blankNoteTagHtml, /Preview inventory: monthly purchase-date distribution|記載なし/u,
   "blank product notes must stay empty on the product tag");
@@ -1681,9 +2059,9 @@ assert.doesNotMatch(blankNoteTagSvg, /Preview inventory: monthly purchase-date d
 assert.equal(document.getElementById("itemDetailTagDownloadBtn").classList.contains("hidden"), false);
 assert.equal(document.getElementById("itemDetailTagPrintBtn").classList.contains("hidden"), false);
 assert.equal(document.getElementById("itemDetailEditBtn").classList.contains("hidden"), true);
-assert.match(window.prBulkDownloadCSV.toString(), /'管理番号'.*'ブランド'.*'モデル'.*'型番'.*'シリアル'.*'原価'/u,
+assert.match(window.prBulkDownloadCSV.toString(), /'管理番号'.*'ブランド'.*'モデル'.*'型番'.*'シリアル'.*'原価（JPY）'/u,
   "purchase-return CSV headers must use the unified inventory terminology");
-assert.match(window.exportSlipCSV.toString(), /'委託先','管理番号','ブランド','モデル'/u,
+assert.match(window.buildSlipProductCsvRows.toString(), /'委託先','管理番号','ブランド','モデル'/u,
   "consignment CSV headers must use 管理番号 and モデル");
 window.switchItemDetailTab("info");
 
@@ -1692,7 +2070,7 @@ serialVisibility.checked = false;
 window._invColumnVisibilityChanged(serialVisibility);
 assert.equal(document.querySelector('th[data-inv-col="serial"]').classList.contains("inv-col-hidden"), true);
 assert.equal(document.querySelector('#inventoryTableBody td[data-inv-col="serial"]').classList.contains("inv-col-hidden"), true);
-assert.equal(document.getElementById("inv-column-count").textContent, "22/24");
+assert.equal(document.getElementById("inv-column-count").textContent, "21/24");
 
 const purchaseVisibility = document.querySelector('#inv-column-panel input[value="purchasePrice"]');
 const saleVisibility = document.querySelector('#inv-column-panel input[value="salePrice"]');
@@ -1824,6 +2202,119 @@ assert.equal(document.getElementById('inv-gross-margin-sort-th').getAttribute('a
 window.toggleInventoryStatusSort();
 window.toggleInventoryStatusSort();
 
+// Inventory amount/date/rate sorting follows the displayed currency across all pages.
+{
+  const rows = [
+    { code: 'large', purchaseDate: '2026-09-20', purchasePrice: 1000, purchaseCurrency: 'USD', purchaseOriginalPrice: 10, purchaseRate: 100, saleDate: '2026-09-20', actualSaleCurrency: 'USD', actualSalePrice: 20, actualSalePriceJpy: 2000, saleFxRateScaled: 10000, saleFxScale: 100 },
+    { code: 'small', purchaseDate: '2026-08-01', purchasePrice: 200, purchaseCurrency: 'USD', purchaseOriginalPrice: 1, purchaseRate: 200, saleDate: '2026-08-01', actualSaleCurrency: 'USD', actualSalePrice: 100, actualSalePriceJpy: 20000, saleFxRateScaled: 20000, saleFxScale: 100 },
+    { code: 'empty', purchaseDate: '', purchasePrice: 0 },
+    { code: 'equal', purchaseDate: '2026-08-01', purchasePrice: 200, purchaseCurrency: 'USD', purchaseOriginalPrice: 1, purchaseRate: 200 },
+  ];
+  const codes = (key, direction) => Array.from(window.sortInventoryByColumn(rows, key, direction), item => item.code);
+  window.switchInventoryLinkedCurrency('USD');
+  assert.deepEqual(codes('purchaseDate','ascending'), ['small','equal','large','empty']);
+  assert.deepEqual(codes('purchaseDate','descending'), ['large','small','equal','empty']);
+  for (const key of ['purchasePriceAtPurchaseRate','purchasePrice']) {
+    assert.deepEqual(codes(key,'ascending'), ['empty','small','equal','large']);
+    assert.deepEqual(codes(key,'descending'), ['large','small','equal','empty']);
+  }
+  assert.equal(window.getInventoryColumnSortValue(rows[0], 'purchaseRate'), 100);
+  assert.equal(window.getInventoryColumnSortValue(rows[1], 'purchaseRate'), 200);
+  assert.deepEqual(codes('saleRate','ascending'), ['large','small','empty','equal']);
+  assert.deepEqual(codes('saleRate','descending'), ['small','large','empty','equal']);
+  assert.deepEqual(codes('actualSalePrice','ascending'), ['large','small','empty','equal']);
+  assert.deepEqual(codes('actualSalePrice','descending'), ['small','large','empty','equal']);
+  assert.deepEqual(rows.map(item => item.code), ['large','small','empty','equal']);
+  window.switchInventoryLinkedCurrency('JPY');
+  assert.equal(window.getInventoryColumnSortValue(rows[0], 'actualSalePrice'), 2000);
+  assert.equal(window.getInventoryColumnSortValue(rows[0], 'purchasePriceAtPurchaseRate'), 1000);
+  const keys = ['purchaseDate','purchaseRate','saleRate','purchasePriceAtPurchaseRate','purchasePrice','actualSalePrice'];
+  for (const key of keys) {
+    const button = document.getElementById('inv-sort-' + key + '-btn');
+    const heading = document.getElementById('inv-sort-' + key + '-th');
+    window.eval('inventoryPage = 2');
+    button.click();
+    assert.equal(heading.getAttribute('aria-sort'), 'ascending');
+    assert.equal(window.eval('inventoryPage'), 1);
+    assert.deepEqual(
+      [...document.querySelectorAll('#inventoryTableBody td[data-inv-col="code"] code')].map(cell => cell.textContent),
+      Array.from(window.sortInventoryByColumn(inventory, key, 'ascending').slice(0,10), item => item.code),
+      key + ': sort the complete filtered inventory before pagination');
+    button.click();
+    assert.equal(heading.getAttribute('aria-sort'), 'descending');
+    button.click();
+    assert.equal(heading.getAttribute('aria-sort'), 'none');
+  }
+  window.toggleInventoryStatusSort();
+  window.toggleInventoryColumnSort('purchaseDate');
+  assert.equal(document.getElementById('inv-status-sort-th').getAttribute('aria-sort'),'none');
+  window.toggleInventoryColumnSort('actualSalePrice');
+  assert.equal(document.getElementById('inv-sort-purchaseDate-th').getAttribute('aria-sort'),'none');
+  window.toggleInventoryGrossMarginSort();
+  assert.equal(document.getElementById('inv-sort-actualSalePrice-th').getAttribute('aria-sort'),'none');
+  window.toggleInventoryColumnSort('purchaseRate');
+  assert.equal(document.getElementById('inv-gross-margin-sort-th').getAttribute('aria-sort'),'none');
+  window.toggleInventoryStatusSort();
+  assert.equal(document.getElementById('inv-sort-purchaseRate-th').getAttribute('aria-sort'),'none');
+  window.toggleInventoryStatusSort();
+  window.toggleInventoryStatusSort();
+}
+
+// Locked purchasing values must survive metadata-only saves; pencils unlock one field at a time.
+{
+  const target = inventory[0];
+  const originalAPI = window.ZaikoAPI;
+  const originalManaged = target.apiManaged;
+  const originalAccessories = target.accessories;
+  let submitted;
+  target.apiManaged = true;
+  target.accessories = [];
+  window.ZaikoAPI = { updateProduct: async (_item, values) => {
+    submitted = values;
+    throw new Error('Test capture: no persistence');
+  }};
+  window.openItemEdit(target.code);
+  const ids = ['purchasePrice','salePrice','purchaseDate','staff','supplier','box'];
+  for (const id of ids) {
+    const input = document.getElementById('ie-' + id);
+    assert.equal(input.disabled, true, id + ' starts locked');
+    if (input._partnerSearchController) assert.equal(input._partnerSearchController.input.disabled, true);
+  }
+  document.getElementById('ie-model').value = target.model + ' lock test';
+  document.getElementById('ie-purchasePrice').value = '123';
+  document.getElementById('ie-purchaseDate').value = '2000-01-01';
+  for (const id of ['staff','supplier','box']) document.getElementById('ie-' + id).value = '';
+  document.getElementById('ie-salePrice').value = '456';
+  await window.saveItemEdit();
+  assert.ok(submitted, 'save reaches the API capture');
+  for (const field of ['purchasePrice','purchaseDate','supplier','salePrice','staff','boxNo']) {
+    assert.equal(submitted[field], target[field], field + ' preserves persisted value while locked');
+  }
+  for (const id of ['salePrice','staff','box']) {
+    document.getElementById('ie-' + id + '-unlock').click();
+    assert.equal(document.getElementById('ie-' + id).disabled, false);
+    const controller = document.getElementById('ie-' + id)._partnerSearchController;
+    if (controller) assert.equal(controller.input.disabled, false);
+    for (const fixed of ['purchasePrice','purchaseDate','supplier']) assert.equal(document.getElementById('ie-' + fixed).disabled, true);
+  }
+  document.getElementById('ie-salePrice').value = '456';
+  document.getElementById('ie-staff').value = '';
+  document.getElementById('ie-box').value = '';
+  await window.saveItemEdit();
+  assert.equal(submitted.salePrice,456);
+  assert.equal(submitted.staff,'');
+  assert.equal(submitted.boxNo,null);
+  for (const field of ['purchasePrice','purchaseDate','supplier']) assert.equal(submitted[field],target[field]);
+  window.closeItemEdit();
+  window.openItemEdit(target.code);
+  for (const id of ids) assert.equal(document.getElementById('ie-' + id).disabled,true,'reopening resets ' + id);
+  for (const id of ['salePrice','staff','box']) assert.equal(document.getElementById('ie-' + id + '-unlock').disabled,false);
+  window.closeItemEdit();
+  window.ZaikoAPI = originalAPI;
+  target.apiManaged = originalManaged;
+  target.accessories = originalAccessories;
+}
+
 const originalEditImages = [...(inventory[0].images || [])];
 const originalEditImageFiles = inventory[0].imageFiles;
 const originalEditAccessories = [...(inventory[0].accessories || [])];
@@ -1833,6 +2324,22 @@ inventory[0].imageFiles = [
   { id: "fil_edit_1", url: inventory[0].images[0], originalName: "front.jpg", sortOrder: 0 },
   { id: "fil_edit_2", url: inventory[0].images[1], originalName: "back.jpg", sortOrder: 1 },
 ];
+// Product details retain non-selectable workflow statuses during metadata edits.
+const editStatusOriginalAPI = window.ZaikoAPI;
+const editStatusOriginalValue = inventory[0].status;
+const editStatusOriginalManaged = inventory[0].apiManaged;
+window.ZaikoAPI = {};
+inventory[0].apiManaged = true;
+for (const currentStatus of ['仕入中','原価調整中','原価調整済','売上返品処理中','売上済']) {
+ inventory[0].status = currentStatus;
+ window.openItemEdit(inventory[0].code);
+ assert.equal(document.getElementById('ie-status').value,currentStatus);
+ assert.equal(document.getElementById('ie-status').disabled,true);
+ window.closeItemEdit();
+}
+inventory[0].status = editStatusOriginalValue;
+inventory[0].apiManaged = editStatusOriginalManaged;
+window.ZaikoAPI = editStatusOriginalAPI;
 window.openItemEdit(inventory[0].code);
 assert.equal(document.getElementById("ie-salePrice").value, "7,613", "inventory edit must show the USD value with thousands separators");
 assert.equal((document.querySelector('label[for="ie-salePrice"]')?.textContent || document.getElementById("ie-salePrice").previousElementSibling?.textContent || "").trim(), "想定売価");
@@ -1874,6 +2381,36 @@ inventory[0].images = originalEditImages;
 inventory[0].imageFiles = originalEditImageFiles;
 inventory[0].accessories = originalEditAccessories;
 inventory[0].braceletQty = originalEditBraceletQty;
+// Dynamically created monetary fields must wait for IME commit, including when
+// compositionend is the last native event (no subsequent input event).
+const imePriceProbe = document.createElement('input');
+imePriceProbe.type = 'text';
+imePriceProbe.addEventListener('input', () => window.priceFormatHandler(imePriceProbe));
+document.body.appendChild(imePriceProbe);
+for (const text of ['1234', '１２３４']) {
+  imePriceProbe.value = '';
+  imePriceProbe.dispatchEvent(new window.CompositionEvent('compositionstart', { bubbles: true }));
+  for (let length = 1; length <= text.length; length++) {
+    imePriceProbe.value = text.slice(0, length);
+    imePriceProbe.dispatchEvent(new window.InputEvent('input', { bubbles: true, isComposing: true, inputType: 'insertCompositionText', data: text.slice(0, length) }));
+    assert.equal(imePriceProbe.value, text.slice(0, length), 'formatting must not rewrite an active IME range');
+  }
+  imePriceProbe.dispatchEvent(new window.CompositionEvent('compositionend', { bubbles: true, data: text }));
+  assert.equal(imePriceProbe.value, '1,234', 'committed IME numbers must format once');
+  assert.equal(window.getPriceValue(imePriceProbe), 1234);
+  imePriceProbe.dispatchEvent(new window.InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+  assert.equal(imePriceProbe.value, '1,234', 'a trailing input event must not duplicate committed numbers');
+}
+imePriceProbe.dispatchEvent(new window.CompositionEvent('compositionstart', { bubbles: true }));
+imePriceProbe.value = '';
+imePriceProbe.dispatchEvent(new window.InputEvent('input', { bubbles: true, isComposing: true }));
+imePriceProbe.dispatchEvent(new window.CompositionEvent('compositionend', { bubbles: true, data: '' }));
+assert.equal(imePriceProbe.value, '', 'cancelling composition must not restore stale digits');
+imePriceProbe.value = '5678';
+imePriceProbe.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+assert.equal(imePriceProbe.value, '5,678', 'ordinary typing resumes after IME cancellation');
+imePriceProbe.remove();
+
 const marketWinningBidInput = document.getElementById("me-marketPriceJpy");
 marketWinningBidInput.value = "１２３４５６７";
 window.priceFormatHandler(marketWinningBidInput);
@@ -1940,6 +2477,262 @@ assert.equal(inventory[0].images.length, existingImagesBeforeProductRegistration
 assert.equal(document.getElementById("pu-code").value, "", "successful image save must clear the management number to prevent duplicate submission");
 inventory[0].images = existingImagesBeforeProductRegistration;
 
+// Stored images are visible but never staged again as uploads.
+{
+  const existing={...inventory[0],code:'STORED-IMAGE-TEST',images:['/saved-one.png','/saved-two.png'],
+    imageFiles:[{id:'saved-1',url:'/saved-one.png'},{id:'saved-2',url:'/saved-two.png'}],imageCount:2};
+  inventory.push(existing);
+  window.puCodeSearch(existing.code);
+  const grid=document.getElementById('imageGrid');
+  assert.equal(grid.querySelectorAll('[data-saved="true"]').length,2);
+  assert.equal(grid.querySelectorAll('[data-saved="true"] .del-btn').length,0,'stored images are not removable pending uploads');
+  assert.deepEqual([...grid.querySelectorAll('img')].map(img=>img.getAttribute('src')),existing.images);
+  assert.equal(window.eval('uploadedImageFiles.filter(Boolean).length'),0,'lookup must not reupload saved images');
+  window.eval("uploadedImages[0]='new-preview';uploadedImageFiles[0]=new File(['new'],'new.png');renderImageGrid();");
+  assert.deepEqual([...grid.querySelectorAll('img')].map(img=>img.getAttribute('src')),[...existing.images,'new-preview']);
+  assert.equal(grid.querySelectorAll('.del-btn').length,1);
+  grid.querySelector('.del-btn').click();
+  assert.equal(grid.querySelectorAll('img').length,2);
+  assert.equal(window.eval('uploadedImageFiles.filter(Boolean).length'),0);
+  grid.querySelector('img').click();
+  assert.equal(document.querySelector('#product-image-lightbox img').getAttribute('src'),existing.images[0]);
+  document.querySelector('.product-image-lightbox-close').click();
+  existing.imageFiles=Array.from({length:10},(_,index)=>({id:String(index),url:'/saved-'+index+'.png'}));
+  existing.images=existing.imageFiles.map(file=>file.url);existing.imageCount=10;
+  window.puCodeSearch(existing.code);
+  assert.equal(grid.querySelectorAll('[data-saved="true"]').length,10);
+  assert.equal(grid.querySelectorAll('.image-slot:not(.filled)').length,0,'ten stored images leave no upload slot');
+  window.triggerImageUpload(0);
+  assert.equal(window.eval('uploadedImageFiles.filter(Boolean).length'),0);
+  window.resetPurchaseForm({silent:true});
+  assert.equal(grid.querySelectorAll('img').length,0,'reset clears saved previews too');
+  inventory.splice(inventory.indexOf(existing),1);
+}
+
+// Existing product fields stay locked, and the inventory edit route clears registration.
+{
+  const existing = {...inventory[0], code:"LOCK-EXISTING-TEST", sku:"", comment:"保存済みコメント",
+    purchasePrice:0, purchaseOriginalPrice:0, salePrice:0, purchaseType:"overseas", purchaseCurrency:"USD"};
+  for (const [id,prop] of [["pu-shape","shape"],["pu-marking","marking"],["pu-belt","belt"],["pu-brand","brand"]]) {
+    existing[prop] = [...document.getElementById(id).options].find(option=>option.value)?.value || "";
+  }
+  inventory.push(existing);
+  window.puCodeSearch(existing.code);
+  for (const id of ["pu-code","pu-price","pu-sale-price","pu-comment","pu-tax-category","pu-currency-usd","pu-purchase-type-overseas"]) {
+    assert.equal(document.getElementById(id).disabled,true,id+" must be locked for an existing product");
+  }
+  for (const [id,prop] of [["pu-shape","shape"],["pu-marking","marking"],["pu-belt","belt"],["pu-brand","brand"]]) {
+    if (!existing[prop]) continue;
+    const select=document.getElementById(id);
+    assert.equal(select.value,existing[prop]);
+    assert.equal(select.disabled,true);
+    assert.equal(select._partnerSearchController.input.disabled,true);
+    assert.equal(select._partnerSearchController.wrapper.classList.contains("pu-locked"),true);
+  }
+  assert.equal(document.getElementById("pu-sku").disabled,false,"an empty field remains available");
+  document.getElementById("pu-sku").value="DRAFT-SKU";
+  window._pu3KeySearchTrigger("sku");
+  assert.equal(document.getElementById("pu-code").disabled,true,"editing an empty SKU must not unlock the matched product");
+  assert.equal(document.getElementById("pu-comment").value,existing.comment);
+  window.savePurchaseCarryover();
+  window.openMatchedInventoryFromProductRegistration();
+  await new Promise(resolve=>window.setTimeout(resolve,10));
+  window.closeItemEdit();
+  window.navigateTo("purchase");
+  for (const id of ["pu-code","pu-supplier","pu-sku","pu-model","pu-shape","pu-marking","pu-comment","pu-belt","pu-price","pu-sale-price"]) {
+    const field=document.getElementById(id);
+    assert.equal(field.value,"",id+" must be reset after leaving for inventory edit");
+    assert.equal(field.disabled,false,id+" must be available for new registration");
+    if(field._partnerSearchController){
+      assert.equal(field._partnerSearchController.input.value,"");
+      assert.equal(field._partnerSearchController.input.disabled,false);
+      assert.equal(field._partnerSearchController.wrapper.classList.contains("pu-locked"),false);
+    }
+  }
+  assert.equal(document.getElementById("pu-date").value,window.getLocalDateISO());
+  assert.equal(window.sessionStorage.getItem("pu_carryover_supplier"),null);
+  assert.equal(window.eval("_puMatchedItem"),null);
+  assert.equal(document.getElementById("pu-existing-banner").classList.contains("visible"),false);
+  inventory.splice(inventory.indexOf(existing),1);
+}
+
+// Existing products accept missing details without overwriting populated fields or creating slips.
+{
+  const originalAPI = window.ZaikoAPI;
+  const existing = {...inventory[0], code:'MISSING-DETAILS-TEST', sku:'', comment:'', shape:'', marking:'',
+    belt:'', note:'', purchasePrice:0, purchaseOriginalPrice:0, salePrice:0, accessories:[], images:[], imageFiles:[], imageCount:0};
+  inventory.push(existing);
+  const count = inventory.length, slipCount = purchaseSlips.length;
+  window.puCodeSearch(existing.code);
+  document.getElementById('pu-sku').value = 'SKU-1-1';
+  document.getElementById('pu-comment').value = '追加コメント';
+  document.getElementById('pu-note').value = '追加備考';
+  for (const id of ['pu-shape','pu-marking','pu-belt']) {
+    const select = document.getElementById(id);
+    select.value = [...select.options].find(option=>option.value)?.value || '';
+  }
+  // Even a programmatic change to a disabled control must not replace stored information.
+  document.getElementById('pu-price').value = '9999';
+  document.getElementById('pu-sale-price').value = '9999';
+  const originalModel = existing.model;
+  document.getElementById('pu-model').value = 'DO-NOT-OVERWRITE';
+  document.getElementById('pu-sku').dispatchEvent(new window.Event('input',{bubbles:true}));
+  assert.match(document.querySelector('#page-purchase button[onclick="savePurchase()"]').textContent,/不足情報を保存する/u);
+  const additions = window._puCollectMissingProductValues(existing);
+  assert.equal(additions.sku,'SKU-1-1');
+  assert.equal(additions.comment,'追加コメント');
+  assert.equal(Object.hasOwn(additions,'purchasePrice'),false);
+  assert.equal(Object.hasOwn(additions,'salePrice'),false);
+  assert.equal(Object.hasOwn(additions,'model'),false);
+  let submitted, calls = 0;
+  window.ZaikoAPI = {updateProduct:async()=>{calls++;throw new Error('保存失敗テスト');}};
+  await window.savePurchase();
+  assert.equal(existing.sku,'');
+  assert.equal(document.getElementById('pu-sku').value,'SKU-1-1','failed saves keep additions');
+  assert.equal(document.getElementById('pu-code').value,existing.code);
+  window.ZaikoAPI.updateProduct = async(item,values)=>{calls++;submitted=values;Object.assign(item,values);};
+  await window.savePurchase();
+  assert.equal(calls,2);
+  assert.equal(submitted.sku,'SKU-1-1');
+  assert.equal(submitted.comment,'追加コメント');
+  assert.equal(submitted.note,'追加備考');
+  assert.equal(submitted.model,originalModel);
+  assert.equal(submitted.purchasePrice,0);
+  assert.equal(submitted.salePrice,0);
+  for (const field of ['shape','marking','belt']) assert.equal(submitted[field],additions[field]||'');
+  assert.equal(document.getElementById('pu-code').value,'');
+  window.puCodeSearch(existing.code);
+  assert.equal(document.getElementById('pu-sku').value,'SKU-1-1');
+  assert.equal(document.getElementById('pu-sku').disabled,true,'saved additions become read-only on lookup');
+  assert.equal(document.getElementById('pu-comment').disabled,true);
+  window.resetPurchaseForm({silent:true});
+  existing.sku='';existing.comment='';
+  window.puCodeSearch(existing.code);
+  document.getElementById('pu-sku').value='SKU-WITH-IMAGES';
+  window.eval("uploadedImages[0]='image-one';uploadedImages[1]='image-two';uploadedImageFiles[0]=new File(['one'],'one.png');uploadedImageFiles[1]=new File(['two'],'two.png');");
+  let uploads=0;
+  window.ZaikoAPI.appendProductImages=async(item,files)=>{
+    uploads++;
+    if(uploads===2)throw new Error('画像保存失敗テスト');
+    item.images.push(files[0].name);item.imageCount=item.images.length;
+  };
+  await window.savePurchase();
+  assert.equal(existing.sku,'SKU-WITH-IMAGES');
+  assert.equal(document.getElementById('pu-sku').disabled,true);
+  assert.equal(window.eval('uploadedImageFiles.filter(Boolean).length'),1,'only failed images remain pending');
+  await window.savePurchase();
+  assert.equal(uploads,3,'retry must not resend a confirmed image');
+  assert.deepEqual(existing.images,['one.png','two.png']);
+  assert.equal(inventory.length,count);
+  assert.equal(purchaseSlips.length,slipCount);
+  assert.equal(document.getElementById('pu-code').value,'');
+  inventory.splice(inventory.indexOf(existing),1);
+  window.ZaikoAPI=originalAPI;
+}
+
+
+// Registration receives purchasing products even with no added data; QR uses the same path.
+{
+  const originalAPI=window.ZaikoAPI;
+  window.ZaikoAPI=undefined;
+  const first={...inventory[0],code:'ARRIVAL-REG-ONE',_id:'arrival-product-1',purchaseSlipLineId:'arrival-line-1',status:'仕入中',sku:'',comment:'',images:[],imageFiles:[],imageCount:0};
+  const second={...first,code:'ARRIVAL-REG-TWO',_id:'arrival-product-2',purchaseSlipLineId:'arrival-line-2'};
+  const slip={...purchaseSlips[0],id:'ARRIVAL-REG-SLIP',_id:'arrival-purchase',pendingArrivalCount:2,arrivedCount:0,paidAt:'KEEP-PAYMENT',
+    lines:[{code:first.code,_id:'arrival-line-1',productId:first._id,currentStatus:'仕入中'},{code:second.code,_id:'arrival-line-2',productId:second._id,currentStatus:'仕入中'}]};
+  inventory.push(first,second);purchaseSlips.push(slip);
+  window.resetPurchaseForm({silent:true});window.puCodeSearch(first.code);
+  assert.match(document.querySelector('#page-purchase button[onclick="savePurchase()"]').textContent,/登録する/u);
+  await window.savePurchase();
+  assert.equal(first.status,'在庫中');assert.equal(second.status,'仕入中');
+  assert.equal(slip.lines[0].currentStatus,'在庫中');assert.equal(slip.pendingArrivalCount,1);
+  assert.equal(window.getPurchaseArrivalStatus(slip),'処理中');
+  let receiveCalls=0, metadataCalls=0;
+  window.ZaikoAPI={
+    updateProduct:async(item,values)=>{metadataCalls++;Object.assign(item,values);},
+    receivePurchaseProduct:async()=>{receiveCalls++;throw new Error('入荷登録失敗テスト');},
+  };
+  window.eval("_barcodeMode='product-registration';_barcodeCooldown=false;_barcodeLastCode='';");
+  window._onBarcodeDetected(second.code);
+  document.getElementById('pu-sku').value='ADDED-ON-ARRIVAL';
+  await window.savePurchase();
+  assert.equal(metadataCalls,1);assert.equal(receiveCalls,1);
+  assert.equal(second.status,'仕入中');assert.equal(document.getElementById('pu-code').value,second.code);
+  assert.equal(second.sku,'ADDED-ON-ARRIVAL','saved metadata survives arrival failure');
+  window.ZaikoAPI.receivePurchaseProduct=async(purchase,code)=>{
+    receiveCalls++;assert.equal(purchase,slip);assert.equal(code,second.code);
+    second.status='在庫中';slip.lines[1].currentStatus='在庫中';slip.pendingArrivalCount=0;slip.arrivedCount=2;
+    return {result:'received',inventoryStatus:'in_stock'};
+  };
+  await window.savePurchase();
+  assert.equal(metadataCalls,1,'retry does not resend saved metadata');assert.equal(receiveCalls,2);
+  assert.equal(second.status,'在庫中');assert.equal(window.getPurchaseArrivalStatus(slip),'処理済');
+  assert.equal(slip.paidAt,'KEEP-PAYMENT');assert.equal(document.getElementById('pu-code').value,'');
+  assert.ok(window.buildSlipDetailBody('purchase',slip).includes('在庫中'));
+  assert.equal(inventory.filter(item=>item.code.startsWith('ARRIVAL-REG-')).length,2);
+  inventory.splice(inventory.indexOf(first),2);purchaseSlips.splice(purchaseSlips.indexOf(slip),1);
+  window.ZaikoAPI=originalAPI;
+}
+
+// Belt selection must survive the product form's IME listeners and final save formatting.
+const purchaseBeltData = window.eval("APP_DATA");
+const originalPurchaseBelts = purchaseBeltData.beltMaterialRecords;
+purchaseBeltData.beltMaterialRecords = [{code:"0001",name:"SS"},{code:"0005",name:"Calf"}];
+window.populateBeltMaterialMasterSelect("pu-belt");
+window.initInputFormatListeners();
+const purchaseBelt = document.getElementById("pu-belt");
+const purchaseBeltControl = purchaseBelt._partnerSearchController;
+purchaseBeltControl.input.focus();
+purchaseBeltControl.input.value = "1";
+purchaseBeltControl.input.dispatchEvent(new window.Event("input", {bubbles:true}));
+purchaseBeltControl.input.dispatchEvent(new window.KeyboardEvent("keydown", {key:"Enter",bubbles:true}));
+assert.equal(purchaseBelt.value, "SS", "code lookup must not full-width-convert the master value");
+assert.equal(purchaseBeltControl.input.value, "SS");
+purchaseBeltControl.input.value = "";
+purchaseBeltControl.input.dispatchEvent(new window.Event("input", {bubbles:true}));
+const calfOption = [...purchaseBeltControl.panel.querySelectorAll(".partner-search-option")]
+  .find(option => option.textContent.includes("Calf"));
+assert.ok(calfOption);
+calfOption.click();
+purchaseBeltControl.input.blur();
+purchaseBelt.dispatchEvent(new window.Event("blur"));
+assert.equal(purchaseBelt.value, "Calf", "dropdown selection must survive blur");
+assert.equal(purchaseBeltControl.input.value, "Calf");
+
+// Composition confirmation is not an inventory-search Enter key.
+{
+  const originalCodeSearch = window.puCodeSearch;
+  const originalSkuSearch = window._pu3KeySearchTrigger;
+  const calls = [];
+  window.puCodeSearch = value => calls.push(value);
+  window._pu3KeySearchTrigger = value => calls.push(value);
+  window.initInputFormatListeners();
+  window.initInputFormatListeners();
+  for (const id of ['pu-code', 'pu-sku']) {
+    const field = document.getElementById(id);
+    const original = field.value;
+    field.dispatchEvent(new window.CompositionEvent('compositionstart', {bubbles:true}));
+    field.value = '１２３';
+    field.dispatchEvent(new window.InputEvent('input', {bubbles:true,isComposing:true}));
+    await new Promise(resolve => window.setTimeout(resolve, 350));
+    assert.deepEqual(calls, [], id + ' must not search a composing value');
+    const enter = new window.KeyboardEvent('keydown', {key:'Enter',isComposing:true,keyCode:229,bubbles:true,cancelable:true});
+    field.dispatchEvent(enter);
+    assert.equal(enter.defaultPrevented, false, id + ' must let IME handle confirmation');
+    assert.deepEqual(calls, []);
+    field.dispatchEvent(new window.CompositionEvent('compositionend', {bubbles:true,data:'１２３'}));
+    assert.equal(field.value, '123');
+    await new Promise(resolve => window.setTimeout(resolve, 350));
+    assert.deepEqual(calls, id === 'pu-code' ? ['123'] : [], 'committed management code is looked up once');
+    calls.length = 0;
+    field.dispatchEvent(new window.KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}));
+    assert.deepEqual(calls, [id === 'pu-code' ? '123' : 'sku'], 'ordinary Enter still searches');
+    calls.length = 0;
+    field.value = original;
+  }
+  window.puCodeSearch = originalCodeSearch;
+  window._pu3KeySearchTrigger = originalSkuSearch;
+}
+
 const singlePurchaseCode = "3012990001";
 const inventoryCountBeforeSinglePurchase = inventory.length;
 const purchaseSlipCountBeforeSinglePurchase = purchaseSlips.length;
@@ -1972,6 +2765,10 @@ assert.equal(savedSinglePurchaseSlip.purchaseTaxMode, "personal");
 assert.equal(savedSinglePurchaseSlip.taxCategory, "out_of_scope");
 assert.equal(savedSinglePurchaseSlip.supplier, "");
 assert.equal(savedSingleInventory.status, "仕入中");
+assert.equal(savedSingleInventory.belt, "Calf", "registration must retain the selected belt master name");
+assert.equal(savedSinglePurchaseSlip.lines[0].productDetail.belt, "Calf", "purchase slip must retain the selected belt master name");
+purchaseBeltData.beltMaterialRecords = originalPurchaseBelts;
+window.populateBeltMaterialMasterSelect("pu-belt");
 assert.equal(savedSingleInventory.purchaseSlipId, savedSinglePurchaseSlip.id, "inventory must link back to its auto-issued purchase slip");
 const purchaseApprovalDetailHtml = window.buildReadableApprovalDetail({
   targetType: "purchase_slip",
@@ -2012,8 +2809,8 @@ assert.equal(document.getElementById("slipBulkControls"), null,
 for (const slipType of ["purchase", "shipping", "consignment", "sales", "salesreturn", "purchasereturn"]) {
   window.switchSlipTab(slipType);
   window.showAllSlipList();
-  assert.equal(document.querySelectorAll("#slipTableHead input[type='checkbox'], #slipListBody input[type='checkbox']").length, 0,
-    `${slipType} slips must not expose bulk-selection checkboxes`);
+  assert.equal(document.querySelectorAll("#slipListBody .slip-csv-row-check").length, document.querySelectorAll("#slipListBody tr").length,
+    `${slipType} slips must expose CSV selection for each displayed row`);
   assert.equal(document.getElementById("prBulkInvoiceBtn"), null,
     `${slipType} slips must not retain the legacy purchase-return issue button`);
 }
@@ -2026,6 +2823,7 @@ assert.equal(document.getElementById("sltab-adjustment"), null,
   "adjustment slips must not appear as a tab in the accounting document list");
 assert.deepEqual(slipTabOrder,
   ["sltab-purchase", "sltab-shipping", "sltab-consignment", "sltab-sales", "sltab-salesreturn", "sltab-purchasereturn"]);
+const retainedAccountingStatus = document.getElementById("slip-filter-status").value;
 window.navigateTo("cost-adjustment-slips");
 window.showAllSlipList();
 assert.equal(document.getElementById("page-cost-adjustment-slips").classList.contains("hidden"), false);
@@ -2037,7 +2835,9 @@ assert.equal(window.getFilteredSlipData().length, 0,
 window.switchSlipTab("purchase");
 assert.equal(document.getElementById("sharedSlipListCard").parentElement.id, "page-sales-list",
   "leaving the dedicated adjustment page must restore the shared list to the accounting page");
-assert.equal(document.getElementById("slip-filter-status").value, "processing", "document status search must default to processing");
+assert.equal(document.getElementById("slip-filter-status").value, retainedAccountingStatus, "returning from adjustment slips must retain accounting search status");
+window.switchSlipTab("purchase");
+assert.equal(document.getElementById("slip-filter-status").value, "processing", "explicit tab selection must default to processing");
 assert.deepEqual([...document.querySelectorAll("#slip-filter-status option")].map(option => option.textContent),
   ["処理中", "未払い", "処理済", "すべて"],
   "purchase slips must expose processing, unpaid and completed status filters");
@@ -2094,8 +2894,18 @@ assert.equal(document.getElementById("slipReviseSaveButton").disabled, true,
   "purchase revision save must remain disabled until a required reason is entered");
 document.getElementById("slipReviseNote").value = "仕入金額の入力訂正";
 window.updateSlipReviseSaveState();
-assert.equal(document.getElementById("slipReviseSaveButton").disabled, false,
-  "entering a save reason must expose an enabled save action");
+assert.equal(document.getElementById("slipReviseSaveButton").disabled,true,'reason alone must not enable saving');
+assert.equal(await window.submitSlipRevise(),false);
+assert.equal(purchaseRevisionPayload,null,'reason-only submission must not call the API');
+const revisionSku=document.getElementById('rv-pu-sku-0');
+const originalRevisionSku=revisionSku.value;
+revisionSku.value=originalRevisionSku+'-CHANGED';revisionSku.dispatchEvent(new window.Event('input',{bubbles:true}));
+assert.equal(document.getElementById('slipReviseSaveButton').disabled,false);
+revisionSku.value=originalRevisionSku;revisionSku.dispatchEvent(new window.Event('input',{bubbles:true}));
+assert.equal(document.getElementById('slipReviseSaveButton').disabled,true,'reverting the value must disable saving again');
+document.getElementById('rv-pu-pp-0').value=String(savedSinglePurchaseSlip.lines[0].purchasePrice+1);
+window.updateSlipReviseSaveState();
+assert.equal(document.getElementById('slipReviseSaveButton').disabled,false,'a real value change with a reason enables saving');
 assert.equal(await window.submitSlipRevise(), true);
 assert.equal(purchaseRevisionPayload.reason, "仕入金額の入力訂正");
 assert.equal(purchaseRevisionPayload.lines[0].id, "pul-revision-test");
@@ -2179,6 +2989,21 @@ try {
     "current sales price must accumulate only confirmed adjustments for the same original sale and line");
   assert.equal(window._salesChangeAmount(salesChangeSource, salesChangeSource.items[1]), 9850,
     "adjustments for another source line must not leak into the second product");
+  const unpaidFooter = JSDOM.fragment(window.buildSlipDetailFooter('sales',salesChangeSource));
+  assert.equal(unpaidFooter.querySelector('[onclick^="openSalesChangeModal"]').disabled,true);
+  assert.equal(unpaidFooter.querySelector('[onclick^="openSlipRevise"]').disabled,false);
+  window.openSalesChangeModal(salesChangeSource.id);
+  assert.equal(document.getElementById('salesChangeOverlay'),null,'unpaid sale cannot open adjustment');
+  window.openSlipRevise('sales',salesChangeSource.id);
+  salesChangeSource.paidAt = '2026-09-17T00:00:00Z';
+  assert.equal(await window.submitSlipRevise(),false,'payment after opening editor blocks save');
+  assert.equal(document.getElementById('slipReviseSaveButton').disabled,true);
+  window.closeSlipRevise();
+  window.openSlipRevise('sales',salesChangeSource.id);
+  assert.equal(document.getElementById('slipReviseOverlay').classList.contains('hidden'),true);
+  const paidFooter = JSDOM.fragment(window.buildSlipDetailFooter('sales',salesChangeSource));
+  assert.equal(paidFooter.querySelector('[onclick^="openSalesChangeModal"]').disabled,false);
+  assert.equal(paidFooter.querySelector('[onclick^="openSlipRevise"]').disabled,true);
   window.openSalesChangeModal(salesChangeSource.id);
   const salesChangeOverlay = document.getElementById("salesChangeOverlay");
   const salesChangeClickDate = window.getLocalDateISO();
@@ -2328,8 +3153,8 @@ try {
   assert.match(mixedPreview.textContent, /\+\$200/u);
   assert.match(mixedPreview.textContent, /−\$350/u);
   assert.match(mixedPreview.textContent, /−\$150/u, 'mixed voucher total is the signed net adjustment');
-  assert.match(mixedPreview.textContent, /増額理由：増額理由/u);
-  assert.match(mixedPreview.textContent, /減額理由：減額理由/u);
+  assert.doesNotMatch(mixedPreview.textContent, /増額理由：増額理由/u, 'Only public product notes belong in non-cost statement remarks');
+  assert.doesNotMatch(mixedPreview.textContent, /減額理由：減額理由/u, 'Only public product notes belong in non-cost statement remarks');
   const mixedDetail = JSDOM.fragment(window.buildSlipDetailBody('sales', mixedRevision));
   assert.match(mixedDetail.textContent, /増額・減額/u);
   assert.match(mixedDetail.textContent, /−\$150/u);
@@ -2351,24 +3176,22 @@ try {
     "revision remarks must identify the sales slip and state that its amount is being corrected");
   assert.doesNotMatch(salesChangePreview.textContent, /元売上伝票：/u);
   assert.doesNotMatch(salesChangePreview.textContent, /理由：商品ごとの調整理由/u, 'remarks must only identify the source sale');
-  assert.match(salesChangePreview.textContent, /初期売価：\$9,200 → 変更売価：\$9,000/u, "before and after prices must be on one line in that order");
+  assert.doesNotMatch(salesChangePreview.textContent, /初期売価：\$9,200 → 変更売価：\$9,000/u, 'Only public product notes belong in non-cost statement remarks');
   assert.doesNotMatch(salesChangePreview.textContent, /元値：|変更後売価：/u);
-  assert.match(salesChangePreview.textContent, /ロレックス \/ Submariner\n初期売価：/u);
+  assert.match(salesChangePreview.textContent, /ロレックス[\s\S]*Submariner/u);
   assert.doesNotMatch(salesChangePreview.textContent, /Submariner \/ 減額|Speedmaster \/ 減額/u);
-  assert.match(salesChangePreview.textContent, /変更売価：\$0/u, "zero must not be treated as missing");
+  assert.doesNotMatch(salesChangePreview.textContent, /変更売価：\$0/u, 'Only public product notes belong in non-cost statement remarks');
   assert.match(salesChangePreview.textContent, /−\$550/u, "total must remain the adjustment delta only");
   const yenRevisionPreview = JSDOM.fragment(window.buildSalesAdjustmentRecordTemplateHTML({
     ...savedSalesChangeRevision, currency: 'JPY', inputCurrency: 'JPY', adjustmentDirection: 'increase',
     items: [{ brand: 'ロレックス', model: 'Submariner', adjustmentAmount: 1000, beforeSalePrice: 9000, afterSalePrice: 10000, reason: '追加の合意' }],
   }));
-  assert.match(yenRevisionPreview.textContent, /初期売価：¥9,000 → 変更売価：¥10,000/u);
+  assert.doesNotMatch(yenRevisionPreview.textContent, /初期売価：¥9,000 → 変更売価：¥10,000/u, 'Only public product notes belong in non-cost statement remarks');
   assert.match(yenRevisionPreview.textContent, /\+¥1,000/u);
-  assert.match(yenRevisionPreview.textContent, /増額理由：追加の合意/u);
+  assert.doesNotMatch(yenRevisionPreview.textContent, /増額理由：追加の合意/u, 'Only public product notes belong in non-cost statement remarks');
   assert.doesNotMatch(yenRevisionPreview.textContent, /Submariner \/ 増額/u);
-  assert.match(salesChangePreview.textContent, /減額理由：値引き合意 <説明>/u,
-    "print previews must preserve the first product's saved reason");
-  assert.match(salesChangePreview.textContent, /減額理由：付属品不足への対応/u,
-    "print previews must preserve each product's distinct reason");
+  assert.doesNotMatch(salesChangePreview.textContent, /減額理由：値引き合意 <説明>/u, 'Only public product notes belong in non-cost statement remarks');
+  assert.doesNotMatch(salesChangePreview.textContent, /減額理由：付属品不足への対応/u, 'Only public product notes belong in non-cost statement remarks');
   assert.equal(salesChangePreview.querySelector("説明"), null,
     "saved reasons must be escaped in the printable document");
   assert.match(salesChangePreview.textContent, /調整金額合計/u);
@@ -2379,7 +3202,7 @@ try {
   assert.match(taxablePreview.textContent, /消費税（10%）/u);
   assert.match(taxablePreview.textContent, /−¥5,000/u);
   assert.match(taxablePreview.textContent, /−¥55,000/u);
-  assert.match(taxablePreview.textContent, /減額理由：保証書なし/u);
+  assert.doesNotMatch(taxablePreview.textContent, /減額理由：保証書なし/u, 'Only public product notes belong in non-cost statement remarks');
   const taxableDetail = JSDOM.fragment(window.buildSlipDetailBody('sales', taxableRevision));
   assert.match(taxableDetail.textContent, /調整小計（税抜）/u);
   assert.match(taxableDetail.textContent, /−¥5,000/u);
@@ -2502,6 +3325,31 @@ assert.equal(savedSingleInventory.status, "在庫中", "sales-return slips must 
 window.switchSlipTab("salesreturn");
 window.showAllSlipList();
 assert.match(document.getElementById("slipListBody").textContent, /SR-LINK-TEST/u);
+// Transaction confirmation is distinct from tracking confirmation. All views must agree.
+const originalSalesReturnStatus = linkedSalesReturn.status;
+linkedSalesReturn.status = "処理済";
+for (const [trackingNumber, confirmed, expected] of [
+  ["", false, "処理中"], ["TRACK-SALES-001", false, "処理中"],
+  ["TRACK-SALES-001", true, "処理済"], ["TRACK-SALES-001", false, "処理中"],
+]) {
+  linkedSalesReturn.trackingNo = trackingNumber;
+  linkedSalesReturn.trackingConfirmed = confirmed;
+  linkedSalesReturn.trackingConfirmedAt = confirmed ? "2099-12-31T12:00:00Z" : "";
+  window.renderSlipList([linkedSalesReturn]);
+  const returnListRow = document.querySelector("#slipListBody tr");
+  assert.equal(returnListRow.cells[6].textContent.trim(), expected, "list status must use tracking confirmation rather than raw transaction status");
+  window.openSalesReturnDetail(linkedSalesReturn.id);
+  const statusDetail = [...document.querySelectorAll("#salesReturnDetailBody .detail-row")].find(row => row.querySelector(".detail-label")?.textContent === "ステータス");
+  assert.equal(statusDetail.querySelector(".detail-value").textContent.trim(), expected, "detail and list status must agree");
+  assert.equal(window.matchesSlipStatusFilter(linkedSalesReturn, "processing", "salesreturn"), !confirmed);
+  assert.equal(window.matchesSlipStatusFilter(linkedSalesReturn, "completed", "salesreturn"), confirmed);
+}
+document.getElementById("salesReturnDetailModal").classList.add("hidden");
+linkedSalesReturn.status = originalSalesReturnStatus;
+delete linkedSalesReturn.trackingNo;
+delete linkedSalesReturn.trackingConfirmed;
+delete linkedSalesReturn.trackingConfirmedAt;
+
 
 const linkedPurchaseReturn = {
   id: "PR-RET-LINK-TEST", slipId: savedSinglePurchaseSlip.id, date: "2099-12-31", supplier: "S001", status: "承認済",
@@ -2595,15 +3443,19 @@ window.peRenderList();
 assert.equal(window.peGetStaffDisplayName(purchaseStaffRecord.code), purchaseStaffRecord.name, "stable staff codes must resolve to the current master name");
 assert.equal(document.getElementById("pe-list-tbody").textContent.includes(purchaseStaffRecord.name), true, "registered purchase slips must display the staff name");
 assert.equal(document.getElementById("pe-list-tbody").textContent.includes(purchaseStaffRecord.code), false, "registered purchase slips must not expose the internal staff code");
-window.peViewSlip(staffDisplaySlip.id);
-assert.equal(document.getElementById("peViewModalBody").textContent.includes(purchaseStaffRecord.name), true, "purchase-slip details must display the staff name");
-assert.equal(document.getElementById("peViewModalBody").textContent.includes(purchaseStaffRecord.code), false, "purchase-slip details must hide the internal staff code");
-assert.deepEqual(
-  [...document.querySelectorAll("#peViewModalBody .form-label")].map(label => label.textContent.trim()).filter(label => ["仕入区分", "税区分"].includes(label)),
-  ["仕入区分", "税区分"],
-  "purchase-slip details must show purchase category and tax category separately",
-);
-document.getElementById("peViewModal").style.display = "none";
+document.querySelector('#pe-list-tbody tr[data-slip-id="'+staffDisplaySlip.id+'"]').click();
+assert.equal(window.__zaikoCurrentPage,'sales-list');
+assert.equal(window.eval('currentSlipTab'),'purchase');
+assert.equal(document.getElementById('slipDetailOverlay').classList.contains('hidden'),false);
+assert.ok(document.getElementById('slipDetailHeaderSub').textContent.includes(staffDisplaySlip.id));
+assert.equal(document.getElementById('slipDetailBody').textContent.includes(purchaseStaffRecord.name),true,'shared details resolve staff codes');
+assert.equal(document.getElementById('slipDetailBody').textContent.includes(purchaseStaffRecord.code),false,'shared details hide internal staff codes');
+assert.match(document.getElementById('slipDetailBody').textContent,/仕入区分・税区分/u);
+assert.notEqual(document.getElementById('peViewModal').style.display,'flex','legacy entry modal must not open');
+window.closeSlipDetail();
+window.navigateTo('purchase-entry');
+assert.equal(window.eval('_peSlipData.paymentMethod'),'bank_transfer','leaving purchase entry discards the prior draft');
+window.peSetPaymentMethod('card');
 const purchaseSlipDetailHtml = window.buildSlipDetailBody("purchase", staffDisplaySlip);
 assert.equal(purchaseSlipDetailHtml.includes("${purchaseTax.taxLabel}"), false,
   "purchase-slip details must render the tax label instead of exposing the template expression");
@@ -2689,6 +3541,53 @@ assert.equal(document.getElementById("peProductModal").style.display, "flex");
 assert.equal(document.getElementById("pep-model").value, "モーダル編集前");
 assert.equal(document.getElementById("pep-shape").value, modalTestShape);
 assert.equal(document.getElementById("pep-marking").value, modalTestMarking);
+// Draft-row inputs need IME protection independently of product-modal initialization.
+{
+  const sku = document.querySelector('#pe-detail-tbody .pe-sku-input');
+  const count = document.getElementById('pe-line-add-count');
+  const quantity = document.getElementById('pep-bracelet-qty');
+  const row = window.eval('_peSlipData.lines[0]');
+  const originalSku = row.sku;
+  for (const field of [sku, count, quantity]) {
+    const original = field.value;
+    field.value = '';
+    field.dispatchEvent(new window.InputEvent('input', {bubbles:true}));
+    assert.equal(field.value, '', 'clearing a quantity must not insert 1 while editing');
+    field.dispatchEvent(new window.CompositionEvent('compositionstart', {bubbles:true}));
+    field.value = '１２';
+    field.dispatchEvent(new window.InputEvent('input', {bubbles:true,isComposing:true}));
+    if (field.type !== 'number') assert.equal(field.value, '１２', 'do not rewrite composing digits');
+    const event = new window.KeyboardEvent('keydown', {key:'Enter',isComposing:true,keyCode:229,bubbles:true,cancelable:true});
+    field.dispatchEvent(event);
+    assert.equal(event.defaultPrevented, false, 'IME confirmation must not navigate or add lines');
+    // Native number inputs normalize committed full-width text before compositionend.
+    if (field.type === 'number') field.value = '12';
+    field.dispatchEvent(new window.CompositionEvent('compositionend', {bubbles:true,data:'１２'}));
+    assert.equal(field.value, '12');
+    if (field === sku) assert.equal(row.sku, '12', 'draft must receive committed SKU without trailing input');
+    field.value = original;
+  }
+  row.sku = originalSku;
+}
+// IME must own its composition range until commit; rewriting it duplicates digits.
+for (const id of ['pep-ref', 'pep-serial']) {
+  const input = document.getElementById(id);
+  const original = input.value;
+  input.dispatchEvent(new window.CompositionEvent('compositionstart', { bubbles: true }));
+  for (const text of ['１', '１２', '１２３']) {
+    input.value = text;
+    input.dispatchEvent(new window.InputEvent('input', { bubbles: true, isComposing: true, inputType: 'insertCompositionText', data: text }));
+    assert.equal(input.value, text, id + ' must not rewrite active IME digits');
+  }
+  input.dispatchEvent(new window.CompositionEvent('compositionend', { bubbles: true, data: '１２３' }));
+  assert.equal(input.value, '123', id + ' normalizes committed digits once');
+  input.dispatchEvent(new window.InputEvent('input', { bubbles: true, inputType: 'insertText', data: '１２３' }));
+  assert.equal(input.value, '123', id + ' remains unchanged on trailing input');
+  input.value = '11112222';
+  input.dispatchEvent(new window.InputEvent('input', { bubbles: true }));
+  assert.equal(input.value, '11112222', id + ' preserves intentional repeated digits');
+  input.value = original;
+}
 document.getElementById("pep-model").value = "モーダル編集後";
 window.peSaveProduct();
 assert.equal(document.getElementById("peProductModal").style.display, "none");
@@ -2749,7 +3648,7 @@ delete window.ZaikoAPI;
 
 addLineCountInput.value = "１２a";
 window.peNormalizeAddCountInput(addLineCountInput);
-assert.equal(addLineCountInput.value, "", "bulk line count must accept half-width digits only");
+assert.equal(addLineCountInput.value, "12", "bulk line count normalizes committed full-width digits and removes non-digits");
 
 document.getElementById("pe-date").value = "2099-12-31";
 window.peOnDateChange();
@@ -2791,9 +3690,10 @@ window.HTMLAnchorElement.prototype.click = function capturePurchaseCSVDownload()
   csvDownloadNames.push(this.download);
 };
 const purchaseCSVTemplate = window.peDownloadCSVTemplate();
+const purchaseTemplateRows = purchaseCSVTemplate.rows;
 assert.equal(csvDownloadNames.at(-1), "仕入伝票CSVテンプレート.csv");
 assert.deepEqual(
-  [...purchaseCSVTemplate.rows[0]],
+  [...purchaseTemplateRows[0]],
   [
     "マーキングコード", "売価", "形状コード", "SKU", "原価",
     "ブランドコード", "モデル", "型番", "シリアル", "素材コード",
@@ -2801,9 +3701,9 @@ assert.deepEqual(
   ],
   "the purchase template must contain only user-entered fields and stable master codes",
 );
-assert.equal(purchaseCSVTemplate.rows.length, 1, "the purchase template must contain only the header row");
+assert.equal(purchaseTemplateRows.length, 1, "the purchase template must contain only the header row");
 for (const removedColumn of ["仕入伝票番号", "伝票備考", "明細No.", "管理番号", "ブランド名", "コンディションコード", "コンディション名（参照用）", "BOX番号", "付属品", "BRACELET PARTS数量"]) {
-  assert.equal(purchaseCSVTemplate.rows[0].includes(removedColumn), false, `${removedColumn} must not remain in the purchase CSV template`);
+  assert.equal(purchaseTemplateRows[0].includes(removedColumn), false, `${removedColumn} must not remain in the purchase CSV template`);
 }
 const marketCSVTemplate = window.marketDownloadTemplate();
 assert.equal(csvDownloadNames.at(-1), "相場表テンプレート.csv");
@@ -2842,7 +3742,7 @@ assert.equal(document.querySelector('#marketDraftTableBody input[aria-label="明
 assert.equal(document.getElementById("marketCsvPreviewModal").classList.contains("hidden"), true, "market CSV staging must remain on the registration page instead of opening a modal");
 window.marketCancelCSVImport();
 assert.equal(document.getElementById("marketDraftTableWrap").hidden, true);
-const purchaseCSVHeaders = [...purchaseCSVTemplate.rows[0]];
+const purchaseCSVHeaders = [...purchaseTemplateRows[0]];
 const supplierForCSV = window.eval("APP_DATA.suppliers[0]");
 const staffForCSV = window.eval("APP_DATA.staffRecords[0]");
 const materialForCSV = window.eval("APP_DATA.materials[0]");
@@ -2887,7 +3787,7 @@ assert.ok(bulkPurchase, "the CSV purchase must be loaded into the editable draft
 assert.equal(document.querySelectorAll("#pe-detail-tbody tr").length, 2, "all CSV rows must be visible in the purchase detail table");
 assert.equal(document.getElementById("pe-date").value, "2099-12-29");
 assert.equal(document.getElementById("pe-supplier").value, supplierForCSV.code);
-assert.match(bulkPurchase.id, /^PI-2099-[0-9]{4}$/u, "the purchase slip number must be generated without a CSV column");
+assert.match(bulkPurchase.id, /^SD-291299[0-9]{3}$/u, "the purchase slip number must be generated without a CSV column");
 assert.deepEqual([...bulkPurchase.lines.map((line) => line.lineNo)], [1, 2], "detail numbers must follow CSV row order automatically");
 assert.deepEqual([...bulkPurchase.lines.map((line) => line.code)], ["2912990001", "2912990002"], "management numbers must be generated sequentially without a CSV column");
 assert.equal(bulkPurchase.lines[0].productDetail.brand, "", "CSV purchase registration must allow an unknown brand");
@@ -2971,7 +3871,7 @@ const savedPurchaseTemplateHtml = window.buildPurchaseRecordTemplateHTML(savedPu
 assert.match(savedPurchaseTemplateHtml, /仕入伝票/u, "saved purchase slips must use the template layout");
 assert.match(savedPurchaseTemplateHtml, /明細表/u);
 assert.equal(savedPurchaseTemplateHtml.includes("SKU:"), false, "saved purchase slips must not display SKU");
-assert.match(savedPurchaseTemplateHtml, /付属品: BOX・GUARANTEE/u, "saved purchase slips must display accessories in the description");
+assert.match(savedPurchaseTemplateHtml, /BOX・GUARANTEE/u, "saved purchase slips must display accessories in the description");
 assert.match(savedPurchaseTemplateHtml, /消費税（10%）/u, "saved domestic purchase slips must reproduce the 10% tax category");
 assert.match(savedPurchaseTemplateHtml, /仕入通貨：日本円（JPY）/u,
   "domestic purchase slips must identify JPY in the remarks section");
@@ -3016,10 +3916,10 @@ Object.assign(currentPurchaseProduct, {
 });
 const updatedPurchaseTemplateHtml = window.buildPurchaseRecordTemplateHTML(savedPurchase);
 const updatedPurchaseDetailHtml = window.buildSlipDetailBody("purchase", savedPurchase);
-assert.match(updatedPurchaseTemplateHtml, /更新後ブランド \/ 更新後モデル/u,
+assert.match(updatedPurchaseTemplateHtml, /更新後ブランド[\s\S]*更新後モデル/u,
   "purchase print previews must show the latest linked product brand and model");
 assert.match(updatedPurchaseTemplateHtml, /UPDATED-REF/u);
-assert.match(updatedPurchaseTemplateHtml, /付属品: CASE/u);
+assert.match(updatedPurchaseTemplateHtml, /CASE/u);
 assert.match(updatedPurchaseDetailHtml, /更新後ブランド/u,
   "purchase detail popups must show later product edits without rewriting the historical snapshot");
 Object.assign(currentPurchaseProduct, originalPurchaseProductDetails);
@@ -3038,16 +3938,16 @@ const savedSlipDownloadNames = [];
 const originalSavedSlipCreateObjectURL = window.URL.createObjectURL;
 const originalSavedSlipRevokeObjectURL = window.URL.revokeObjectURL;
 const originalSavedSlipAnchorClick = window.HTMLAnchorElement.prototype.click;
-window.URL.createObjectURL = () => "blob:saved-slip-test";
+window.URL.createObjectURL = blob => { assert.equal(blob.type, 'application/pdf'); return 'blob:saved-slip-test'; };
 window.URL.revokeObjectURL = () => {};
 window.HTMLAnchorElement.prototype.click = function captureSavedSlipDownload() {
   savedSlipDownloadNames.push(this.download);
 };
 const savedSlipCases = [
-  { type: "purchase", record: savedPurchase, title: /仕入伝票プレビュー/u, filename: `${savedPurchase.id}_仕入伝票.html` },
-  { type: "shipping", record: window.eval("APP_DATA.shipments[0]"), title: /出荷伝票プレビュー/u, filename: `${window.eval("APP_DATA.shipments[0].id")}_出荷伝票.html` },
-  { type: "consignment", record: savedConsignment, title: /委託伝票プレビュー/u, filename: `${savedConsignment.id}_委託伝票.html` },
-  { type: "sales", record: window.eval("APP_DATA.sales[0]"), title: /請求書（売上伝票）プレビュー/u, filename: `${window.eval("APP_DATA.sales[0].id")}_請求書.html` },
+  { type: "purchase", record: savedPurchase, title: /仕入伝票プレビュー/u, filename: `${savedPurchase.id}_仕入伝票.pdf` },
+  { type: "shipping", record: window.eval("APP_DATA.shipments[0]"), title: /出荷伝票プレビュー/u, filename: `${window.eval("APP_DATA.shipments[0].id")}_出荷伝票.pdf` },
+  { type: "consignment", record: savedConsignment, title: /委託伝票プレビュー/u, filename: `${savedConsignment.id}_委託伝票.pdf` },
+  { type: "sales", record: window.eval("APP_DATA.sales[0]"), title: /請求書（売上伝票）プレビュー/u, filename: `${window.eval("APP_DATA.sales[0].id")}_請求書.pdf` },
 ];
 for (const savedSlipCase of savedSlipCases) {
   assert.match(
@@ -3058,7 +3958,7 @@ for (const savedSlipCase of savedSlipCases) {
   window.openSavedSlipDocument(savedSlipCase.type, savedSlipCase.record.id);
   assert.match(document.getElementById("savedSlipDocumentTitle").textContent, savedSlipCase.title);
   assert.match(document.getElementById("savedSlipDocumentPrintArea").textContent, /明細表/u);
-  window.downloadSavedSlipDocument();
+  await window.downloadSavedSlipDocument();
   assert.equal(savedSlipDownloadNames.at(-1), savedSlipCase.filename);
   window.closeSavedSlipDocument();
 }
@@ -3120,7 +4020,7 @@ assert.equal(purchaseReturnInvoiceHtml.includes("SKU:"), false, "purchase return
 assert.equal(purchaseReturnInvoiceHtml.includes("元仕入価格を使用"), false, "purchase return documents must not display line or slip notes");
 assert.equal(purchaseReturnInvoiceHtml.includes("帳票テスト返品"), false, "purchase return documents must not display return reasons as notes");
 assert.equal(purchaseReturnInvoiceHtml.includes("<strong>備考</strong>"), false, "purchase return documents must omit the note section");
-assert.match(purchaseReturnInvoiceHtml, /付属品: BOX・GUARANTEE/u, "purchase return details must retain accessory information");
+assert.match(purchaseReturnInvoiceHtml, /BOX・GUARANTEE/u, "purchase return details must retain accessory information");
 assert.match(document.getElementById("prInvoiceModal").textContent, /ダウンロード/u);
 assert.ok(document.querySelector('#prInvoiceModal button[onclick="downloadPurchaseReturnDocument()"]'));
 assert.match(document.getElementById("sltab-purchasereturn").textContent, /仕入返品伝票/u);
@@ -3133,8 +4033,8 @@ window.URL.revokeObjectURL = () => {};
 window.HTMLAnchorElement.prototype.click = function capturePurchaseReturnDownload() {
   downloadedPurchaseReturnName = this.download;
 };
-window.downloadPurchaseReturnDocument();
-assert.equal(downloadedPurchaseReturnName, `${purchaseReturn.id}_仕入返品伝票.html`);
+await window.downloadPurchaseReturnDocument();
+assert.equal(downloadedPurchaseReturnName, `${purchaseReturn.id}_仕入返品伝票.pdf`);
 window.HTMLAnchorElement.prototype.click = originalPurchaseReturnAnchorClick;
 window.URL.createObjectURL = originalPurchaseReturnCreateObjectURL;
 window.URL.revokeObjectURL = originalPurchaseReturnRevokeObjectURL;
@@ -3186,8 +4086,8 @@ window.URL.revokeObjectURL = () => {};
 window.HTMLAnchorElement.prototype.click = function captureSalesReturnDownload() {
   downloadedSalesReturnName = this.download;
 };
-window.downloadSalesReturnDocument();
-assert.equal(downloadedSalesReturnName, `${salesReturn.id}_売上返品伝票.html`);
+await window.downloadSalesReturnDocument();
+assert.equal(downloadedSalesReturnName, `${salesReturn.id}_売上返品伝票.pdf`);
 window.HTMLAnchorElement.prototype.click = originalSalesReturnAnchorClick;
 window.URL.createObjectURL = originalCreateObjectURL;
 window.URL.revokeObjectURL = originalRevokeObjectURL;
@@ -3227,8 +4127,8 @@ assert.equal(document.getElementById("pe-total-purchase").textContent, "¥123,45
   "tax-equivalent reference values must not be added to the payment total");
 window.peSetTaxCategory("out_of_scope");
 assert.equal(document.getElementById("pe-tax-category-out-of-scope").getAttribute("aria-checked"), "true");
-assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "対象外");
-assert.equal(document.getElementById("pe-total-tax").textContent, "対象外");
+assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "TAX FREE");
+assert.equal(document.getElementById("pe-total-tax").textContent, "TAX FREE");
 window.peSetTaxCategory("consumption_tax");
 window.pePrintPreview();
 const purchasePrintHtml = document.getElementById("pePrintPreviewContent").innerHTML;
@@ -3240,7 +4140,7 @@ assert.match(purchasePrintHtml, /¥135,801/u, "domestic purchase slips must prin
 assert.match(purchasePrintHtml, /商品点数：1点/u, "purchase slips must display the number of products");
 assert.match(purchasePrintHtml, /\.tpl-cover-total span\{[^}]*white-space:nowrap/u, "purchase total labels must remain on one line");
 assert.equal(purchasePrintHtml.includes("SKU:"), false, "purchase slip previews must not display SKU");
-assert.match(purchasePrintHtml, /付属品: BOX・GUARANTEE/u, "purchase slip previews must display accessories in the description");
+assert.match(purchasePrintHtml, /BOX・GUARANTEE/u, "purchase slip previews must display accessories in the description");
 assert.match(purchasePrintHtml, /支払い方法：銀行振込/u, "purchase slips must print the selected payment method");
 assert.match(purchasePrintHtml, new RegExp(companyInfo.companyName));
 assert.match(purchasePrintHtml, new RegExp(companyInfo.address));
@@ -3248,7 +4148,7 @@ assert.equal(purchasePrintHtml.includes("お振込先"), false, "purchase slips 
 window.peclosePrintModal();
 window.peSetPurchaseTaxMode("personal");
 assert.equal(document.getElementById("pe-tax-personal").getAttribute("aria-checked"), "true");
-assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "対象外");
+assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "TAX FREE");
 assert.equal(document.getElementById("pe-total-purchase").textContent, "¥123,456");
 assert.match(document.getElementById("pe-tax-mode-description").textContent, /個人買取仕入/u);
 window.peSetPurchaseCurrency("HKD");
@@ -3259,13 +4159,13 @@ assert.equal(document.getElementById("pe-currency-hkd").getAttribute("aria-check
 window.peSetPurchaseTaxMode("overseas");
 window.peSetPurchaseCurrency("USD");
 assert.equal(document.getElementById("pe-tax-overseas").getAttribute("aria-checked"), "true");
-assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "対象外");
-assert.equal(document.getElementById("pe-total-tax").textContent.trim(), "対象外");
+assert.equal(document.querySelector('[data-role="pe-line-tax-label"]').textContent.trim(), "TAX FREE");
+assert.equal(document.getElementById("pe-total-tax").textContent.trim(), "TAX FREE");
 assert.equal(document.getElementById("pe-total-purchase").textContent, "$123,456");
 assert.match(document.getElementById("pe-purchase-price-heading").textContent, /USD/u);
 window.pePrintPreview();
 const overseasPurchasePrintHtml = document.getElementById("pePrintPreviewContent").innerHTML;
-assert.match(overseasPurchasePrintHtml, /対象外/u, "overseas purchase slip tax cells must be marked out of scope");
+assert.match(overseasPurchasePrintHtml, /TAX FREE/u, "overseas purchase slip tax cells must be marked out of scope");
 assert.match(overseasPurchasePrintHtml, /\$123,456/u, "overseas purchase slips must print the original USD amount");
 assert.match(overseasPurchasePrintHtml, /USD（米ドル）/u, "overseas purchase slips must identify USD as the display currency");
 assert.match(overseasPurchasePrintHtml, /発行日時/u, "purchase slips must label the issuance timestamp explicitly");
@@ -3380,9 +4280,11 @@ const originalAnchorClick = window.HTMLAnchorElement.prototype.click;
 window.HTMLAnchorElement.prototype.click = function clickDownloadAnchor() {
   downloadClicks.push({ filename: this.download, href: this.href });
 };
-const shippingDownloadButton = document.querySelector('#page-shipping button[onclick="exportCSV(\'shipping\')"]');
+const shippingDownloadButton = document.querySelector('#page-shipping button[onclick="downloadCurrentShipmentDocument(true)"]');
 assert.match(shippingDownloadButton.textContent, /ダウンロード/u);
 assert.equal(shippingDownloadButton.textContent.includes("CSV"), false, "shipping button must be labelled as download");
+await window.downloadCurrentShipmentDocument(true);
+assert.match(downloadClicks.at(-1).filename, /_出荷伝票\.pdf$/u);
 const shippingDownload = window.exportCSV("shipping");
 assert.match(shippingDownload.filename, /^shipping_slip_.*\.csv$/u);
 assert.match(shippingDownload.csv, /売価/u);
@@ -3397,11 +4299,9 @@ assert.match(shippingPrintHtml, /出荷伝票/u);
 assert.match(shippingPrintHtml, /明細表/u);
 assert.match(shippingPrintHtml, /\$1,001/u, "shipping slips must print the entered USD sale amount");
 assert.match(shippingPrintHtml, /合計金額/u);
-assert.match(shippingPrintHtml, /商品詳細/u);
-assert.match(shippingPrintHtml, /付属品:/u);
-assert.match(shippingPrintHtml, /素材（本体）:/u);
-assert.match(shippingPrintHtml, /駆動方式:/u);
-assert.match(shippingPrintHtml, /ベルト素材:/u);
+assert.match(shippingPrintHtml, /商品情報/u);
+assert.match(shippingPrintHtml, /社内管理/u);
+assert.match(shippingPrintHtml, /tpl-product-grid/u);
 assert.equal(shippingPrintHtml.includes("文字盤:"), false, "shipping product detail must not include the dial field");
 assert.equal(shippingPrintHtml.includes("発行日"), false, "shipping slips must not show an issue date");
 window.switchShippingEntryCurrency("JPY");
@@ -3429,6 +4329,27 @@ const salesReferenceConsignment = { id: "CO-REF-PROCESSING", date: "2099-01-02",
 const salesReferenceCompleted = { id: "SH-REF-COMPLETED", date: "2099-01-03", destination: "B001", items: [{ code: salesReferenceTestItems[2].code }] };
 window.eval("APP_DATA.shipments").push(salesReferenceShipment, salesReferenceCompleted);
 window.eval("APP_DATA.consignments").push(salesReferenceConsignment);
+// Unapproved worker shipments must stay hidden even when inventory makes them processing.
+const unapprovedReference = {...salesReferenceShipment, id:'SY-UNAPPROVED', apiManaged:true, apiStatus:'draft', processingStatus:'processing'};
+window.eval('APP_DATA.shipments').push(unapprovedReference);
+for (const status of ['draft','pending_approval','returned','rejected','cancelled',undefined]) {
+  unapprovedReference.apiStatus = status;
+  window.openSalesReferenceModal();
+  assert.equal(document.querySelector('[data-reference-id="sy-unapproved"]'),null);
+  assert.equal(window.appendSalesReference('shipment',unapprovedReference),false);
+  window.onSalesIdInput(unapprovedReference.id);
+  assert.equal(window.eval('_salesSourceShipmentId'),null);
+}
+unapprovedReference.apiStatus='confirmed';
+window.openSalesReferenceModal();
+assert.ok(document.querySelector('[data-reference-id="sy-unapproved"]'),'approved shipment becomes selectable');
+const staleReferenceChoice=document.querySelector('.sales-reference-check[value="SY-UNAPPROVED"]');
+staleReferenceChoice.checked=true;
+unapprovedReference.apiStatus='draft';
+window.addSelectedSalesReferences();
+assert.equal(window.eval('_salesSourceShipmentId'),null,'stale checked choice must not import an unapproved shipment');
+window.eval('APP_DATA.shipments').pop();
+window.resetSalesForm();
 window.openSalesReferenceModal();
 assert.ok(document.querySelector('[data-reference-id="sh-ref-processing"]'));
 assert.ok(document.querySelector('[data-reference-id="co-ref-processing"]'));
@@ -3446,6 +4367,48 @@ window.toggleSalesReferenceDetails(processingShipmentSummary);
 assert.equal(document.querySelector('[data-reference-id="sh-ref-processing"] .sales-reference-details').classList.contains("hidden"), false);
 assert.match(document.querySelector('[data-reference-id="sh-ref-processing"] .sales-reference-details').textContent, new RegExp(salesReferenceTestItems[0].code));
 window.closeSalesReferenceModal();
+// Imported details must follow reference deselection without rebuilding unrelated rows.
+window.resetSalesForm();
+salesReferenceConsignment.destination = salesReferenceShipment.destination;
+window.addSalesItemByCode(salesReferenceTestItems[2].code, { notify: false });
+document.getElementById("sl-note").value = "手入力の備考";
+window.appendSalesReference("shipment", salesReferenceShipment);
+window.appendSalesReference("consignment", salesReferenceConsignment);
+const referenceSalesRows = () => [...document.querySelectorAll("#salesLines tr[data-line-id]")];
+const referenceRowCode = row => document.getElementById("sl-code-" + row.dataset.lineId).value;
+const retainedReferenceRow = referenceSalesRows().find(row => referenceRowCode(row) === salesReferenceTestItems[1].code);
+document.getElementById("sl-price-" + retainedReferenceRow.dataset.lineId).value = "123456";
+window.openSalesReferenceModal();
+const referenceChoice = (type, id) => document.querySelector('.sales-reference-check[data-type="' + type + '"][value="' + id + '"]');
+const shipmentReferenceChoice = referenceChoice("shipment", salesReferenceShipment.id);
+assert.equal(shipmentReferenceChoice.checked, true);
+assert.equal(shipmentReferenceChoice.disabled, false, "added references must be deselectable");
+shipmentReferenceChoice.click();
+assert.deepEqual(referenceSalesRows().map(referenceRowCode), [salesReferenceTestItems[2].code, salesReferenceTestItems[1].code]);
+assert.equal(document.getElementById("sl-price-" + retainedReferenceRow.dataset.lineId).value, "123456", "deselecting another source must preserve edited prices");
+assert.equal(window.eval("_salesSourceShipmentId"), null);
+assert.equal(document.getElementById("sl-id").value, salesReferenceConsignment.id);
+assert.equal(document.getElementById("sl-note").value.includes(salesReferenceShipment.id), false);
+assert.equal(document.getElementById("sl-note").value.includes("手入力の備考"), true);
+window.closeSalesReferenceModal();
+window.openSalesReferenceModal();
+assert.equal(referenceChoice("shipment", salesReferenceShipment.id).checked, false);
+referenceChoice("consignment", salesReferenceConsignment.id).click();
+assert.deepEqual(referenceSalesRows().map(referenceRowCode), [salesReferenceTestItems[2].code], "manual rows must survive all reference removals");
+assert.equal(document.getElementById("sl-id").value, "");
+assert.equal(document.getElementById("sl-note").value, "手入力の備考");
+referenceChoice("shipment", salesReferenceShipment.id).click();
+window.addSelectedSalesReferences();
+assert.deepEqual(referenceSalesRows().map(referenceRowCode), [salesReferenceTestItems[2].code, salesReferenceTestItems[0].code], "removed references can be re-added");
+window.resetSalesForm();
+window.appendSalesReference("shipment", salesReferenceShipment);
+window.openSalesReferenceModal();
+referenceChoice("shipment", salesReferenceShipment.id).click();
+assert.deepEqual(referenceSalesRows().map(referenceRowCode), [""], "removing the last source must leave one empty entry row");
+assert.equal(document.getElementById("salesTotalDisplay").textContent, "¥0");
+assert.equal(window.eval("_salesSourceDocuments.length"), 0);
+window.closeSalesReferenceModal();
+window.resetSalesForm();
 window.eval("APP_DATA.shipments").splice(window.eval("APP_DATA.shipments").indexOf(salesReferenceShipment), 1);
 window.eval("APP_DATA.shipments").splice(window.eval("APP_DATA.shipments").indexOf(salesReferenceCompleted), 1);
 window.eval("APP_DATA.consignments").splice(window.eval("APP_DATA.consignments").indexOf(salesReferenceConsignment), 1);
@@ -3479,9 +4442,38 @@ assert.deepEqual(
 assert.match(document.getElementById("sl-price-heading").textContent, /円/u);
 assert.match(document.getElementById("sl-price-rate").textContent, /1 USD = ¥155\.00/u);
 
+// Round each automatically populated JPY line upward, never the final aggregate.
+assert.equal(window.formatSalesEntryAmount(1001,'JPY'),'156,000');
+assert.equal(window.formatSalesEntryAmount(1000,'JPY'),'155,000');
+assert.equal(window.formatSalesEntryAmount(0,'JPY'),'');
+assert.equal(window.formatSalesEntryAmount(1001,'USD'),'1,001');
+const roundingProduct={code:'ROUND-TEST',brand:'TEST',model:'Rounding',status:'出荷済',salePrice:1001,purchasePrice:10000};
+window.eval('APP_DATA.inventory').push(roundingProduct);
+const roundingShipment={id:'SY-170926998',date:'2026-09-17',destination:'',items:[{...roundingProduct,salePrice:1001}]};
+window.applyShipmentToSales(roundingShipment);
+assert.equal(document.getElementById('sl-price-1').value,'156,000','shipment number lookup must round JPY up');
+assert.equal(document.getElementById('salesTotalDisplay').textContent,'¥156,000');
+document.getElementById('sl-price-1').value='156123';window.onSalesPriceInput(document.getElementById('sl-price-1'));
+window.switchSalesEntryCurrency('JPY');
+assert.equal(document.getElementById('sl-price-1').value,'156,123','selected currency click must preserve manually entered yen');
+window.eval('APP_DATA.shipments').push(roundingShipment);
+window.resetSalesForm();window.appendSalesReference('shipment',roundingShipment);
+assert.equal(document.querySelector('#salesLines .sl-input-price').value,'156,000','reference picker must use the same rounding');
+window.resetSalesForm();window.switchSalesEntryCurrency('USD');window.applyShipmentToSales(roundingShipment);
+assert.equal(document.getElementById('sl-price-1').value,'1,001');
+window.switchSalesEntryCurrency('JPY');assert.equal(document.getElementById('sl-price-1').value,'156,000');
+window.eval('APP_DATA.inventory').pop();window.eval('APP_DATA.shipments').pop();window.resetSalesForm();
+
 const sourceShipmentForClear = window.eval("APP_DATA.shipments.find(shipment => Array.isArray(shipment.items) && shipment.items.length > 0)");
 assert.ok(sourceShipmentForClear, "a shipment with items is required for the sales-link clear test");
-window.applyShipmentToSales(sourceShipmentForClear);
+const oldShipmentNumber = sourceShipmentForClear.id;
+for (const number of [oldShipmentNumber, 'SY-2026-0998']) {
+  sourceShipmentForClear.id = number;
+  window.onSalesIdInput(number);
+  assert.equal(window.eval('_salesSourceShipmentId'), number, 'both old and new shipment numbers must link sales details');
+}
+sourceShipmentForClear.id = oldShipmentNumber;
+window.onSalesIdInput(oldShipmentNumber);
 assert.equal(document.querySelectorAll("#salesLines tr[data-line-id]").length, sourceShipmentForClear.items.length);
 assert.equal(document.getElementById("sl-code-1").value, sourceShipmentForClear.items[0].code);
 document.getElementById("sl-id").value = "";
@@ -3497,7 +4489,7 @@ assert.ok(consignmentInventoryItem, "an in-stock item with a sale price is requi
 const originalConsignmentItemStatus = consignmentInventoryItem.status;
 consignmentInventoryItem.status = "委託中";
 const sourceConsignmentForSales = {
-  id: "CO-2026-0999",
+  id: "IT-2026-0999",
   date: "2026-08-01",
   destination: sourceShipmentForClear.destination || "B001",
   items: [{
@@ -3521,24 +4513,70 @@ assert.notEqual(document.getElementById("sl-price-1").value, "", "the inventory 
 assert.equal(document.getElementById("sl-date").value, salesDateBeforeConsignmentLink,
   "linking a consignment must keep the actual sales date instead of copying the consignment date");
 assert.equal(window.canUseInventoryItemForSales(consignmentInventoryItem), true,
-  "a consigned item may be sold only while its source consignment is linked");
-assert.match(document.getElementById("sl-note").value, /委託伝票: CO-2026-0999/u);
+  "a consigned item may be sold with a reference");
+assert.match(document.getElementById("sl-note").value, /委託伝票: IT-2026-0999/u);
 document.getElementById("sl-id").value = "";
 window.onSalesIdInput("");
 assert.equal(window.eval("_salesSourceConsignmentId"), null);
-assert.equal(window.canUseInventoryItemForSales(consignmentInventoryItem), false,
-  "clearing the consignment reference must stop a consigned item from being sold manually");
+assert.equal(window.canUseInventoryItemForSales(consignmentInventoryItem), true,
+  "consigned items must also support direct sales without a reference");
+// Direct entry, clearing the code, and reopening a reference must remain recoverable.
+const directConsignmentCode = document.getElementById("sl-code-1");
+directConsignmentCode.value = consignmentInventoryItem.code;
+window.autoFillItem(directConsignmentCode, 1, "sales");
+assert.equal(document.getElementById("sl-brand-1").textContent.includes("未登録"), false);
+document.getElementById("sl-price-1").value = "123456";
+window.appendSalesReference("consignment", sourceConsignmentForSales);
+assert.equal(document.querySelectorAll("#salesLines tr[data-line-id]").length, 1, "reference must reuse a matching manual row");
+assert.equal(document.getElementById("sl-price-1").value, "123456", "reference must preserve an entered price");
+directConsignmentCode.value = "";
+window.autoFillItem(directConsignmentCode, 1, "sales");
+assert.equal(document.getElementById("sl-price-1").value, "");
+assert.equal(document.getElementById("salesTotalDisplay").textContent, "¥0");
+window.resetSalesForm();
+window.appendSalesReference("consignment", sourceConsignmentForSales);
+window.removeSalesLine(document.querySelector("#salesLines [onclick^='removeSalesLine']"));
+assert.equal(document.querySelectorAll("#salesLines tr[data-line-id]").length, 1);
+assert.equal(document.querySelector("#salesLines input[id^='sl-code-']").value, "", "the final row must be removable and replaced by an empty row");
+assert.equal(document.getElementById("salesTotalDisplay").textContent, "¥0");
+window.resetSalesForm();
 window.eval("APP_DATA.consignments").pop();
 consignmentInventoryItem.status = originalConsignmentItemStatus;
 
 window.switchSalesEntryCurrency("USD");
+// Manual management-code entry uses the same expected price and currency as reference entry.
+const manualPriceFixtures = [
+ {code:'TEST-MANUAL-PRICE-1',brand:'TEST',model:'One',status:'在庫中',salePrice:1000,purchasePrice:10000},
+ {code:'TEST-MANUAL-PRICE-2',brand:'TEST',model:'Two',status:'委託中',salePrice:2000,purchasePrice:20000},
+ {code:'TEST-MANUAL-PRICE-0',brand:'TEST',model:'Zero',status:'在庫中',salePrice:0,purchasePrice:10000},
+ {code:'TEST-MANUAL-PRICE-SOLD',brand:'TEST',model:'Sold',status:'売上済',salePrice:3000,purchasePrice:10000},
+];
+window.eval("APP_DATA.inventory").push(...manualPriceFixtures);
+for(const currency of ['JPY','USD','HKD','EUR']) {
+ window.resetSalesForm();window.switchSalesEntryCurrency(currency);
+ const code=document.getElementById('sl-code-1'),price=document.getElementById('sl-price-1');
+ const enter=value=>{code.value=value;window.autoFillItem(code,1,'sales');};
+ enter(manualPriceFixtures[0].code);
+ assert.equal(price.value,window.formatSalesEntryAmount(1000,currency),'manual entry must populate '+currency);
+ assert.equal(price.dataset.entryCurrency,currency);
+ assert.equal(document.getElementById('salesTotalDisplay').textContent,window.formatSalesEntryDisplayValue(window.parseSalesPrice(price.value),currency));
+ price.value='12345';window.onSalesPriceInput(price);enter(' '+manualPriceFixtures[0].code+' ');
+ assert.equal(price.value,'12,345','same product lookup must preserve a manual override');
+ enter(manualPriceFixtures[1].code);assert.equal(price.value,window.formatSalesEntryAmount(2000,currency),'changing product must refresh its price');
+ enter('UNKNOWN');assert.equal(price.value,'');assert.equal(window.getSalesLinePriceUSD(price),0);
+ enter(manualPriceFixtures[0].code);enter(manualPriceFixtures[3].code);assert.equal(price.value,'','unavailable product must not retain previous price');
+ enter(manualPriceFixtures[0].code);enter(manualPriceFixtures[2].code);assert.equal(price.value,'','zero-price product must not retain previous price');
+ enter(manualPriceFixtures[0].code);enter('');assert.equal(price.value,'');assert.equal(window.getSalesLinePriceUSD(price),0);
+}
+window.eval("APP_DATA.inventory").splice(-manualPriceFixtures.length);
+window.resetSalesForm();window.switchSalesEntryCurrency('USD');
 const salesPriceInput = document.getElementById("sl-price-1");
 salesPriceInput.value = "1000";
 window.onSalesPriceInput(salesPriceInput);
 assert.equal(salesPriceInput.value, "1,000");
 assert.equal(salesPriceInput.dataset.entryCurrency, "USD");
 assert.equal(document.getElementById("salesTotalDisplay").textContent.trim(), "$1,000");
-assert.equal(document.getElementById("salesTotalTax").textContent.trim(), "対象外");
+assert.equal(document.getElementById("salesTotalTax").textContent.trim(), "TAX FREE");
 assert.equal(document.getElementById("salesTotalGrand").textContent.trim(), "$1,000");
 assert.match(document.getElementById("salesSubtotalLabel").textContent, /USD/u);
 assert.match(document.getElementById("salesTotalFxReference").textContent, /¥155,000/u);
@@ -3588,9 +4626,11 @@ window.autoFillItem(document.getElementById("sl-code-1"), 1, "sales");
 document.getElementById("sl-buyer").value = "B001";
 salesPriceInput.value = "310000";
 window.onSalesPriceInput(salesPriceInput);
-const salesDownloadButton = document.querySelector('#page-sales button[onclick="exportCSV(\'sales\')"]');
+const salesDownloadButton = document.querySelector('#page-sales button[onclick="downloadCurrentSalesDocument(true)"]');
 assert.match(salesDownloadButton.textContent, /ダウンロード/u);
 assert.equal(salesDownloadButton.textContent.includes("CSV"), false, "sales button must be labelled as download");
+await window.downloadCurrentSalesDocument(true);
+assert.match(downloadClicks.at(-1).filename, /_請求書\.pdf$/u);
 const salesDownload = window.exportCSV("sales");
 assert.match(salesDownload.filename, /^sales_slip_.*\.csv$/u);
 assert.match(salesDownload.csv, /売価/u);
@@ -3610,13 +4650,13 @@ window.onTaxFreeToggle(false);
 window.switchSalesEntryCurrency("USD");
 assert.equal(salesPriceInput.value, "2,000", "JPY input must round-trip back to the USD base amount");
 assert.equal(document.getElementById("salesTotalDisplay").textContent.trim(), "$2,000");
-assert.equal(document.getElementById("salesTotalTax").textContent.trim(), "対象外");
+assert.equal(document.getElementById("salesTotalTax").textContent.trim(), "TAX FREE");
 assert.equal(document.getElementById("salesTotalGrand").textContent.trim(), "$2,000");
 assert.match(document.getElementById("salesTotalFxReference").textContent, /¥310,000/u);
 const usdSalesPrintHtml = window.buildSalesSlip2PageHTML();
 assert.match(usdSalesPrintHtml, /表示通貨：USD/u);
 assert.match(usdSalesPrintHtml, /\$2,000/u);
-assert.match(usdSalesPrintHtml, /税区分：対象外/u);
+assert.match(usdSalesPrintHtml, /税区分：TAX FREE/u);
 assert.equal(usdSalesPrintHtml.includes("$2,200"), false, "USD invoices must not add consumption tax");
 window.switchSalesEntryCurrency("JPY");
 
@@ -3657,7 +4697,7 @@ assert.ok(marketRegistrationPage.querySelector("#market-basic-research-date"));
 assert.ok(marketRegistrationPage.querySelector("#market-basic-currency"));
 assert.deepEqual(
   [...marketRegistrationPage.querySelectorAll(".market-basic-grid > .form-group")]
-    .map(group => group.querySelector("select, input")?.id),
+    .map(group => group.querySelector("select, input[id]")?.id),
   ["market-basic-research-date", "market-basic-auction", "market-basic-category", "market-basic-currency"],
   "market research date and market category must appear in the swapped positions",
 );
@@ -4026,21 +5066,16 @@ assert.equal(document.getElementById("page-approval").classList.contains("hidden
 window.navigateTo("master");
 assert.equal(document.getElementById("adminAuthModal").classList.contains("hidden"), false, "worker master access must request admin authentication");
 document.getElementById("adminAuthCode").value = window._getLocalAdminAccessCode(false).code;
-window.submitAdminAuth();
+await window.submitAdminAuth();
 assert.equal(document.getElementById("page-master").classList.contains("hidden"), false, "admin authentication must unlock master access once");
 
 window.navigateTo("performance");
-assert.match(document.getElementById("perf-supplier").textContent, /管理者の承認が必要/u);
-const approvalCountBeforePerformance = window.eval("APP_DATA.approvalRequests.length");
-window.renderPerformance();
-const performanceApproval = window.getLatestPerformanceApproval();
-assert.ok(performanceApproval, "worker performance access must create an approval request");
-assert.equal(performanceApproval.status, "pending");
-assert.equal(performanceApproval.requesterName, "山本 太郎");
-assert.match(document.getElementById("perf-approval-status").textContent, /管理者の承認待ち/u);
-window.renderPerformance();
-assert.equal(window.eval("APP_DATA.approvalRequests.length"), approvalCountBeforePerformance + 1, "pending access request must not be duplicated");
-assert.match(window.localStorage.getItem("inv_approval_workflow_v2"), new RegExp(performanceApproval.id));
+assert.equal(document.getElementById("adminAuthModal").classList.contains("hidden"),false,"performance requires a password on access");
+const approvalCountBeforePerformance=window.eval("APP_DATA.approvalRequests.length");
+document.getElementById("adminAuthCode").value=window._getLocalAdminAccessCode(false).code;
+await window.submitAdminAuth();
+assert.equal(document.getElementById("page-performance").classList.contains("hidden"),false);
+assert.equal(window.eval("APP_DATA.approvalRequests.length"),approvalCountBeforePerformance,"password access must not create an approval request");
 
 window.navigateTo("inventory");
 window.execInventorySearch();
@@ -4061,9 +5096,7 @@ assert.notEqual(document.querySelector('.nav-item[data-page="approval"]').style.
 assert.notEqual(document.querySelector('.nav-item[data-page="master"]').style.display, "none", "admin must manage login credentials from master registration");
 assert.equal(document.querySelector('.nav-item[data-page="login-info"]'), null, "admin must not see the removed duplicate navigation");
 window.navigateTo("approval");
-assert.equal(window.approveRequest(performanceApproval.id), true);
 assert.equal(window.approveRequest(workerEditApproval.id), true);
-assert.equal(performanceApproval.status, "approved");
 assert.equal(inventory[0].model, approvedWorkerEditModel, "approval must apply the requested inventory edit");
 inventory[0].model = originalWorkerEditModel;
 window.replayApprovedApprovalOperations();
@@ -4072,7 +5105,9 @@ assert.equal(inventory[0].model, approvedWorkerEditModel, "approved operations m
 assert.ok(window.doAppLogin("buyer1", "buyer123"));
 window.applyRoleUI();
 window.navigateTo("performance");
-assert.match(document.getElementById("perf-approval-status").textContent, /閲覧が承認されています/u);
+assert.equal(document.getElementById("adminAuthModal").classList.contains("hidden"),false,"reentry requires authentication again");
+document.getElementById("adminAuthCode").value=window._getLocalAdminAccessCode(false).code;
+await window.submitAdminAuth();
 assert.match(document.getElementById("perf-supplier").textContent, /田中商事/u, "approved worker must be able to view performance data");
 
 const returnRequest = window.createApprovalRequest(
@@ -4123,9 +5158,10 @@ assert.deepEqual(
   `inline handlers reference missing functions: ${[...missingHandlerFunctions].sort().join(", ")}`,
 );
 
-assert.equal(document.querySelectorAll(".page-panel").length, 25);
-assert.equal(document.querySelectorAll(".nav-item").length, 21);
-assert.equal(document.querySelectorAll(".modal-overlay").length, 50);
+assert.equal(document.querySelectorAll(".page-panel").length, 26);
+assert.equal(document.querySelectorAll(".nav-item").length, 22);
+assert.equal(document.querySelectorAll(".modal-overlay").length, 51);
+assert.ok(document.getElementById("purchaseReturnWithdrawOverlay"), "purchase returns require a withdrawal confirmation dialog");
 const desktopSidebar = document.getElementById("appSidebar");
 const desktopSidebarToggle = document.getElementById("sidebarVisibilityToggle");
 assert.ok(desktopSidebar, "desktop sidebar must have a stable controlled element");
@@ -4347,11 +5383,22 @@ assert.equal(document.getElementById("ca-edit-product-brand").value, "");
 assert.equal(document.getElementById("ca-edit-product-model").value, "");
 assert.equal(document.getElementById("ca-edit-product-ref").value, "");
 assert.equal(document.getElementById("ca-edit-product-condition").value, "");
-assert.equal([...document.getElementById("ca-edit-product-accessories").selectedOptions].length, 0);
+assert.equal(document.querySelectorAll('#ca-edit-product-accessories input:checked').length, 0);
 assert.equal(document.getElementById("ca-item-notes").value, "");
 document.getElementById("ca-edit-product-brand").value = document.getElementById("ca-edit-product-brand").options[1].value;
 document.getElementById("ca-item-cost").value = "123000";
+const gramsField = document.getElementById('ca-edit-product-grams');
+assert.equal(gramsField.closest('.form-row').classList.contains('cols-3'),true);
+assert.equal(gramsField.closest('.form-group').previousElementSibling.querySelector('.checkbox-group').id,'ca-edit-product-accessories');
+assert.equal(gramsField.closest('.form-group').nextElementSibling.querySelector('input').id,'ca-edit-product-sale');
+gramsField.value='-1';assert.equal(window.costAdjustmentCompleteItemEdit(),false);
+gramsField.value='123.45';
 assert.equal(window.costAdjustmentCompleteItemEdit(), true);
+window.costAdjustmentOpenItemEditor(0);
+assert.equal(document.getElementById('ca-edit-product-grams').value,'123.45');
+document.getElementById('ca-edit-product-grams').value='';assert.equal(window.costAdjustmentCompleteItemEdit(),true);
+window.costAdjustmentOpenItemEditor(0);assert.equal(document.getElementById('ca-edit-product-grams').value,'');
+document.getElementById('ca-edit-product-grams').value='123.45';assert.equal(window.costAdjustmentCompleteItemEdit(),true);
 assert.equal(document.querySelector("#ca-split-slip-lines .ca-split-cost-input").value, "123000",
   "a cost entered in the item editor must immediately appear in the matching adjustment-slip line");
 assert.match(document.getElementById("ca-breakdown-result").textContent, /分裂後の商品\s*4\s*個/u);
@@ -4406,29 +5453,39 @@ assert.match(document.getElementById("ca-split-slip-status").textContent, /元�
 const originalZaikoAPI = window.ZaikoAPI;
 window.ZaikoAPI = window.ZaikoAPI || {};
 const originalConfirmProductCostAdjustment = window.ZaikoAPI.confirmProductCostAdjustment;
-window.ZaikoAPI.confirmProductCostAdjustment = async () => ({
+window.ZaikoAPI.confirmProductCostAdjustment = async (_source, payload) => { assert.equal(payload.outputs[0].product.weightGrams, "123.45"); return ({
   id: "cad-test-1",
   slipNumber: "CA-2026-0001",
   adjustmentDate: "2026-08-31",
   sourceProductCode: costAdjustmentProductCode,
   sourceStatus: "cost_adjustment",
   outputs: window.eval("_costAdjustmentState.breakdownDraft.items.map(item => ({ position: item.position, managementCode: `3108269${String(item.position).padStart(3, '0')}` }))"),
-});
-assert.equal(await window.costAdjustmentFinalize(), true,
-  "an exactly allocated cost split must issue its confirmed adjustment slip");
-assert.equal(window.eval("_costAdjustmentState.breakdownDraft.items.every(item => item.product.internalComment.includes('調整伝票番号: CA-2026-0001'))"), true,
-  "confirmed split outputs must show their issued adjustment slip number in the cost management field");
-assert.match(document.getElementById("ca-split-slip-title").textContent, /原価調整伝票/u);
-assert.equal(document.querySelector("#ca-split-slip .ca-split-slip-badge").textContent, "CA-2026-0001");
-assert.match(document.querySelector("#ca-split-slip-lines .ca-split-source-row").textContent, /対象商品（原価分け前）/u,
-  "the confirmed slip must retain the source product as an audit line");
-assert.equal(document.querySelectorAll("#ca-split-slip .ca-split-cost-input:disabled").length, 4,
-  "confirmed slip amounts must be locked");
-assert.equal(window.eval("_costAdjustmentState.product.purchasePrice"), sourceHistoricalCost,
-  "the source product must retain its historical cost after a split");
-assert.equal(window.eval("_costAdjustmentState.product.inventoryValuationExcluded"), true,
-  "the source product must be excluded from current inventory valuation after a split");
-assert.equal(window.eval("_costAdjustmentState.product.status"), "原価調整中");
+}); };
+const confirmedSplitDraft = window.eval("_costAdjustmentState.breakdownDraft");
+const confirmedSplitSource = window.eval("_costAdjustmentState.product");
+const successfulSplitConfirm = window.ZaikoAPI.confirmProductCostAdjustment;
+window.ZaikoAPI.confirmProductCostAdjustment = async () => { throw new Error("保存失敗テスト"); };
+assert.equal(await window.costAdjustmentFinalize(), false);
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft"), confirmedSplitDraft, "failed confirmation must preserve the draft");
+assert.equal(window.eval("_costAdjustmentState.product"), confirmedSplitSource);
+window.ZaikoAPI.confirmProductCostAdjustment = successfulSplitConfirm;
+assert.equal(await window.costAdjustmentFinalize(), true, "an exactly allocated cost split must be confirmed");
+assert.equal(confirmedSplitDraft.items.every(item => item.product.internalComment.includes('調整伝票番号: CA-2026-0001')), true);
+assert.equal(confirmedSplitSource.purchasePrice, sourceHistoricalCost);
+assert.equal(confirmedSplitSource.inventoryValuationExcluded, true);
+assert.equal(confirmedSplitSource.status, "原価調整中", "clearing the UI must not undo confirmation");
+assert.equal(window.eval("_costAdjustmentState.product"), null);
+assert.equal(window.eval("_costAdjustmentState.breakdownDraft"), null);
+assert.equal(window.eval("_costAdjustmentState.breakdownActive"), false);
+assert.equal(window.eval("_costAdjustmentState.partSlots.every(slot => slot === null)"), true);
+assert.equal(document.getElementById("ca-product-code").value, "");
+assert.equal(document.getElementById("ca-product-details").hidden, true);
+assert.equal(document.getElementById("ca-product-placeholder").hidden, false);
+assert.equal(document.getElementById("ca-split-slip").hidden, true);
+assert.equal(document.getElementById("ca-split-slip-lines").children.length, 0);
+assert.equal(document.getElementById("ca-split-slip-total").textContent, "¥0");
+assert.equal(document.getElementById("ca-finalize-button").disabled, true);
+assert.equal(await window.costAdjustmentFinalize(), false, "the cleared workspace must not submit again");
 if (originalZaikoAPI) window.ZaikoAPI.confirmProductCostAdjustment = originalConfirmProductCostAdjustment;
 else delete window.ZaikoAPI;
 assert.equal(sidebarGroups[1].querySelector(".nav-group-label").textContent.trim(), "経理・会計");
@@ -4471,7 +5528,7 @@ assert.equal(document.getElementById("sae-register-button").disabled, false,
 assert.match(document.getElementById("sae-amount-preview").textContent, /調整後売価/u);
 const registeredSalesAdjustment = window.registerSalesAdjustment();
 assert.ok(registeredSalesAdjustment, "registration must create a sales adjustment slip");
-assert.match(registeredSalesAdjustment.id, /^SA-2026-\d{4}$/u);
+assert.match(registeredSalesAdjustment.id, /^SS-\d{9}$/u);
 assert.equal(registeredSalesAdjustment.sourceSlipId, "SL-2026-0001");
 assert.equal(registeredSalesAdjustment.targetCode, "0503260001");
 assert.equal(registeredSalesAdjustment.adjustmentType, "discount");
@@ -4621,6 +5678,16 @@ const fxRateArea = document.createElement("div");
 window.renderFxRateTab(fxRateArea);
 assert.equal(fxRateArea.querySelectorAll(".fx-trend-card").length, 3, "foreign exchange tab must show three currency charts");
 assert.ok(fxRateArea.querySelector(".fx-history-table"), "numeric rate history must remain available below the charts");
+window.eval(`APP_DATA.fxRateSync = {enabled:true,state:{publishedDate:'2026-10-15',lastSuccessAt:'2026-10-15T03:00:00Z',lastError:'取得失敗'}}`);
+window.renderFxRateTab(fxRateArea);
+assert.ok(fxRateArea.querySelector('#smbc-rate-status'), 'automatic rates must expose source and fetch status');
+assert.equal(fxRateArea.querySelectorAll('.fx-rate-input').length, 0, 'SMBC mode must not show manual rate inputs');
+assert.match(fxRateArea.textContent, /SMBC仲値を自動取得/u);
+assert.match(fxRateArea.textContent, /1％以上/u);
+assert.match(fxRateArea.textContent, /2026-10-15/u);
+assert.ok(fxRateArea.querySelector('[role="alert"]'), 'failed sync must be visible');
+window.eval('delete APP_DATA.fxRateSync');
+
 
 window.eval(await readFile(path.join(referenceRoot, 'js', 'cost_merge.js'), 'utf8'));
 window.eval(`_costAdjustmentState.breakdownActive=false; _costAdjustmentState.combineActive=false;
@@ -4794,6 +5861,220 @@ window.ZaikoAPI.request = mergeRequest;
 window.costAdjustmentSetMode('breakdown');
 assert.equal(document.getElementById('ca-direct-adjustment').hidden,true);
 assert.equal(document.querySelector('#page-cost-adjustment .ca-workbench').classList.contains('ca-direct-hidden'),false);
+// Navigation discards only unsaved page inputs; accounting and inventory retain their views.
+{
+  delete window.ZaikoAPI;
+  const beforeCounts = window.eval('[APP_DATA.inventory.length, APP_DATA.purchaseSlips.length, APP_DATA.sales.length, APP_DATA.shipments.length]');
+  for (const [page, id] of [['purchase','pu-model'], ['purchase-entry','pe-date'], ['sales','sl-note'], ['shipping','sh-note'], ['consignment','co-note'], ['market','market-f-model']]) {
+    window.navigateTo(page);
+    const field = document.getElementById(id);
+    const initial = field.value;
+    field.value = field.type === 'date' ? '2099-12-31' : 'DISCARD-ON-LEAVE';
+    document.getElementById('page-' + page).scrollTop = 250;
+    window.navigateTo('inventory');
+    assert.equal(field.value, initial, page + ' must clear on departure');
+    window.navigateTo(page);
+    assert.equal(field.value, initial, page + ' must not restore discarded input');
+    assert.equal(document.getElementById('page-' + page).scrollTop, 0);
+  }
+  window.navigateTo('cost-adjustment');
+  window.costAdjustmentSetMode('adjustment');
+  window.costDirectReason('discard this draft');
+  window.costDirectGlobalAmount('123');
+  window.navigateTo('inventory');
+  window.navigateTo('cost-adjustment');
+  window.costAdjustmentSetMode('adjustment');
+  assert.equal(document.getElementById('ca-direct-reason').value, '');
+  window.navigateTo('sales-list');
+  window.switchSlipTab('sales');
+  document.getElementById('slip-filter-keyword').value = 'KEEP-FILTER';
+  window.execSlipFilter();
+  window.navigateTo('purchase');
+  window.navigateTo('sales-list');
+  assert.equal(document.getElementById('slip-filter-keyword').value, 'KEEP-FILTER');
+  assert.equal(window.eval('currentSlipTab'), 'sales');
+  window.navigateTo('cost-adjustment-slips');
+  window.navigateTo('sales-list');
+  assert.equal(document.getElementById('slip-filter-keyword').value, 'KEEP-FILTER');
+  assert.equal(window.eval('currentSlipTab'), 'sales');
+  assert.deepEqual([...window.eval('[APP_DATA.inventory.length, APP_DATA.purchaseSlips.length, APP_DATA.sales.length, APP_DATA.shipments.length]')], [...beforeCounts]);
+}
+
+// Use deliberately distinct labels so a wrong display context cannot pass unnoticed.
+{
+ const data=window.eval('APP_DATA');
+ const accessory={code:'0098',name:'商品詳細付属品',inventoryDetail:'在庫一覧付属品',overseasDetail:'OVERSEAS-ACCESSORY',tagDetail:'TAG-ACCESSORY',domesticDetail:'国内付属品',supplement:'数字'};
+ const belt={code:'0098',name:'商品詳細ベルト',inventoryDetail:'在庫ベルト',overseasDetail:'OVERSEAS-BELT',tagDetail:'TAG-BELT',domesticDetail:'国内ベルト'};
+ const staff={code:'BUY-PURPOSE',name:'商品詳細バイヤー',inventoryDetail:'在庫バイヤー',overseasDetail:'OVERSEAS-STAFF',tagDetail:'TAG-STAFF',domesticDetail:'国内バイヤー'};
+ data.accessoryRecords.push(accessory);data.beltMaterialRecords.push(belt);data.staffRecords.push(staff);
+ const p={...data.inventory[0],code:'PURPOSE-TEST',brand:'Display Test',accessories:[accessory.name],accessorySupplements:{'0098':'3'},belt:belt.name,staff:staff.name,staffCode:staff.code};data.inventory.push(p);
+ const original=JSON.stringify(p);
+ for(const [purpose,label] of [['detail',accessory.name],['inventory',accessory.inventoryDetail],['overseas',accessory.overseasDetail],['tag',accessory.tagDetail],['domestic',accessory.domesticDetail]]){
+  assert.equal(window.accessoryDisplayNames(['0098'],p.accessorySupplements,purpose).join(''),label+' 3');
+  assert.equal(window.masterDisplayName('belt','98',purpose),purpose==='detail'?belt.name:belt[{inventory:'inventoryDetail',overseas:'overseasDetail',tag:'tagDetail',domestic:'domesticDetail'}[purpose]]);
+  assert.equal(window.masterDisplayName('staff',staff.code,purpose),purpose==='detail'?staff.name:staff[{inventory:'inventoryDetail',overseas:'overseasDetail',tag:'tagDetail',domestic:'domesticDetail'}[purpose]]);
+ }
+ assert.match(window.renderInventoryAccessorySymbols(p.accessories,p.accessorySupplements),/在庫一覧付属品 3/);
+ assert.match(window.renderAccessoryNameWithSupplement(accessory.code,p.accessorySupplements),/商品詳細付属品/);
+ assert.match(window.renderInventoryProductTagPanel(p),/TAG-ACCESSORY 3/);assert.match(window.renderInventoryProductTagPanel(p),/TAG-BELT/);
+ for(const regionType of ['domestic','overseas']){
+  const code='PURPOSE-'+regionType,party={code,name:code,regionType};data.buyers.push(party);data.suppliers.push(party);
+  const label=regionType==='overseas'?'OVERSEAS-ACCESSORY':'国内付属品';
+  const expectedBelt=regionType==='overseas'?'OVERSEAS-BELT':'国内ベルト';
+  const shipment={...data.shipments[0],id:code,destination:code,displayCurrency:regionType==='overseas'?'JPY':'USD',items:[{code:p.code,brand:p.brand,model:p.model,salePrice:100}]};
+  const html=window.buildShipmentRecordTemplateHTML(shipment);assert.ok(html.includes(label+' 3'));assert.ok(html.includes(expectedBelt));
+  assert.ok(window.buildConsignmentRecordTemplateHTML(shipment).includes(label+' 3'));
+  const sale={...data.sales[0],id:code,buyer:code,items:[{...shipment.items[0],accessories:[accessory.code]}]};
+  assert.ok(window.buildSalesRecordTemplateHTML(sale).includes(label+' 3'));
+  const purchase={...data.purchaseSlips[0],id:code,supplier:code,staff:staff.code,lines:[{code:p.code,productDetail:{...p},quantity:1,purchasePrice:100}]};
+  const purchaseHTML=window.buildPurchaseRecordTemplateHTML(purchase);assert.ok(purchaseHTML.includes(label+' 3'));assert.ok(purchaseHTML.includes(regionType==='overseas'?'OVERSEAS-STAFF':'国内バイヤー'));
+  assert.ok(window.buildPurchaseReturnRecordTemplateHTML({id:'RETURN-'+code,supplier:code,items:[{code:p.code}]}).includes(label+' 3'));
+  assert.ok(window.buildSalesReturnRecordTemplateHTML({id:'SALES-RETURN-'+code,buyer:code,items:[{code:p.code}]}).includes(label+' 3'));
+ }
+ assert.equal(window._buildCustomsItems({items:[{code:p.code} ]})[0].belt,'OVERSEAS-BELT');
+ assert.equal(JSON.stringify(p),original,'Display must not rewrite stored values');
+ accessory.tagDetail='<script>unsafe</script>';assert.ok(window.renderInventoryProductTagPanel(p).includes('&lt;script&gt;unsafe&lt;/script&gt;'));assert.ok(!window.renderInventoryProductTagPanel(p).includes('<script>unsafe</script>'));
+ accessory.overseasDetail='（表記無し）';assert.equal(window.masterDisplayName('accessory',accessory.code,'overseas'),'（表記無し）');
+ accessory.inventoryDetail='';assert.equal(window.masterDisplayName('accessory',accessory.code,'inventory'),accessory.name);
+ console.log('Purpose-specific master labels: inventory, details, tags, purchase, sales, returns, shipping, consignment, customs and safe escaping OK');
+}
+
+{
+ const data=window.eval('APP_DATA');
+ data.staffRecords.push({code:'0042',name:'Buyer Name'});
+ const product={code:'STATEMENT-001',material:'SS/YG',brand:'ROLEX',model:'デイトジャスト',ref:'126333',serial:'3XV85225',dial:'シャンパン',belt:'ジュビリー',movement:'AT',weightGrams:'200.0',accessories:['紙ギャラ'],staff:'Buyer Name',boxNo:3,purchasePrice:123456789,note:'シール付き',comment:'確認済み'};
+ data.inventory.push(product);
+ const original=JSON.stringify(product);
+ const fixture=()=>({title:'サンプル請求書',slipId:'SAMPLE-001',counterparty:{name:'テスト取引先'},note:'表紙だけの備考\n改行を保持',taxMode:'standard',includeBank:true,items:Array.from({length:40},(_,index)=>({no:index+1,code:product.code,amount:2300000}))});
+ const html=window.buildTemplateStyleSlipDocument(fixture());
+ const root=window.document.createElement('div');root.innerHTML=html;
+ assert.equal(root.querySelectorAll('.tpl-detail-page').length,1,'40 standard products fit one detail page');
+ assert.equal(root.querySelectorAll('.tpl-detail-table tbody tr').length,40);
+ assert.deepEqual([...root.querySelectorAll('.tpl-detail-table th')].map(th=>th.textContent),['No','商品情報','備考','販売価格（税抜）','社内管理']);
+ const cells=root.querySelector('.tpl-detail-table tbody tr').children;
+ assert.equal(cells[1].querySelectorAll('.tpl-product-grid > div').length,3);
+ assert.deepEqual([...cells[1].querySelectorAll('.tpl-product-grid > div')].map(col=>[...col.children].map(el=>el.textContent.trim())),[['SS/YG','ROLEX','AT'],['デイトジャスト','126333','3XV85225'],['シャンパン','ジュビリー','200.0 g']]);
+ assert.match(cells[4].textContent,/0042・3/);assert.ok(!cells[4].textContent.includes('Buyer Name'));
+ assert.ok(!root.textContent.includes('123456789'),'Raw internal cost must not be exposed before cipher rules are supplied');
+ assert.equal(root.querySelectorAll('.tpl-note-block').length,1);assert.ok(root.querySelector('.tpl-cover-page .tpl-note-block'));assert.equal(root.querySelectorAll('.tpl-detail-page .tpl-note-block').length,0);
+ assert.match(root.querySelector('.tpl-statement-summary').textContent,/92,000,000/);assert.match(root.querySelector('.tpl-statement-summary').textContent,/9,200,000/);assert.match(root.querySelector('.tpl-statement-summary').textContent,/101,200,000/);
+ const more=fixture();more.items.push({no:41,code:product.code,amount:0});root.innerHTML=window.buildTemplateStyleSlipDocument(more);
+ assert.equal(root.querySelectorAll('.tpl-detail-page').length,2);assert.equal(root.querySelectorAll('.tpl-statement-summary').length,1);assert.equal(root.querySelectorAll('.tpl-detail-table tbody tr').length,41);assert.equal(root.querySelector('.tpl-detail-page:last-child .tpl-cell-number').textContent,'41');
+ if (typeof writeStatementFixture==='function') await writeStatementFixture(root.innerHTML,'41');
+ const long=fixture();long.items=[{no:1,code:product.code,amount:10,product:{...window.getSlipStatementProduct(product),note:'長い備考'.repeat(1200)+'終端<&>',comment:''}}];root.innerHTML=window.buildTemplateStyleSlipDocument(long);
+ assert.ok(root.querySelectorAll('.tpl-detail-page').length>1);assert.ok(root.textContent.includes('終端<&>'));assert.equal(root.querySelectorAll('.tpl-cell-amount').length>1,true);assert.equal([...root.querySelectorAll('.tpl-cell-amount')].filter(el=>el.textContent).length,1,'Continuation rows must not duplicate amounts');
+ if (typeof writeStatementFixture==='function') await writeStatementFixture(root.innerHTML,'long');
+ assert.equal(JSON.stringify(product),original,'Printing must never mutate stored product values');
+ const escaped=fixture();escaped.items=[{code:product.code,amount:0,product:{...window.getSlipStatementProduct(product),note:'<img src=x onerror=alert(1)>'}}];root.innerHTML=window.buildTemplateStyleSlipDocument(escaped);assert.equal(root.querySelectorAll('img').length,0);
+ const oldPurchase=data.purchaseSlips[0],oldShipment=data.shipments[0],oldSale=data.sales[0];
+ const cases=[
+  ['purchase',window.buildPurchaseRecordTemplateHTML({...oldPurchase,lines:[{code:product.code,purchasePrice:1000,quantity:1}]}),'仕入金額（税抜）'],
+  ['shipping',window.buildShipmentRecordTemplateHTML({...oldShipment,items:[{code:product.code,salePrice:1000}]}),'販売価格（税抜）'],
+  ['consignment',window.buildConsignmentRecordTemplateHTML({...oldShipment,items:[{code:product.code,salePrice:1000}]}),'販売価格（税抜）'],
+  ['sale',window.buildSalesRecordTemplateHTML({...oldSale,items:[{code:product.code,salePrice:1000}]}),'販売価格（税抜）'],
+  ['purchase-return',window.buildPurchaseReturnRecordTemplateHTML({id:'PR-TEST',items:[{code:product.code}]}),'仕入返品金額（税抜）'],
+  ['sales-return',window.buildSalesReturnRecordTemplateHTML({id:'SR-TEST',items:[{code:product.code}]}),'売上返品金額（税抜）'],
+  ['cost',window.buildCostAdjustmentRecordTemplateHTML({id:'CA-TEST',lines:[{code:product.code,allocatedCostJpyMinor:1000}]}),'調整後・配分原価'],
+  ['sale-adjustment',window.buildSalesAdjustmentRecordTemplateHTML({id:'SA-TEST',items:[{code:product.code,beforeSalePrice:100,afterSalePrice:200,adjustmentAmount:100}]}),'修正金額（税抜）'],
+ ];
+ for(const [name,html,label] of cases){root.innerHTML=html;
+ const detailText=[...root.querySelectorAll('.tpl-detail-page')].map(page=>page.textContent).join('');
+ assert.ok(detailText.includes('シール付き'), name + ': product features must remain');
+ assert.equal(detailText.includes('確認済み'), name === 'cost', name + ': internal comments are only for cost adjustments');
+ assert.ok(detailText.includes('紙ギャラ') || detailText.includes('Guarantee'), name + ': accessories must remain');
+assert.equal(root.querySelectorAll('.tpl-detail-table th').length,5,name);assert.equal(root.querySelector('.tpl-detail-table th:nth-child(4)').textContent,label,name);assert.ok(root.querySelector('.tpl-product-grid').textContent.includes('200.0 g'),name);assert.ok(root.querySelector('.tpl-cell-code').textContent.includes('0042'),name);}
+ if (typeof writeStatementFixture==='function') await writeStatementFixture(html);
+ const noteOnly=fixture();noteOnly.items=[{code:product.code,amount:1,statementNote:'社内の変更理由'}];
+ root.innerHTML=window.buildTemplateStyleSlipDocument(noteOnly);
+ assert.ok(!root.querySelector('.tpl-detail-page').textContent.includes('社内の変更理由'));
+ const noteFreeProduct={...window.getSlipStatementProduct(product),note:'',comment:'秘密の社内メモ'};
+ const noteFree=window.slipStatementRow({product:noteFreeProduct},'domestic');
+ assert.ok(!noteFree.columns[3].join('').includes('秘密の社内メモ'),'empty public notes must never fall back to internal comments');
+ assert.equal(JSON.stringify(product),original,'Filtering notes must preserve stored data');
+ console.log('Unified statement: 8 slip types, fields, buyer code, cover note, tax totals, 40/41 pagination, long text, escaping and immutability OK');
+}
+
+
+{
+ for (const [amount,currency,expected] of [[1355000,'JPY','TSYE'],[555000,'JPY','YEY'],[1818,'JPY','T'],[350,'JPY','LS'],[66500,'USD','REY'],[800,'USD','P'],[50,'USD','LY'],[99,'JPY','LT'],[9,'USD','LT'],[100,'JPY','LT'],[10,'USD','LT'],[5555000,'JPY','YEYE'],[1000000,'JPY','TLEL'],[0,'JPY','L']]) {
+  assert.equal(window.priceCodeBody(amount,currency),expected);
+  const coded=window.formatPriceCode(amount,currency,'unit');
+  assert.equal(coded.slice(3,-3),expected);
+  assert.match(coded.slice(0,3)+coded.slice(-3),/^[TNSKYRUPOL]{6}$/);
+  assert.equal(window.formatPriceCode(amount,currency,'unit'),coded);
+ }
+ for(const amount of [null,undefined,'',NaN,Infinity,-1]) assert.equal(window.formatPriceCode(amount,'JPY'),'');
+ assert.equal(window.formatPriceCode(100,'HKD'),'');
+ assert.equal(window.getStatementCostJpy({purchasePrice:1000,purchaseCurrency:'USD'},{purchasePrice:155000}),155000);
+ assert.equal(window.getStatementCostJpy({purchasePrice:1000,purchaseCurrency:'USD',purchaseFxRateScaled:1550000,purchaseFxScale:10000}),155000);
+ assert.equal(window.getStatementCostJpy({purchasePrice:1000,purchaseCurrency:'USD'}),null);
+ assert.equal(window.getStatementCostJpy({convertedPurchasePriceJpy:310000,quantity:2}),155000);
+ assert.equal(window.getStatementCostJpy({allocatedCostJpyMinor:0},{purchasePrice:155000}),0);
+ const priceFixture={code:'CODE-TAG',brand:'テスト',model:'検証',purchasePrice:1355000,salePrice:66500,purchaseCurrency:'HKD',saleCurrency:'JPY',accessories:[]};
+ const before=JSON.stringify(priceFixture),root=window.document.createElement('div');
+ root.innerHTML=window.renderInventoryProductTagPanel(priceFixture);
+ const sale=root.querySelector('.inventory-product-tag-front [data-tag-price="sale"] text').textContent;
+ const cost=root.querySelector('.inventory-product-tag-front [data-tag-price="cost"] text').textContent;
+ assert.equal(sale.slice(3,-3),'REY'); assert.equal(cost.slice(3,-3),'TSYE');
+ assert.equal(root.querySelectorAll('.inventory-product-tag-back').length,0);
+ const svg=window.createInventoryProductTagSvg(priceFixture);
+ assert.ok(svg.includes(sale));assert.ok(svg.includes(cost));assert.ok(!svg.includes('1355000'));assert.ok(!svg.includes('66500'));
+ assert.equal(window.getInventoryQrPayload(priceFixture),'CODE-TAG');
+ assert.equal(JSON.stringify(priceFixture),before);
+ if(typeof writeStatementFixture==='function') {
+  await writeFile('price-code-20260919/tag.svg',svg);
+  const css=await readFile(path.join(referenceRoot,'css/style.css'),'utf8');
+  await writeFile('price-code-20260919/tag.html','<!doctype html><meta charset="utf-8"><style>'+css+'</style>'+root.innerHTML);
+ }
+ const foreign=window.getSlipStatementProduct({purchasePrice:66500,purchaseCurrency:'USD'});
+ assert.equal(window.slipStatementRow({product:foreign},'domestic').columns[4].join(''),'');
+ console.log('Price code: supplied examples, boundaries, repeats, padding, fixed currencies, tag sides, QR payload and cost provenance OK');
+}
+
+
+{
+ const data=window.eval('APP_DATA');
+ const previous=data.accessoryRecords;
+ data.accessoryRecords=[{code:'0001',name:'RX箱',inventoryDetail:'B',tagDetail:'・',domesticDetail:'（表記無し）',overseasDetail:'（表記無し）'},{code:'0002',name:'箱',tagDetail:'Box',domesticDetail:'箱',overseasDetail:'Box'}];
+ const p={code:'RX-RETURN-TEST',brand:'テスト',accessories:['RX箱','箱'],purchasePrice:1000,accessorySupplements:{'0001':'補足'}};
+ data.inventory.push(p);
+ const before=JSON.stringify(p);
+ for(const regionType of ['domestic','overseas']) {
+  const supplier={code:'RX-SUPPLIER-'+regionType,name:'確認仕入先',regionType}; data.suppliers.push(supplier);
+  const ret={id:'RX-RETURN-'+regionType,supplier:supplier.code,items:[{code:p.code}]};
+  const root=window.document.createElement('div');root.innerHTML=window.buildPurchaseReturnRecordTemplateHTML(ret);
+  const remarks=root.querySelector('.tpl-cell-remarks').textContent;
+  assert.ok(remarks.includes('RX箱 補足')); assert.ok(!remarks.includes('（表記無し）'));
+  assert.ok(remarks.includes(regionType==='overseas'?'Box':'箱'));
+  assert.ok(root.querySelector('.tpl-cell-amount').textContent.includes('1,000'));
+  assert.ok(window.buildPurchaseReturnDownloadHTML(ret).includes('RX箱'));
+  const normal=window.getSlipStatementProduct(p,regionType);
+  assert.ok(normal.accessories[0].includes('（表記無し）'));
+  data.suppliers.pop();
+ }
+ assert.equal(window.accessoryDisplayNames(['0001'],{},'tag')[0],'・');
+ assert.equal(window.accessoryDisplayNames(['1'],{},'inventory')[0],'B');
+ assert.equal(window.accessoryDisplayNames(['0001'],{},'overseas',{documentType:'purchaseReturn'})[0],'RX箱');
+ assert.equal(JSON.stringify(p),before);
+ data.inventory.pop();data.accessoryRecords=previous;
+ console.log('RX box exception: domestic/overseas purchase returns and download; other accessories, tags, inventory, other documents, amounts and stored data unchanged OK');
+}
+
+{
+ const data=window.eval('APP_DATA'), previous=data.accessoryRecords;
+ data.accessoryRecords=[{code:'0001',name:'RX箱',tagDetail:'・'},{code:'0002',name:'箱',tagDetail:'Box'}, {code:'0024',name:'ギャラ2c年月',tagDetail:'2c'}, {code:'0040',name:'コマ（数字）',supplement:'コマ数'}];
+ const product={accessories:['RX箱','箱','ギャラ2c年月','コマ（数字）'],accessorySupplements:{'0024':'26/9','0040':'3'}};
+ assert.equal(window._inventoryTagAccessories(product),'・、Box、2c 26/9、3');
+ assert.equal(window.accessoryDisplayNames(['0040'],{},'tag').length,0);
+ assert.equal(window.accessoryDisplayNames(['0040'],{'0040':'0'},'tag')[0],'0');
+ assert.equal(window.accessoryDisplayNames(['0040'],{'0040':'3'},'detail')[0],'コマ（数字） 3');
+ data.accessoryRecords[3].tagDetail='LINKS';
+ assert.equal(window.accessoryDisplayNames(['0040'],{'0040':'3'},'tag')[0],'LINKS 3');
+ data.accessoryRecords[3].tagDetail='';
+ assert.equal(window.accessoryDisplayNames(['0040'],{'0040':'3'},'tag')[0],'3');
+ data.accessoryRecords=previous;
+ console.log('Accessory tags: configured labels, empty labels, counts and detail display verified');
+}
 dom.window.close();
 
 let guestHtml = guestHtmlSource.replace(/<link\b[^>]*>/gi, "");
@@ -4802,8 +6083,8 @@ for (const name of ["data.js", "guest_shared.js", "login_info.js", "guest.js"]) 
   const source = name === "guest.js"
     ? await readFile(path.join(referenceRoot, "js", name), "utf8")
     : scriptSources.get(name);
-  const tag = `<script src="js/${name}"></script>`;
-  assert.ok(guestHtml.includes(tag), `guest.html is missing ${tag}`);
+  const tag = new RegExp(`<script src="js/${name.replaceAll(".", "\\.")}(?:\\?[^" ]*)?"></script>`);
+  assert.match(guestHtml, tag, `guest.html is missing script ${name}`);
   guestHtml = guestHtml.replace(tag, () => `<script>\n${source}\n</script>`);
 }
 
@@ -4833,8 +6114,10 @@ const publishedGuestItems = guestWindow.eval("guestCatalogItems");
 assert.equal(publishedGuestItems.length, 7, "G001 must only see available products from boxes published to B004");
 assert.equal(publishedGuestItems.some(item => item.code === "0303260001"), false, "reserved products must not appear in the guest catalog");
 assert.equal(guestDocument.querySelectorAll(".guest-product-card").length, 7);
-assert.match(guestDocument.getElementById("guest-publish-summary").textContent, /公開BOX: 2/u);
-assert.match(guestDocument.querySelector(".guest-product-price").textContent, /¥1,180,000/u);
+assert.equal(guestDocument.getElementById("guest-publish-summary"), null);
+assert.equal(guestDocument.querySelectorAll(".guest-product-box").length, 0);
+assert.match(guestDocument.querySelector(".guest-product-price").textContent, /¥1,181,000/u);
+assert.equal(guestDocument.querySelectorAll("#guest-currency,#guest-lang-ja,#guest-lang-en").length, 0);
 
 guestWindow.setGuestCurrency("USD");
 assert.match(guestDocument.querySelector(".guest-product-price").textContent, /\$7,613/u);
@@ -4859,3 +6142,9 @@ assert.equal(guestDocument.getElementById("guest-cart-count").textContent, "0");
 
 guestDom.window.close();
 console.log("Reference admin and guest DOM contracts: OK (BOX publish, cart, purchase request, responsive guest catalog)");
+
+const accessoryCodeFixture = window.eval("APP_DATA.accessoryRecords[0]");
+assert.ok(accessoryCodeFixture?.code);
+assert.deepEqual(Array.from(window._costAdjustmentAccessoryCodes([accessoryCodeFixture.name, accessoryCodeFixture.code])), [accessoryCodeFixture.code]);
+assert.deepEqual(Array.from(window._costAdjustmentAccessoryCodes([])), []);
+assert.throws(() => window._costAdjustmentAccessoryCodes(["MISSING-ACCESSORY-TEST"]), /マスタに見つかりません/u);

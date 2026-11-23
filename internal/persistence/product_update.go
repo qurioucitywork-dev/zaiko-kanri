@@ -51,33 +51,35 @@ func costAdjustmentStartProductUpdates(current Product, now time.Time) map[strin
 }
 
 type ProductUpdateInput struct {
-	ProductCode           *string   `json:"productCode"`
-	SKU                   *string   `json:"sku"`
-	BrandCode             *string   `json:"brandCode"`
-	ModelNumber           *string   `json:"modelNumber"`
-	ReferenceNumber       *string   `json:"referenceNumber"`
-	SerialNumber          *string   `json:"serialNumber"`
-	MaterialCode          *string   `json:"materialCode"`
-	MovementCode          *string   `json:"movementCode"`
-	ConditionCode         *string   `json:"conditionCode"`
-	ShapeCode             *string   `json:"shapeCode"`
-	MarkingCode           *string   `json:"markingCode"`
-	SupplierCode          *string   `json:"supplierCode"`
-	StaffCode             *string   `json:"staffCode"`
-	PurchaseDate          *string   `json:"purchaseDate"`
-	CostAmountMinor       *int64    `json:"costAmountMinor"`
-	CostCurrency          *string   `json:"costCurrency"`
-	BaseSalePriceMinor    *int64    `json:"baseSalePriceMinor"`
-	BaseSaleCurrency      *string   `json:"baseSaleCurrency"`
-	AccessoryCodes        *[]string `json:"accessoryCodes"`
-	BeltText              *string   `json:"beltText"`
-	DialText              *string   `json:"dialText"`
-	BraceletQuantity      *int      `json:"braceletQuantity"`
-	Notes                 *string   `json:"notes"`
-	InternalComment       *string   `json:"internalComment"`
-	InventoryStatus       *string   `json:"inventoryStatus"`
-	DuplicateSerialReason string    `json:"duplicateSerialReason"`
-	Reason                string    `json:"reason"`
+	WeightGrams           *string                   `json:"weightGrams"`
+	AccessorySupplements  AccessorySupplementValues `json:"accessorySupplements"`
+	ProductCode           *string                   `json:"productCode"`
+	SKU                   *string                   `json:"sku"`
+	BrandCode             *string                   `json:"brandCode"`
+	ModelNumber           *string                   `json:"modelNumber"`
+	ReferenceNumber       *string                   `json:"referenceNumber"`
+	SerialNumber          *string                   `json:"serialNumber"`
+	MaterialCode          *string                   `json:"materialCode"`
+	MovementCode          *string                   `json:"movementCode"`
+	ConditionCode         *string                   `json:"conditionCode"`
+	ShapeCode             *string                   `json:"shapeCode"`
+	MarkingCode           *string                   `json:"markingCode"`
+	SupplierCode          *string                   `json:"supplierCode"`
+	StaffCode             *string                   `json:"staffCode"`
+	PurchaseDate          *string                   `json:"purchaseDate"`
+	CostAmountMinor       *int64                    `json:"costAmountMinor"`
+	CostCurrency          *string                   `json:"costCurrency"`
+	BaseSalePriceMinor    *int64                    `json:"baseSalePriceMinor"`
+	BaseSaleCurrency      *string                   `json:"baseSaleCurrency"`
+	AccessoryCodes        *[]string                 `json:"accessoryCodes"`
+	BeltText              *string                   `json:"beltText"`
+	DialText              *string                   `json:"dialText"`
+	BraceletQuantity      *int                      `json:"braceletQuantity"`
+	Notes                 *string                   `json:"notes"`
+	InternalComment       *string                   `json:"internalComment"`
+	InventoryStatus       *string                   `json:"inventoryStatus"`
+	DuplicateSerialReason string                    `json:"duplicateSerialReason"`
+	Reason                string                    `json:"reason"`
 }
 
 func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productID, actorUserID string, input ProductUpdateInput) (Product, error) {
@@ -87,6 +89,9 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 			"organization_id=? AND id=? AND deleted_at IS NULL", organizationID, productID).Take(&current)
 		if result.Error != nil {
 			return ErrProductUnavailable
+		}
+		if err := checkPurchaseReturnEditLock(tx, organizationID, productID, current.InventoryStatus); err != nil {
+			return err
 		}
 		var effectiveProductCodeDate time.Time
 		if input.ProductCode != nil && strings.TrimSpace(*input.ProductCode) != current.ProductCode {
@@ -120,6 +125,13 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 			if value != nil {
 				updates[column] = strings.TrimSpace(*value)
 			}
+		}
+		if input.WeightGrams != nil {
+			value, err := normalizeProductWeight(*input.WeightGrams)
+			if err != nil {
+				return err
+			}
+			updates["weight_grams"] = value
 		}
 		setText(input.SKU, "sku")
 		setText(input.ModelNumber, "model_number")
@@ -247,17 +259,6 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 		}
 		if input.SerialNumber != nil {
 			serial := strings.TrimSpace(*input.SerialNumber)
-			if !strings.EqualFold(serial, current.SerialNumber) && serial != "" {
-				var duplicateCount int64
-				if err := tx.Table("products").Where(
-					"organization_id=? AND id<>? AND UPPER(serial_number)=? AND deleted_at IS NULL AND inventory_status<>'cancelled'",
-					organizationID, productID, strings.ToUpper(serial)).Count(&duplicateCount).Error; err != nil {
-					return err
-				}
-				if duplicateCount > 0 && strings.TrimSpace(input.DuplicateSerialReason) == "" {
-					return ErrDuplicateSerialReason
-				}
-			}
 			updates["serial_number"] = serial
 		}
 		if input.InventoryStatus != nil && strings.TrimSpace(*input.InventoryStatus) != current.InventoryStatus {
@@ -284,6 +285,29 @@ func (r *Repository) UpdateProduct(ctx context.Context, organizationID, productI
 					return err
 				}
 			}
+		}
+		if input.AccessorySupplements != nil || input.AccessoryCodes != nil {
+			values := input.AccessorySupplements
+			if values == nil {
+				values = current.AccessorySupplements
+			}
+			var codes []string
+			if input.AccessoryCodes != nil {
+				codes = *input.AccessoryCodes
+			} else {
+				if err := tx.Table("product_accessories pa").Select("a.code").Joins("JOIN accessories a ON a.id=pa.accessory_id").Where("pa.product_id=? AND a.organization_id=?", productID, organizationID).Scan(&codes).Error; err != nil {
+					return err
+				}
+			}
+			values, err := normalizeAccessorySupplements(tx, organizationID, codes, values)
+			if err != nil {
+				return err
+			}
+			encoded, err := values.Value()
+			if err != nil {
+				return err
+			}
+			updates["accessory_supplements"] = encoded
 		}
 		if err := tx.Model(&Product{}).Where("organization_id=? AND id=?", organizationID, productID).Updates(updates).Error; err != nil {
 			if isProductCodeUniqueViolation(err) {

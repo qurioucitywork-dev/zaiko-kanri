@@ -70,9 +70,11 @@ func (s *Server) apiConsignment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiConsignmentCreate(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireAPIAdmin(w, r, "委託伝票の登録")
-	if !ok {
-		return
+	user, _ := currentUser(r.Context())
+	if user.Role != database.RoleWorker {
+		if _, ok := requireAPIAdmin(w, r, "委託伝票の登録"); !ok {
+			return
+		}
 	}
 	var input persistence.ConsignmentCreateInput
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<10))
@@ -91,10 +93,18 @@ func (s *Server) apiConsignmentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	input.OrganizationID, input.ActorUserID = user.OrganizationID, user.ID
-	record, err := s.repository.CreateConsignment(r.Context(), input)
+	var record persistence.ConsignmentSlipRecord
+	var err error
+	if user.Role == database.RoleWorker {
+		record, err = s.repository.RequestConsignmentApproval(r.Context(), input)
+	} else {
+		record, err = s.repository.CreateConsignment(r.Context(), input)
+	}
 	if err != nil {
 		status, code, message := http.StatusConflict, "consignment_failed", "委託伝票を処理できませんでした。"
 		switch {
+		case errors.Is(err, persistence.ErrConsignmentPrice):
+			status, code, message = http.StatusBadRequest, "invalid_consignment_price", "商品の販売価格を確認してください。"
 		case errors.Is(err, persistence.ErrBuyerNotFound):
 			status, code, message = http.StatusBadRequest, "consignee_not_found", "委託先コードが見つかりません。"
 		case errors.Is(err, persistence.ErrProductUnavailable), errors.Is(err, persistence.ErrProductConflict):
@@ -129,6 +139,8 @@ func (s *Server) apiConsignmentReturnScan(w http.ResponseWriter, r *http.Request
 			writeAPIError(w, http.StatusNotFound, "consignment_product_not_found", "この委託伝票に含まれない商品です。")
 		case errors.Is(err, persistence.ErrConsignmentState):
 			writeAPIError(w, http.StatusConflict, "consignment_not_confirmed", "確定済みの委託伝票だけ返却処理できます。")
+		case errors.Is(err, persistence.ErrShipmentLineCompleted):
+			writeAPIError(w, http.StatusConflict, "consignment_line_completed", "この伝票での商品処理は完了しています。現在の委託伝票を確認してください。")
 		case errors.Is(err, persistence.ErrConsignmentReturnState):
 			writeAPIError(w, http.StatusConflict, "consignment_return_state", "この商品は委託中ではないため在庫中へ変更できません。")
 		default:
@@ -137,4 +149,42 @@ func (s *Server) apiConsignmentReturnScan(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) apiConsignmentRevision(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireAPIAdmin(w, r, "委託伝票の修正")
+	if !ok {
+		return
+	}
+	var input persistence.ConsignmentRevisionInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeAPIError(w, 400, "invalid_json", "修正内容を確認してください。")
+		return
+	}
+	input.OrganizationID, input.ActorUserID = user.OrganizationID, user.ID
+	before, err := s.repository.ConsignmentSlip(r.Context(), user.OrganizationID, r.PathValue("id"))
+	if err != nil {
+		writeAPIError(w, http.StatusNotFound, "consignment_not_found", "委託伝票が見つかりません。")
+		return
+	}
+	record, err := s.repository.ReviseConsignment(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		switch {
+		case errors.Is(err, persistence.ErrSlipRevisionUnchanged):
+			writeAPIError(w, 409, "unchanged", "伝票内容に変更がありません。")
+		case errors.Is(err, persistence.ErrConsignmentRevisionInvalid):
+			writeAPIError(w, 400, "invalid_revision", "日付・金額・保存理由を確認してください。")
+		case errors.Is(err, persistence.ErrConsignmentState):
+			writeAPIError(w, 409, "consignment_changed", "伝票が更新されたか、変更できない状態です。再読み込みしてください。")
+		default:
+			writeAPIError(w, http.StatusConflict, "consignment_revision_failed", "委託先・金額などの修正内容を確認してください。")
+		}
+		return
+	}
+	beforeJSON, _ := json.Marshal(before)
+	afterJSON, _ := json.Marshal(record)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "consignment_slip", TargetID: record.ID, Action: "consignment.revised", BeforeJSON: string(beforeJSON), AfterJSON: string(afterJSON), Reason: strings.TrimSpace(input.Reason), Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent()})
+	writeJSON(w, http.StatusOK, record)
 }

@@ -118,12 +118,21 @@ func (s *Server) apiExchangeRates(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "rates_unavailable", "為替レートを取得できませんでした。")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": records, "total": len(records)})
+	syncState, err := s.repository.ExchangeRateSyncStatus(r.Context(), user.OrganizationID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "rate_status_unavailable", "取得状況を確認できませんでした。")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": records, "total": len(records), "sync": map[string]any{"enabled": s.exchangeRateSyncEnabled(), "thresholdPercent": 1, "state": syncState}})
 }
 
 func (s *Server) apiExchangeRateCreate(w http.ResponseWriter, r *http.Request) {
 	user, ok := requireAPIAdmin(w, r, "外貨レートの登録")
 	if !ok {
+		return
+	}
+	if s.exchangeRateSyncEnabled() {
+		writeAPIError(w, http.StatusConflict, "automatic_rates_enabled", "SMBCの仲値で自動更新します。「最新の公表分を確認」を利用してください。")
 		return
 	}
 	var input struct {

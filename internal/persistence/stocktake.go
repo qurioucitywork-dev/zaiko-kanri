@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var ErrStocktakeNotFound = errors.New("stocktake session not found")
@@ -32,6 +33,7 @@ type StocktakeSession struct {
 func (StocktakeSession) TableName() string { return "stocktake_sessions" }
 
 type StocktakeLine struct {
+	ApprovalStatus      string     `gorm:"-" json:"approvalStatus,omitempty"`
 	ID                  string     `gorm:"column:id;primaryKey" json:"id"`
 	OrganizationID      string     `gorm:"column:organization_id" json:"-"`
 	SessionID           string     `gorm:"column:session_id" json:"sessionId"`
@@ -88,6 +90,9 @@ func (r *Repository) CurrentStocktake(ctx context.Context, organizationID string
 	}
 	if err := r.db.WithContext(ctx).Where("session_id = ?", session.ID).
 		Order("CASE WHEN line_type = 'expected_missing' THEN 0 ELSE 1 END, created_at, product_code").Find(&session.Lines).Error; err != nil {
+		return session, err
+	}
+	if err := r.loadStocktakeApprovalStates(ctx, organizationID, session.Lines); err != nil {
 		return session, err
 	}
 	return session, nil
@@ -464,7 +469,7 @@ func (r *Repository) CompleteStocktake(ctx context.Context, organizationID, sess
 	now := time.Now().UTC()
 	var session StocktakeSession
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("id = ? AND organization_id = ? AND status = ?", sessionID, organizationID, "in_progress").First(&session).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND organization_id = ? AND status = ?", sessionID, organizationID, "in_progress").First(&session).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return ErrStocktakeNotFound
 			}
@@ -473,6 +478,15 @@ func (r *Repository) CompleteStocktake(ctx context.Context, organizationID, sess
 		var unresolved int64
 		if err := tx.Model(&StocktakeLine{}).Where("session_id = ? AND line_type = ? AND result_status = ? AND reason = ''", sessionID, "expected_missing", "missing").Count(&unresolved).Error; err != nil {
 			return err
+		}
+		if tx.Migrator().HasTable("approval_requests") {
+			var waiting int64
+			if err := tx.Table("stocktake_lines AS l").Where("l.organization_id=? AND l.session_id=? AND l.resolved_at IS NULL AND EXISTS (SELECT 1 FROM approval_requests a WHERE a.organization_id=l.organization_id AND a.target_type='stocktake_line' AND a.target_id=l.id)", organizationID, sessionID).Count(&waiting).Error; err != nil {
+				return err
+			}
+			if waiting > 0 {
+				return fmt.Errorf("承認待ちまたは差戻しの棚卸不一致があります")
+			}
 		}
 		if unresolved > 0 {
 			return fmt.Errorf("%d expected items have no discrepancy reason", unresolved)

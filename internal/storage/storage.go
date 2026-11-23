@@ -27,6 +27,9 @@ type Store interface {
 }
 
 func New(ctx context.Context, cfg config.Config) (Store, error) {
+	if cfg.StorageDriver == "r2gateway" {
+		return newR2GatewayStore(cfg)
+	}
 	if cfg.StorageDriver == "s3" {
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.S3Region))
 		if err != nil {

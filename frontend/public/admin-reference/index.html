@@ -319,7 +319,7 @@
 
   <!-- 右パネル -->
   <div class="login-right">
-    <div class="demo-badge"><i class="fa-solid fa-bolt"></i> デモ版 — サンプルデータで動作します</div>
+    <div class="demo-badge"><i class="fa-solid fa-bolt"></i> 登録済みアカウントでログインしてください</div>
     <h2>ログイン</h2>
     <p class="login-desc">ログイン種別を選択してください</p>
 
@@ -340,15 +340,11 @@
       <div class="input-group">
         <label>パスワード</label>
         <span class="input-icon"><i class="fa-solid fa-lock"></i></span>
-        <input type="password" id="admin-pw" value="preview-admin-2026" placeholder="パスワードを入力">
+        <input type="password" id="admin-pw" value="" placeholder="パスワードを入力">
       </div>
       <div class="error-msg hidden" id="admin-error"><i class="fa-solid fa-circle-xmark"></i> IDまたはパスワードが正しくありません</div>
       <button class="login-btn" onclick="doAdminLogin()"><i class="fa-solid fa-right-to-bracket"></i> 管理者としてログイン</button>
-      <div class="hint-box">
-        <strong><i class="fa-solid fa-clipboard-list"></i> デモ用認証情報</strong>
-        ID: <b>admin</b> ／ PW: <b>preview-admin-2026</b><br>
-        PostgreSQLの管理者アカウントで認証します
-      </div>
+      <div class="hint-box">この環境で発行されたログイン情報を使用してください。</div>
     </div>
 
     <!-- 作業者フォーム -->
@@ -356,20 +352,16 @@
       <div class="input-group">
         <label>作業者ID</label>
         <span class="input-icon"><i class="fa-solid fa-id-badge"></i></span>
-        <input type="text" id="buyer-id" value="worker" placeholder="worker">
+        <input type="text" id="buyer-id" value="" placeholder="ユーザーIDを入力">
       </div>
       <div class="input-group">
         <label>パスワード</label>
         <span class="input-icon"><i class="fa-solid fa-lock"></i></span>
-        <input type="password" id="buyer-pw" value="preview-worker-2026" placeholder="パスワードを入力">
+        <input type="password" id="buyer-pw" value="" placeholder="パスワードを入力">
       </div>
       <div class="error-msg hidden" id="buyer-error"><i class="fa-solid fa-circle-xmark"></i> IDまたはパスワードが正しくありません</div>
       <button class="login-btn" style="background:#7c3aed;" onclick="doBuyerLogin()"><i class="fa-solid fa-right-to-bracket"></i> 作業者としてログイン</button>
-      <div class="hint-box" style="border-color:#c4b5fd;background:#f5f3ff;color:#5b21b6;">
-        <strong><i class="fa-solid fa-id-badge"></i> デモ用認証情報（作業者）</strong>
-        ID: <b>worker</b> ／ PW: <b>preview-worker-2026</b><br>
-        <span style="font-size:10px;">※承認が必要な操作は管理者へ申請されます</span>
-      </div>
+      <div class="hint-box">この環境で発行されたログイン情報を使用してください。</div>
     </div>
 
     <!-- ゲストフォーム -->
@@ -377,20 +369,16 @@
       <div class="input-group">
         <label>ゲストID（会社コード）</label>
         <span class="input-icon"><i class="fa-solid fa-building"></i></span>
-        <input type="text" id="guest-id" value="G001" placeholder="ゲストIDを入力">
+        <input type="text" id="guest-id" value="" placeholder="ゲストIDを入力">
       </div>
       <div class="input-group">
         <label>パスワード</label>
         <span class="input-icon"><i class="fa-solid fa-lock"></i></span>
-        <input type="password" id="guest-pw" value="preview-guest-2026" placeholder="パスワードを入力">
+        <input type="password" id="guest-pw" value="" placeholder="パスワードを入力">
       </div>
       <div class="error-msg hidden" id="guest-error"><i class="fa-solid fa-circle-xmark"></i> IDまたはパスワードが正しくありません</div>
       <button class="login-btn guest-btn" onclick="doGuestLogin()"><i class="fa-solid fa-right-to-bracket"></i> ゲストとしてログイン</button>
-      <div class="hint-box">
-        <strong><i class="fa-solid fa-clipboard-list"></i> デモ用認証情報（ゲスト）</strong>
-        ID: <b>G001</b> ／ PW: <b>preview-guest-2026</b><br>
-        ※1社単位でIDを発行。定期的にPWを切替。
-      </div>
+      <div class="hint-box">この環境で発行されたログイン情報を使用してください。</div>
     </div>
   </div>
 </div>
@@ -452,5 +440,5 @@
     }
   });
 </script>
-<script src="https://www.genspark.ai/sandbox_inspect.js"></script></body>
+</body>
 </html>

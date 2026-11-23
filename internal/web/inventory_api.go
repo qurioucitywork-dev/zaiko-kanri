@@ -31,34 +31,37 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		ProductCode           string   `json:"productCode"`
-		SupplierCode          string   `json:"supplierCode"`
-		StaffCode             string   `json:"staffCode"`
-		PurchaseDate          string   `json:"purchaseDate"`
-		PurchaseTaxMode       string   `json:"purchaseTaxMode"`
-		TaxCategory           string   `json:"taxCategory"`
-		SKU                   string   `json:"sku"`
-		BrandCode             string   `json:"brandCode"`
-		ModelNumber           string   `json:"modelNumber"`
-		ReferenceNumber       string   `json:"referenceNumber"`
-		SerialNumber          string   `json:"serialNumber"`
-		ProductType           string   `json:"productType"`
-		ShapeCode             string   `json:"shapeCode"`
-		MarkingCode           string   `json:"markingCode"`
-		MaterialCode          string   `json:"materialCode"`
-		MovementCode          string   `json:"movementCode"`
-		ConditionCode         string   `json:"conditionCode"`
-		AccessoryCodes        []string `json:"accessoryCodes"`
-		BeltText              string   `json:"beltText"`
-		DialText              string   `json:"dialText"`
-		BraceletQuantity      *int     `json:"braceletQuantity"`
-		CostAmountMinor       int64    `json:"costAmountMinor"`
-		CostCurrency          string   `json:"costCurrency"`
-		BaseSalePriceMinor    int64    `json:"baseSalePriceMinor"`
-		BaseSaleCurrency      string   `json:"baseSaleCurrency"`
-		Notes                 string   `json:"notes"`
-		InternalComment       string   `json:"internalComment"`
-		DuplicateSerialReason string   `json:"duplicateSerialReason"`
+		BoxCode               string                                `json:"boxCode"`
+		ProductCode           string                                `json:"productCode"`
+		SupplierCode          string                                `json:"supplierCode"`
+		StaffCode             string                                `json:"staffCode"`
+		PurchaseDate          string                                `json:"purchaseDate"`
+		PurchaseTaxMode       string                                `json:"purchaseTaxMode"`
+		TaxCategory           string                                `json:"taxCategory"`
+		SKU                   string                                `json:"sku"`
+		BrandCode             string                                `json:"brandCode"`
+		ModelNumber           string                                `json:"modelNumber"`
+		ReferenceNumber       string                                `json:"referenceNumber"`
+		SerialNumber          string                                `json:"serialNumber"`
+		ProductType           string                                `json:"productType"`
+		ShapeCode             string                                `json:"shapeCode"`
+		MarkingCode           string                                `json:"markingCode"`
+		MaterialCode          string                                `json:"materialCode"`
+		MovementCode          string                                `json:"movementCode"`
+		ConditionCode         string                                `json:"conditionCode"`
+		AccessoryCodes        []string                              `json:"accessoryCodes"`
+		WeightGrams           string                                `json:"weightGrams"`
+		AccessorySupplements  persistence.AccessorySupplementValues `json:"accessorySupplements"`
+		BeltText              string                                `json:"beltText"`
+		DialText              string                                `json:"dialText"`
+		BraceletQuantity      *int                                  `json:"braceletQuantity"`
+		CostAmountMinor       int64                                 `json:"costAmountMinor"`
+		CostCurrency          string                                `json:"costCurrency"`
+		BaseSalePriceMinor    int64                                 `json:"baseSalePriceMinor"`
+		BaseSaleCurrency      string                                `json:"baseSaleCurrency"`
+		Notes                 string                                `json:"notes"`
+		InternalComment       string                                `json:"internalComment"`
+		DuplicateSerialReason string                                `json:"duplicateSerialReason"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
 	decoder.DisallowUnknownFields()
@@ -82,12 +85,12 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := s.repository.CreateSingleProduct(r.Context(), persistence.SingleProductInput{
-		OrganizationID: user.OrganizationID, ActorUserID: user.ID, ProductCode: input.ProductCode, SupplierCode: input.SupplierCode,
+		OrganizationID: user.OrganizationID, ActorUserID: user.ID, WeightGrams: input.WeightGrams, ProductCode: input.ProductCode, SupplierCode: input.SupplierCode,
 		StaffCode: input.StaffCode, PurchaseDate: input.PurchaseDate, PurchaseTaxMode: input.PurchaseTaxMode, TaxCategory: input.TaxCategory,
-		SKU: input.SKU, BrandCode: input.BrandCode,
+		SKU: input.SKU, BrandCode: input.BrandCode, BoxCode: input.BoxCode,
 		ModelNumber: input.ModelNumber, ReferenceNumber: input.ReferenceNumber, SerialNumber: input.SerialNumber,
 		ProductType: input.ProductType, ShapeCode: input.ShapeCode, MarkingCode: input.MarkingCode, MaterialCode: input.MaterialCode, MovementCode: input.MovementCode,
-		ConditionCode: input.ConditionCode, AccessoryCodes: input.AccessoryCodes, CostAmountMinor: input.CostAmountMinor,
+		ConditionCode: input.ConditionCode, AccessoryCodes: input.AccessoryCodes, AccessorySupplements: input.AccessorySupplements, CostAmountMinor: input.CostAmountMinor,
 		BeltText: input.BeltText, DialText: input.DialText, BraceletQuantity: input.BraceletQuantity,
 		CostCurrency: input.CostCurrency, BaseSalePriceMinor: input.BaseSalePriceMinor,
 		BaseSaleCurrency: input.BaseSaleCurrency, Notes: input.Notes, InternalComment: input.InternalComment, DuplicateSerialReason: input.DuplicateSerialReason,
@@ -95,6 +98,10 @@ func (s *Server) apiProductCreate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status, code, message := http.StatusInternalServerError, "product_create_failed", "商品を登録できませんでした。"
 		switch {
+		case errors.Is(err, persistence.ErrInvalidProductWeight):
+			status, code, message = http.StatusBadRequest, "invalid_product_weight", "グラムは0以上の数字で入力してください。"
+		case errors.Is(err, persistence.ErrAccessorySupplement):
+			status, code, message = http.StatusBadRequest, "invalid_accessory_supplement", "付属品の補足は数字で入力してください。月は1〜12、年は1〜9999で入力してください。"
 		case errors.Is(err, persistence.ErrSupplierNotFound):
 			status, code, message = http.StatusBadRequest, "supplier_not_found", "仕入先コードが見つかりません。"
 		case errors.Is(err, persistence.ErrStaffNotFound):
@@ -152,8 +159,14 @@ func (s *Server) apiProductUpdate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status, code, message := http.StatusBadRequest, "product_update_failed", "商品情報を更新できませんでした。"
 		switch {
+		case errors.Is(err, persistence.ErrAccessorySupplement):
+			status, code, message = http.StatusBadRequest, "invalid_accessory_supplement", "付属品の補足は数字で入力してください。月は1〜12、年は1〜9999で入力してください。"
+		case errors.Is(err, persistence.ErrInvalidProductWeight):
+			status, code, message = http.StatusBadRequest, "invalid_product_weight", "グラムは0以上の数字で入力してください。"
 		case errors.Is(err, persistence.ErrProductUnavailable):
 			status, code, message = http.StatusNotFound, "product_not_found", "商品が見つかりません。"
+		case errors.Is(err, persistence.ErrPurchaseReturnProductLocked):
+			status, code, message = http.StatusConflict, "purchase_return_product_locked", "仕入返品処理中の商品情報は変更できません。先に仕入返品伝票を取り下げてください。"
 		case errors.Is(err, persistence.ErrProductConflict):
 			status, code, message = http.StatusConflict, "product_state_conflict", "出荷・売上・取置などのステータスは各伝票から変更してください。"
 		case errors.Is(err, persistence.ErrDuplicateSerialReason):
@@ -273,6 +286,8 @@ func (s *Server) apiProductCostAdjustmentConfirm(w http.ResponseWriter, r *http.
 	if err != nil {
 		status, code, message := http.StatusInternalServerError, "cost_adjustment_confirm_failed", "原価調整を確定できませんでした。"
 		switch {
+		case errors.Is(err, persistence.ErrAccessorySupplement):
+			status, code, message = http.StatusBadRequest, "invalid_accessory_supplement", "付属品の補足は数字で入力してください。月は1〜12、年は1〜9999で入力してください。"
 		case errors.Is(err, persistence.ErrProductUnavailable):
 			status, code, message = http.StatusNotFound, "product_not_found", "対象商品が見つかりません。"
 		case errors.Is(err, persistence.ErrCostAllocation):

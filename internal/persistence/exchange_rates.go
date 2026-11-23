@@ -11,6 +11,8 @@ import (
 )
 
 type ExchangeRateRecord struct {
+	PublishedDate string    `json:"publishedDate"`
+	SourceURL     string    `json:"sourceUrl"`
 	ID            string    `json:"id"`
 	BaseCurrency  string    `json:"baseCurrency"`
 	QuoteCurrency string    `json:"quoteCurrency"`
@@ -48,7 +50,7 @@ func (r *Repository) ExchangeRates(ctx context.Context, organizationID string, l
 	}
 	var records []ExchangeRateRecord
 	err := r.db.WithContext(ctx).Table("exchange_rate_snapshots").
-		Select("id,base_currency,quote_currency,rate_scaled,scale,provider,observed_at,created_at").
+		Select("id,base_currency,quote_currency,rate_scaled,scale,provider,observed_at,created_at,published_date,source_url").
 		Where("organization_id=?", organizationID).Order("observed_at DESC,created_at DESC").Limit(limit).Scan(&records).Error
 	for index := range records {
 		records[index].Rate = formatRateValue(records[index].RateScaled, records[index].Scale)
@@ -74,6 +76,9 @@ func (r *Repository) CreateExchangeRate(ctx context.Context, organizationID, act
 	}
 	now := time.Now().UTC()
 	provider = strings.TrimSpace(provider)
+	if provider == "SMBC TTM" {
+		return ExchangeRateRecord{}, ErrExchangeRate
+	}
 	if provider == "" {
 		provider = "manual"
 	}
@@ -85,7 +90,7 @@ func (r *Repository) CreateExchangeRate(ctx context.Context, organizationID, act
 	}
 	var records []ExchangeRateRecord
 	err = r.db.WithContext(ctx).Table("exchange_rate_snapshots").
-		Select("id,base_currency,quote_currency,rate_scaled,scale,provider,observed_at,created_at").
+		Select("id,base_currency,quote_currency,rate_scaled,scale,provider,observed_at,created_at,published_date,source_url").
 		Where("organization_id=? AND base_currency=? AND quote_currency='JPY'", organizationID, baseCurrency).
 		Order("observed_at DESC,created_at DESC").Limit(1).Scan(&records).Error
 	for index := range records {
@@ -98,4 +103,25 @@ func (r *Repository) CreateExchangeRate(ctx context.Context, organizationID, act
 		return ExchangeRateRecord{}, err
 	}
 	return records[0], nil
+}
+
+// exchangeRateAtCreation resolves a rate from the complete history, independently
+// of the last 100 records sent to the UI. A later, backdated entry is excluded.
+func (r *Repository) exchangeRateAtCreation(ctx context.Context, organizationID, currency string, createdAt time.Time) (float64, error) {
+	if createdAt.IsZero() {
+		return 0, nil
+	}
+	var snapshot struct {
+		RateScaled int64
+		Scale      int64
+	}
+	err := r.db.WithContext(ctx).Table("exchange_rate_snapshots").
+		Select("rate_scaled,scale").
+		Where("organization_id=? AND base_currency=? AND quote_currency='JPY' AND rate_scaled>0 AND scale>0", organizationID, currency).
+		Where("observed_at<=? AND created_at<=?", createdAt, createdAt).
+		Order("observed_at DESC,created_at DESC,id DESC").Limit(1).Find(&snapshot).Error
+	if err != nil || snapshot.Scale <= 0 {
+		return 0, err
+	}
+	return float64(snapshot.RateScaled) / float64(snapshot.Scale), nil
 }

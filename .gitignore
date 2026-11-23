@@ -45,3 +45,6 @@ Thumbs.db
 *.tfstate
 *.tfstate.*
 *.tfvars
+
+# Local cloud verification logs
+/.tmp-frontend-*.log

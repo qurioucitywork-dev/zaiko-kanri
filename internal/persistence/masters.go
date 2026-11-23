@@ -17,15 +17,45 @@ var (
 )
 
 type MasterItem struct {
-	ID             string    `json:"id"`
-	OrganizationID string    `json:"-"`
-	Code           string    `json:"code"`
-	Name           string    `json:"name"`
-	Meaning        string    `json:"meaning,omitempty"`
-	IsActive       bool      `json:"isActive"`
-	SortOrder      int       `json:"sortOrder"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	ID              string    `json:"id"`
+	OrganizationID  string    `json:"-"`
+	Code            string    `json:"code"`
+	Name            string    `json:"name"`
+	Meaning         string    `json:"meaning,omitempty"`
+	Symbol          string    `json:"symbol,omitempty"`
+	Supplement      string    `json:"supplement,omitempty"`
+	Reading         string    `json:"reading,omitempty"`
+	InventoryDetail string    `json:"inventoryDetail,omitempty"`
+	OverseasDetail  string    `json:"overseasDetail,omitempty"`
+	TagDetail       string    `json:"tagDetail,omitempty"`
+	DomesticDetail  string    `json:"domesticDetail,omitempty"`
+	IsLegacy        bool      `json:"isLegacy,omitempty"`
+	IsActive        bool      `json:"isActive"`
+	SortOrder       int       `json:"sortOrder"`
+	CreatedAt       time.Time `json:"createdAt"`
+	UpdatedAt       time.Time `json:"updatedAt"`
+}
+
+type MasterDisplayDetailsInput struct {
+	InventoryDetail *string `json:"inventoryDetail"`
+	OverseasDetail  *string `json:"overseasDetail"`
+	TagDetail       *string `json:"tagDetail"`
+	DomesticDetail  *string `json:"domesticDetail"`
+}
+
+func (d MasterDisplayDetailsInput) Values() map[string]*string {
+	return map[string]*string{"inventory_detail": d.InventoryDetail, "overseas_detail": d.OverseasDetail, "tag_detail": d.TagDetail, "domestic_detail": d.DomesticDetail}
+}
+func (d MasterDisplayDetailsInput) Empty() bool {
+	return d.InventoryDetail == nil && d.OverseasDetail == nil && d.TagDetail == nil && d.DomesticDetail == nil
+}
+func (d MasterDisplayDetailsInput) Valid() bool {
+	for _, v := range d.Values() {
+		if v != nil && len([]rune(strings.TrimSpace(*v))) > 200 {
+			return false
+		}
+	}
+	return true
 }
 
 func masterTable(kind string) (string, bool) {
@@ -74,7 +104,7 @@ func (r *Repository) MasterItem(ctx context.Context, organizationID, kind, id st
 	return item, result.Error
 }
 
-func (r *Repository) CreateMasterItem(ctx context.Context, organizationID, actorID, kind, code, name, meaning string, sortOrder int) (MasterItem, error) {
+func (r *Repository) CreateMasterItem(ctx context.Context, organizationID, actorID, kind, code, name, meaning, reading string, sortOrder int, symbol, supplement string, displayDetails ...MasterDisplayDetailsInput) (MasterItem, error) {
 	table, ok := masterTable(kind)
 	if !ok {
 		return MasterItem{}, ErrUnsupportedMaster
@@ -94,18 +124,57 @@ func (r *Repository) CreateMasterItem(ctx context.Context, organizationID, actor
 	}
 	columns, placeholders := "id,organization_id,code,name,is_active,sort_order,created_by,updated_by,created_at,updated_at", "?,?,?,?,TRUE,?,?,?,?,?"
 	args := []any{id, organizationID, code, name, sortOrder, actorID, actorID, now, now}
-	if table == "markings" {
+	if table == "markings" || table == "materials" || table == "movements" || table == "belt_materials" || table == "accessories" || table == "product_conditions" {
 		columns, placeholders = "id,organization_id,code,name,meaning,is_active,sort_order,created_by,updated_by,created_at,updated_at", "?,?,?,?,?,TRUE,?,?,?,?,?"
 		args = []any{id, organizationID, code, name, strings.TrimSpace(meaning), sortOrder, actorID, actorID, now, now}
 	}
+	if table == "brands" {
+		columns, placeholders = "id,organization_id,code,name,reading,is_active,sort_order,created_by,updated_by,created_at,updated_at", "?,?,?,?,?,TRUE,?,?,?,?,?"
+		args = []any{id, organizationID, code, name, strings.TrimSpace(reading), sortOrder, actorID, actorID, now, now}
+	}
+	if table == "accessories" {
+		columns += ",symbol,supplement"
+		placeholders += ",?,?"
+		args = append(args, strings.TrimSpace(symbol), strings.TrimSpace(supplement))
+	}
+	if (table == "belt_materials" || table == "accessories") && len(displayDetails) > 0 {
+		if !displayDetails[0].Valid() {
+			return MasterItem{}, ErrUserInvalid
+		}
+		for _, column := range []string{"inventory_detail", "overseas_detail", "tag_detail", "domestic_detail"} {
+			value := ""
+			if p := displayDetails[0].Values()[column]; p != nil {
+				value = strings.TrimSpace(*p)
+			}
+			columns += "," + column
+			placeholders += ",?"
+			args = append(args, value)
+		}
+	}
 	query := fmt.Sprintf("INSERT INTO %s(%s) VALUES(%s)", table, columns, placeholders)
+	// A deleted material is inactive, but still owns its code. Re-register it
+	// atomically with the newly entered fields while preserving existing references.
+	// Active codes remain conflicts and cannot be overwritten by the create form.
+	if table == "materials" {
+		query += " ON CONFLICT (organization_id,code) DO UPDATE SET name=EXCLUDED.name,meaning=EXCLUDED.meaning,is_active=TRUE,sort_order=EXCLUDED.sort_order,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at WHERE NOT materials.is_active RETURNING id"
+		var savedID string
+		result := r.db.WithContext(ctx).Raw(query, args...).Scan(&savedID)
+		if result.Error != nil {
+			return MasterItem{}, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return MasterItem{}, errors.New("active material code already exists")
+		}
+		return r.MasterItem(ctx, organizationID, kind, savedID)
+	}
+
 	if err := r.db.WithContext(ctx).Exec(query, args...).Error; err != nil {
 		return MasterItem{}, err
 	}
 	return r.MasterItem(ctx, organizationID, kind, id)
 }
 
-func (r *Repository) UpdateMasterItem(ctx context.Context, organizationID, actorID, kind, id string, name, meaning *string, isActive *bool, sortOrder *int) (MasterItem, error) {
+func (r *Repository) UpdateMasterItem(ctx context.Context, organizationID, actorID, kind, id string, name, meaning, reading *string, isActive *bool, sortOrder *int, symbol, supplement *string, displayDetails ...MasterDisplayDetailsInput) (MasterItem, error) {
 	table, ok := masterTable(kind)
 	if !ok {
 		return MasterItem{}, ErrUnsupportedMaster
@@ -114,8 +183,17 @@ func (r *Repository) UpdateMasterItem(ctx context.Context, organizationID, actor
 	if name != nil {
 		updates["name"] = *name
 	}
-	if meaning != nil && table == "markings" {
+	if meaning != nil && (table == "markings" || table == "materials" || table == "movements" || table == "belt_materials" || table == "accessories" || table == "product_conditions") {
 		updates["meaning"] = strings.TrimSpace(*meaning)
+	}
+	if reading != nil && table == "brands" {
+		updates["reading"] = strings.TrimSpace(*reading)
+	}
+	if symbol != nil && table == "accessories" {
+		updates["symbol"] = strings.TrimSpace(*symbol)
+	}
+	if supplement != nil && table == "accessories" {
+		updates["supplement"] = strings.TrimSpace(*supplement)
 	}
 	if isActive != nil {
 		updates["is_active"] = *isActive
@@ -123,12 +201,31 @@ func (r *Repository) UpdateMasterItem(ctx context.Context, organizationID, actor
 	if sortOrder != nil {
 		updates["sort_order"] = *sortOrder
 	}
-	result := r.db.WithContext(ctx).Table(table).Where("organization_id = ? AND id = ?", organizationID, id).Updates(updates)
-	if result.Error != nil {
-		return MasterItem{}, result.Error
+	if (table == "belt_materials" || table == "accessories") && len(displayDetails) > 0 {
+		if !displayDetails[0].Valid() {
+			return MasterItem{}, ErrUserInvalid
+		}
+		for column, value := range displayDetails[0].Values() {
+			if value != nil {
+				updates[column] = strings.TrimSpace(*value)
+			}
+		}
 	}
-	if result.RowsAffected == 0 {
-		return MasterItem{}, ErrMasterNotFound
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.Table(table).Where("organization_id = ? AND id = ?", organizationID, id).Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrMasterNotFound
+		}
+		if table == "accessories" && name != nil {
+			return refreshProductAccessoryNames(tx, organizationID, id)
+		}
+		return nil
+	})
+	if err != nil {
+		return MasterItem{}, err
 	}
 	return r.MasterItem(ctx, organizationID, kind, id)
 }

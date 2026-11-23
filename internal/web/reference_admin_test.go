@@ -12,31 +12,36 @@ import (
 // assets, browser contract, and this manifest-like test as one change.
 func TestReferenceAdminSnapshotIntegrity(t *testing.T) {
 	expected := map[string]string{
-		"app.html":                    "76bb1f0e4e688a7acd677d58459d5a590954fd7f0fc65c23e70c8a7984f6dbd4",
-		"guest.html":                  "258ee73e431791e173c29cb73bde7eed7f9d7a3b8d8832d1a11c7574ef1438c3",
-		"css/guest.css":               "cc948cadc00ed1421402448277ca64e98319e750cbe0e0c15b7bee416641ee34",
+		"js/return_adjustments.js":    "fe744f74ac21173086b1d01384ba967cfbb88a50d2bcde913ac46060c6636200",
+		"js/slip_statement.js":        "bc18eae8871dea76c4ba87fc5f4554f0c3991ef9d7e9486274b61943f24d370b",
+		"css/auction_fees.css":        "acc4caa0c585f8a37713ec6c84d633a4c78601684166bfc9f14514a17cf2c8ff",
+		"js/auction_fees.js":          "467fa43551cb1594829d0961a96b56ddcc8a3754979c191d49e32cf05c3279de",
+		"js/accessory_values.js":      "f7f745314c7aa3b6bba8ad62c6e2273e9578d698bcb9b3e9b69ef8ee40904492",
+		"app.html":                    "98dc797830b13806d1ea48275070b1791d6e13b220a76f32ca233e54c63b8a0d",
+		"guest.html":                  "bbaee06ef911462ebb16fb3c5d894fa6da9c4e8d3362991c0949b76520ab8eba",
+		"css/guest.css":               "48330bc86e144f845053d78fd4976e551d84571170095e7cc567730e1af506b4",
 		"css/market-table.css":        "1fbd958c84da4b6cff7c648fb67166f158c6bcfe0f2f587e84860ba7d72b94d5",
-		"css/style.css":               "b139bb087a4de427bdeb96acae6685f3aceea40c02070eaa2a26474257b27882",
-		"index.html":                  "fbdd4e26f97c55024b6dd55fe5a4674bb86e297c9353cec197a034a2bfba8112",
-		"js/api_bridge.js":            "099faf1095acb8b56458f70961df416c072a634ef1adb751b7b3dcd991bd5287",
-		"js/app.js":                   "8c9ed8abba1b57aacc22758893dd047d15a1f01e237f32e9c3f94756a623e722",
-		"js/approval.js":              "43de68681b060a67bf00af6eb2a993e01d4acbcff55a1928c795cb4f0f031c1d",
-		"js/auth.js":                  "c0c8b6449dd1e94e9d02b63e4878303632d85eb442512ecbc696c0c0980fadad",
-		"js/box.js":                   "4ae711817115c0d62cdaa99e11920acc5ec67a0fa4d2e1879488368235840575",
-		"js/cost_adjustment_entry.js": "5c6adabbd0666027405363e53ed820279521cf18fc9604137a194824f3bdea2a",
-		"js/cost_merge.js":            "4959f15005deb576af3bc237cd8ad1bc9286c3bd528388cae78c577b6aa37329",
-		"js/data.js":                  "f52e548cef5aaf6a094ad15dbb47c0e4f278c76ec2108d21400c5270bd8354af",
-		"js/guest.js":                 "174dc03d5c978e514e5a674b9967ecf6b2d0caf2d0cc8b8fdbd7305687aa2401",
-		"js/guest_shared.js":          "da6589099b995f457d44e2b6eeb05ac07d8ad1c7bef937f4230dd8afd2ca38e4",
-		"js/login_info.js":            "3331838630b5a5f539de8a1e842d8bd75a0202692a865e3aa5cdf04bc8b0a77f",
-		"js/market_table.js":          "3ac2eac43a73cdaccff3267651dfd426b05c11b13aa6c87e4be9d6fb51f23be3",
-		"js/notify.js":                "edae1bc1187f3f29f87086018425aec3f628c5d342a0d8a3d22f854948cb6321",
-		"js/purchase_entry.js":        "440de10980b48d6f35df976036a5b6705d2483cf1f6f11e5a8ed143f39e9627c",
-		"js/stocktake.js":             "b7592fb37a246ebb424c0b8b81516d928c7c2f2e0c0def3a9228a45750cfb992",
-		"js/consignment.js":           "6b8da797cba3fdf6a593cf9e26835576407fc5c8c1b2db553fd721776843bee4",
+		"css/style.css":               "4cb2df4ded5c89920ecfbd7eee660178aee63ed6eeed5f952410981ac6065e5e",
+		"index.html":                  "f69f264c1c4ac57c640c8e78a6e37c7a042f54f2cdb8d1eb555a8ea62cea72b6",
+		"js/api_bridge.js":            "8e0de85ab02d9043ac176198c3124e17024039b1a5102c331d024e927401156d",
+		"js/app.js":                   "d73cf3e1e501410f6de2e302cd54356706766db45b26bc8548e294f0b4273271",
+		"js/approval.js":              "7eda29ed85e52157a41c26c91d1657a00ddc88e60fe330e1da5d53a630f42145",
+		"js/auth.js":                  "998e576e3b9ff1bdf329063bc837ae8a032e5a2e05ae27396d42caa7b3f8c380",
+		"js/box.js":                   "222c54eb3310474002ba4ee0f923acc4b5c9a14d24d0709332637814509be23f",
+		"js/cost_adjustment_entry.js": "0f997dbfbb0d9bf9f46f5915d615efcd9fb9b9b613db4ffe91caf195c239063a",
+		"js/cost_merge.js":            "ff25a19d544d4d40d0675451915541754fd5c1f0bf73ee7ff792243b392f46fc",
+		"js/data.js":                  "b903cffe92793fd6fb7856dbe9b4943ef1c8088a539e28e852624ca0c4ca3221",
+		"js/guest.js":                 "6ec8d148dc2fe091fe6b45e5869d0c5f31d8a3e1c90afa65ef1d216d15bee451",
+		"js/guest_shared.js":          "d185043a74f87a27aeee005c20940d983d81136c3a645babd6832097fe8a4499",
+		"js/login_info.js":            "8c256c208552cbe6cf16a9636ee347addb6bca88eabc1883f230f2827a990b3d",
+		"js/market_table.js":          "66768aedf141300b8ff9809831bf6e2a96781d8e90d6bf85f15cc7cb6366394f",
+		"js/notify.js":                "1893019ed66da6c3e4c66ac1f0f3594dda3c97325ae66b2a9c27a71405a38ba3",
+		"js/purchase_entry.js":        "418a7b56298377ebaabe4a20bb7c239d8e82eb978797f3f60bde42ce2e1bc710",
+		"js/stocktake.js":             "f0d7c38f327cabc18874eb331c920b1afa39878175a492c5ca86c25436d092bd",
+		"js/consignment.js":           "c9a73eaf1c2d200a8b1c688737e229b44c70b5529110b14a89e4ccce7f73a5fe",
 		"js/qrcode-generator.js":      "18ae399f81182bc9de916e9c77b195df20cc58d6f2d55a62b085a299f1bf1780",
 		"js/jsQR.js":                  "bc40c8a15196236b2314db0856f72ca0b49980cd5413b8c852a7349f5fee0859",
-		"js/qr_inventory.js":          "e9c87a9ab707bfa793a3c1907e34c2296f60fcf68713f06ce7cdbd5ed867bae0",
+		"js/qr_inventory.js":          "dcc27f323395b71cef19d46177ddeccb5da0f568818a701d1a3086abb7577fa8",
 	}
 
 	for name, want := range expected {
@@ -70,7 +75,7 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 	}
 	scripts := []string{
 		"qrcode-generator.js", "jsQR.js", "data.js", "guest_shared.js", "login_info.js", "auth.js", "api_bridge.js", "approval.js", "notify.js", "box.js", "market_table.js", "qr_inventory.js", "app.js",
-		"consignment.js", "stocktake.js", "purchase_entry.js", "cost_merge.js", "cost_adjustment_entry.js",
+		"return_adjustments.js", "return_adjustments.js", "consignment.js", "stocktake.js", "purchase_entry.js", "cost_merge.js", "cost_adjustment_entry.js",
 	}
 	for _, script := range scripts {
 		if !strings.Contains(html, `src="js/`+script) {
@@ -95,7 +100,7 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 			t.Errorf("reference admin is missing market registration marker %q", marker)
 		}
 	}
-	for _, marker := range []string{`class="card-body pe-slip-list-scroll"`, `class="data-table pe-slip-list-table"`, `原価小計 / 原価合計`, `入金日付`} {
+	for _, marker := range []string{`class="card-body pe-slip-list-scroll"`, `class="data-table pe-slip-list-table"`, `class="pe-purchase-total-heading">原価<span`, `入金日付`} {
 		if !strings.Contains(html, marker) {
 			t.Errorf("reference admin is missing purchase-slip list layout marker %q", marker)
 		}
@@ -252,8 +257,8 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 			t.Errorf("worker navigation permissions are missing adjustment-registration page %q", marker)
 		}
 	}
-	if got := strings.Count(html, `class="modal-overlay`); got != 50 {
-		t.Errorf("reference admin modal count=%d, want 50", got)
+	if got := strings.Count(html, `class="modal-overlay`); got != 51 {
+		t.Errorf("reference admin modal count=%d, want 51", got)
 	}
 
 	guestContent, err := reactAssets.ReadFile("react-dist/admin-reference/guest.html")
@@ -261,13 +266,16 @@ func TestReferenceAdminContainsEveryRequiredScreenAndScript(t *testing.T) {
 		t.Fatal(err)
 	}
 	guestHTML := string(guestContent)
-	for _, feature := range []string{"guest-product-grid", "guest-box-filter", "guest-cart-overlay", "guest-submit-request"} {
+	if strings.Contains(guestHTML, "guest-box-filter") {
+		t.Error("guest must not show BOX selection")
+	}
+	for _, feature := range []string{"guest-product-grid", "guest-brand-filter", "guest-cart-overlay", "guest-submit-request"} {
 		if !strings.Contains(guestHTML, feature) {
 			t.Errorf("reference guest is missing feature %q", feature)
 		}
 	}
 	for _, script := range []string{"data.js", "guest_shared.js", "login_info.js", "guest.js"} {
-		if !strings.Contains(guestHTML, `src="js/`+script+`"`) {
+		if !strings.Contains(guestHTML, `src="js/`+script+`"`) && !strings.Contains(guestHTML, `src="js/`+script+`?`) {
 			t.Errorf("reference guest is missing script %q", script)
 		}
 	}

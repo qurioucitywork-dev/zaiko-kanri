@@ -36,6 +36,9 @@ func (s *Server) apiBoxUpdate(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, persistence.ErrBoxNotFound) {
 			status, code, message = http.StatusNotFound, "box_not_found", "BOXが見つかりません。"
 		}
+		if errors.Is(err, persistence.ErrBoxProductStatus) {
+			status, code, message = http.StatusConflict, "box_product_status_invalid", err.Error()
+		}
 		writeAPIError(w, status, code, message)
 		return
 	}
@@ -59,7 +62,12 @@ func (s *Server) apiGuestCatalog(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusInternalServerError, "catalog_unavailable", "公開商品を取得できませんでした。")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items)})
+	region, err := s.repository.GuestRegionType(r.Context(), user.OrganizationID, user.ID)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "catalog_unavailable", "ゲスト情報を取得できませんでした。")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": len(items), "regionType": region})
 }
 
 func (s *Server) apiGuestPurchaseRequestCreate(w http.ResponseWriter, r *http.Request) {
@@ -69,16 +77,20 @@ func (s *Server) apiGuestPurchaseRequestCreate(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var input struct {
-		ProductID string `json:"productId"`
-		Message   string `json:"message"`
+		ProductID  string   `json:"productId"`
+		ProductIDs []string `json:"productIds"`
+		Message    string   `json:"message"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil || strings.TrimSpace(input.ProductID) == "" {
+	if err := decoder.Decode(&input); err != nil || (strings.TrimSpace(input.ProductID) == "" && len(input.ProductIDs) == 0) {
 		writeAPIError(w, http.StatusBadRequest, "invalid_request", "商品を指定してください。")
 		return
 	}
-	record, err := s.repository.CreateGuestPurchaseRequest(r.Context(), user.OrganizationID, user.ID, strings.TrimSpace(input.ProductID), input.Message)
+	if len(input.ProductIDs) == 0 {
+		input.ProductIDs = []string{strings.TrimSpace(input.ProductID)}
+	}
+	record, err := s.repository.CreateGuestPurchaseBatch(r.Context(), user.OrganizationID, user.ID, input.ProductIDs, input.Message)
 	if err != nil {
 		status, code, message := http.StatusConflict, "product_unavailable", "この商品は現在購入リクエストできません。"
 		if errors.Is(err, persistence.ErrGuestAccountNotFound) {
@@ -102,7 +114,9 @@ func (s *Server) apiPurchaseRequests(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiPurchaseRequestReview(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		Note string `json:"note"`
+		Note      string                                `json:"note"`
+		AdminCode string                                `json:"adminCode"`
+		Decisions []persistence.PurchaseRequestDecision `json:"decisions"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
 	if err := decoder.Decode(&input); err != nil {
@@ -110,18 +124,36 @@ func (s *Server) apiPurchaseRequestReview(w http.ResponseWriter, r *http.Request
 		return
 	}
 	user, _ := currentUser(r.Context())
-	record, err := s.repository.ReviewPurchaseRequest(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, r.PathValue("decision"), input.Note)
+	if user.Role != database.RoleAdmin {
+		if user.Role != database.RoleWorker {
+			writeAPIError(w, 403, "review_forbidden", "購入リクエストを処理する権限がありません。")
+			return
+		}
+		valid, err := s.repository.VerifyAdminAccessCode(r.Context(), user.OrganizationID, user.ID, input.AdminCode)
+		if err != nil || !valid {
+			writeAPIError(w, 403, "admin_code_required", "処理には管理者PW（認証コード）の入力が必要です。")
+			return
+		}
+	}
+	var record persistence.PurchaseRequestRecord
+	var err error
+	if r.PathValue("decision") == "decide" {
+		record, err = s.repository.ReviewPurchaseBatch(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, input.Decisions, input.Note)
+	} else {
+		record, err = s.repository.ReviewPurchaseRequest(r.Context(), user.OrganizationID, r.PathValue("id"), user.ID, r.PathValue("decision"), input.Note)
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusConflict, "request_review_failed", "購入リクエストを処理できませんでした。商品状態を確認してください。")
 		return
 	}
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "purchase_request", TargetID: r.PathValue("id"), Action: "purchase_request.reviewed", Reason: input.Note, Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent()})
 	writeJSON(w, http.StatusOK, record)
 }
 
 func (s *Server) apiNotifications(w http.ResponseWriter, r *http.Request) {
 	user, _ := currentUser(r.Context())
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	records, err := s.repository.Notifications(r.Context(), user.OrganizationID, user.ID, user.Role, limit)
+	records, err := s.repository.Notifications(r.Context(), user.OrganizationID, user.ID, user.Role, limit, r.URL.Query().Get("unread") == "true")
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "notifications_unavailable", "通知を取得できませんでした。")
 		return

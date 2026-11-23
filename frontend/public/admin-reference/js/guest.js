@@ -7,27 +7,37 @@ const GUEST_CART_STORAGE_PREFIX = 'inv_guest_cart_v1:';
 
 const GUEST_I18N = {
   ja: {
+    condition: 'コンディション', accessories: '付属品',
+    requestHistory: '購入リクエスト履歴', closeHistory: '閉じる', refreshHistory: '更新', historyLoading: '履歴を読み込んでいます…',
+    historyEmpty: '送信済みの購入リクエストはありません', historyError: '履歴を取得できませんでした。「更新」から再試行してください。',
+    requestedAt: '送信日時', historyPrice: '送信時の価格（税抜）', priceNotRecorded: '送信時の価格記録なし', historyNote: '送信した備考', historyUnknown: '確認中',
+    historyPending: '未対応', historyApproved: '承認済み', historyRejected: '却下', historyCancelled: '取消済み', historyExpired: '期限切れ', historyConverted: '販売済み',
     cart: 'カート', logout: 'ログアウト', taxNotice: '表示価格は税抜き価格です。ご不明な点はお気軽にお問い合わせください。',
-    items: '点', allBrands: 'すべてのブランド', allConditions: 'すべてのコンディション', allBoxes: 'すべての公開BOX',
+    items: '点', allBrands: 'すべてのブランド', allConditions: 'すべてのコンディション',
     emptyTitle: '公開中の商品がありません', emptyBody: '検索条件を変更するか、管理者へお問い合わせください。',
-    cartAdded: 'カート済', addCart: 'カートに追加', removeCart: 'カートから削除', salePrice: '販売価格（税抜）',
+    cartAdded: 'カート済', addCart: 'カートに追加', removeCart: 'カートから削除', salePrice: '想定売価（税抜）',
     totalTaxExcluded: '合計（税抜）', checklist: '購入前確認チェックリスト',
     confirmDetails: '商品の詳細情報（コンディション・付属品）を確認しました', confirmPrice: '表示価格（税抜）に同意しました',
     confirmPolicy: '返品・交換ポリシーを確認しました', confirmContact: '注文後、担当者よりご連絡があることを了承しました',
     requestNote: '管理者への備考（任意）', closeCart: 'カートを閉じる', checkAll: 'すべての項目にチェックを入れてください',
-    submitRequest: '購入リクエストを送信する', emptyCart: 'カートに商品がありません', published: '公開BOX', updated: '最終更新',
+    submitRequest: '購入リクエストを送信する', emptyCart: 'カートに商品がありません',
     requestSent: id => `購入リクエスト ${id} を管理者へ送信しました。担当者からの連絡をお待ちください。`,
   },
   en: {
+    condition: 'Condition', accessories: 'Accessories',
+    requestHistory: 'Request history', closeHistory: 'Close', refreshHistory: 'Refresh', historyLoading: 'Loading request history…',
+    historyEmpty: 'No purchase requests sent yet', historyError: 'Could not load your history. Select Refresh to try again.',
+    requestedAt: 'Sent at', historyPrice: 'Price when sent (excl. tax)', priceNotRecorded: 'Original price not recorded', historyNote: 'Your note', historyUnknown: 'Under review',
+    historyPending: 'Pending', historyApproved: 'Approved', historyRejected: 'Rejected', historyCancelled: 'Cancelled', historyExpired: 'Expired', historyConverted: 'Sold',
     cart: 'Cart', logout: 'Log out', taxNotice: 'Prices shown are before tax. Please contact us if you have any questions.',
-    items: ' items', allBrands: 'All brands', allConditions: 'All conditions', allBoxes: 'All published boxes',
+    items: ' items', allBrands: 'All brands', allConditions: 'All conditions',
     emptyTitle: 'No products are currently available', emptyBody: 'Change the filters or contact the administrator.',
-    cartAdded: 'In cart', addCart: 'Add to cart', removeCart: 'Remove from cart', salePrice: 'Sale price (excl. tax)',
+    cartAdded: 'In cart', addCart: 'Add to cart', removeCart: 'Remove from cart', salePrice: 'Expected sale price (excl. tax)',
     totalTaxExcluded: 'Total (excl. tax)', checklist: 'Pre-purchase checklist',
     confirmDetails: 'I reviewed the product condition and accessories.', confirmPrice: 'I agree to the displayed price before tax.',
     confirmPolicy: 'I reviewed the return and exchange policy.', confirmContact: 'I understand that a representative will contact me.',
     requestNote: 'Note to administrator (optional)', closeCart: 'Close cart', checkAll: 'Check every item to continue',
-    submitRequest: 'Send purchase request', emptyCart: 'Your cart is empty', published: 'Published boxes', updated: 'Last updated',
+    submitRequest: 'Send purchase request', emptyCart: 'Your cart is empty',
     requestSent: id => `Purchase request ${id} was sent to the administrator. Please wait for a representative to contact you.`,
   },
 };
@@ -38,6 +48,8 @@ let guestCurrency = 'JPY';
 let guestCartCodes = [];
 let guestCatalogItems = [];
 let guestAccessibleBoxes = [];
+let guestRequestHistory = [];
+let guestHistoryLoadVersion = 0;
 
 function guestText(key) {
   return GUEST_I18N[guestLanguage]?.[key] ?? GUEST_I18N.ja[key] ?? key;
@@ -84,9 +96,9 @@ function refreshGuestPublishedItems() {
   guestCatalogItems = [];
   guestAccessibleBoxes.forEach(box => {
     (box.items || []).forEach(item => {
-      if (item.status !== '在庫中' || seen.has(item.code)) return;
+      if (!isGuestVisibleProductStatus(item.status) || seen.has(item.code)) return;
       seen.add(item.code);
-      guestCatalogItems.push({ ...item, publishedBoxNo: box.no, publishedBoxName: box.name || '' });
+      guestCatalogItems.push({ ...item });
     });
   });
   const allowedCodes = new Set(guestCatalogItems.map(item => String(item.code)));
@@ -105,44 +117,47 @@ function getGuestFxRate(code) {
   return APP_DATA.fxRates.find(rate => rate.code === code)?.rate || 1;
 }
 
-function formatGuestPrice(usdValue) {
-  const usd = Number(usdValue) || 0;
-  const usdJpyRate = getGuestFxRate('USD');
-  let amount = guestCurrency === 'USD' ? usd : (usd * usdJpyRate) / getGuestFxRate(guestCurrency);
-  if (guestCurrency === 'JPY') amount = Math.round(amount / 1000) * 1000;
-  if (guestCurrency === 'JPY') return `¥${Math.round(amount).toLocaleString('ja-JP')}`;
+function guestDisplayPrice(item) {
+  if (window.ZaikoAPI) return item.displayPrice == null ? null : Number(item.displayPrice);
+  const amount = Number(item.salePrice) || 0;
+  const from = item.saleCurrency || 'USD';
+  if (from === guestCurrency) return guestCurrency === 'JPY' ? Math.ceil(amount / 1000) * 1000 : amount;
+  const rate = getGuestFxRate('USD');
+  return guestCurrency === 'JPY' ? Math.ceil(amount * rate / 1000) * 1000 : Math.round(amount / rate);
+}
+
+function formatGuestDisplayPrice(amount, currency = guestCurrency) {
+  if (amount == null || !Number.isFinite(amount)) return '—';
+  if (currency === 'JPY') return `¥${Math.round(amount).toLocaleString('ja-JP')}`;
   return new Intl.NumberFormat(guestLanguage === 'ja' ? 'ja-JP' : 'en-US', {
-    style: 'currency',
-    currency: guestCurrency,
-    maximumFractionDigits: 0,
-  }).format(Math.round(amount));
+    style: 'currency', currency, maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function formatGuestItemPrice(item) {
+  return formatGuestDisplayPrice(guestDisplayPrice(item), item.displayCurrency || guestCurrency);
 }
 
 function initializeGuestFilters() {
   const brands = [...new Set(guestCatalogItems.map(item => item.brand).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ja'));
   const brandSelect = document.getElementById('guest-brand-filter');
   const conditionSelect = document.getElementById('guest-condition-filter');
-  const boxSelect = document.getElementById('guest-box-filter');
   const currentBrand = brandSelect.value;
   const currentCondition = conditionSelect.value;
-  const currentBox = boxSelect.value;
 
   brandSelect.innerHTML = `<option value="">${guestEscape(guestText('allBrands'))}</option>` + brands.map(brand => `<option value="${guestEscape(brand)}">${guestEscape(brand)}</option>`).join('');
   conditionSelect.innerHTML = `<option value="">${guestEscape(guestText('allConditions'))}</option>` + APP_DATA.conditions.map(item => `<option value="${guestEscape(item.code)}">${guestEscape(item.name)}</option>`).join('');
-  boxSelect.innerHTML = `<option value="">${guestEscape(guestText('allBoxes'))}</option>` + guestAccessibleBoxes.map(box => `<option value="${box.no}">BOX ${box.no}${box.name ? ` — ${guestEscape(box.name)}` : ''}</option>`).join('');
   if ([...brandSelect.options].some(option => option.value === currentBrand)) brandSelect.value = currentBrand;
   if ([...conditionSelect.options].some(option => option.value === currentCondition)) conditionSelect.value = currentCondition;
-  if ([...boxSelect.options].some(option => option.value === currentBox)) boxSelect.value = currentBox;
 }
 
 function renderGuestCatalog() {
   const query = document.getElementById('guest-search').value.trim().toLowerCase();
   const brand = document.getElementById('guest-brand-filter').value;
   const condition = document.getElementById('guest-condition-filter').value;
-  const boxNo = document.getElementById('guest-box-filter').value;
   const filtered = guestCatalogItems.filter(item => {
     const searchable = [item.brand, item.brandEn, item.model, item.modelEn, item.ref].join(' ').toLowerCase();
-    return (!query || searchable.includes(query)) && (!brand || item.brand === brand) && (!condition || item.condition === condition) && (!boxNo || String(item.publishedBoxNo) === boxNo);
+    return (!query || searchable.includes(query)) && (!brand || item.brand === brand) && (!condition || item.condition === condition);
   });
 
   document.getElementById('guest-result-count').textContent = filtered.length;
@@ -157,10 +172,6 @@ function renderGuestCatalog() {
     }, { once: true });
   });
 
-  const snapshot = APP_DATA.publishedSnapshot || {};
-  document.getElementById('guest-publish-summary').innerHTML = guestAccessibleBoxes.length
-    ? `<i class="fa-solid fa-layer-group" aria-hidden="true"></i> ${guestEscape(guestText('published'))}: <strong>${guestAccessibleBoxes.length}</strong> / ${guestEscape(guestText('updated'))}: <strong>${guestEscape(snapshot.updatedAt || '—')}</strong>`
-    : '';
 }
 
 function renderGuestProductCard(item) {
@@ -181,8 +192,7 @@ function renderGuestProductCard(item) {
         <h2 class="guest-product-name">${guestEscape(displayModel)}</h2>
         <div class="guest-product-ref">Ref. ${guestEscape(item.ref || '—')}</div>
         <span class="guest-condition-badge">${guestEscape(getGuestConditionName(item.condition))}</span>
-        <div class="guest-product-box"><i class="fa-solid fa-box" aria-hidden="true"></i> BOX ${item.publishedBoxNo}${item.publishedBoxName ? ` — ${guestEscape(item.publishedBoxName)}` : ''}</div>
-        <div class="guest-product-price"><span>${guestEscape(guestText('salePrice'))}</span><strong>${guestEscape(formatGuestPrice(item.salePrice))}</strong></div>
+        <div class="guest-product-price"><span>${guestEscape(guestText('salePrice'))}</span><strong>${guestEscape(formatGuestItemPrice(item))}</strong></div>
         <button class="guest-cart-toggle${inCart ? ' is-remove' : ''}" type="button" onclick="toggleGuestCart('${guestEscape(item.code)}')">
           <i class="fa-solid ${inCart ? 'fa-trash-can' : 'fa-cart-plus'}" aria-hidden="true"></i> ${guestEscape(inCart ? guestText('removeCart') : guestText('addCart'))}
         </button>
@@ -201,6 +211,7 @@ function toggleGuestCart(code) {
 }
 
 function focusGuestSearch() {
+  showGuestCatalog();
   document.getElementById('guest-search').focus();
   document.getElementById('catalog').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -208,15 +219,12 @@ function focusGuestSearch() {
 function setGuestLanguage(language) {
   guestLanguage = language === 'en' ? 'en' : 'ja';
   document.documentElement.lang = guestLanguage;
-  document.getElementById('guest-lang-ja').classList.toggle('is-active', guestLanguage === 'ja');
-  document.getElementById('guest-lang-en').classList.toggle('is-active', guestLanguage === 'en');
-  document.getElementById('guest-lang-ja').setAttribute('aria-pressed', String(guestLanguage === 'ja'));
-  document.getElementById('guest-lang-en').setAttribute('aria-pressed', String(guestLanguage === 'en'));
   document.querySelectorAll('[data-i18n]').forEach(element => {
     const value = guestText(element.dataset.i18n);
     if (typeof value === 'string') element.textContent = value;
   });
   document.getElementById('guest-search').placeholder = guestLanguage === 'ja' ? 'ブランド / モデル / 型番で検索...' : 'Search by brand / model / reference...';
+  if (!document.getElementById('guest-history-overlay').classList.contains('hidden')) renderGuestRequestHistory();
   document.getElementById('guest-request-note').placeholder = guestLanguage === 'ja' ? '希望納期や確認事項をご記入ください' : 'Enter requested delivery date or questions';
   initializeGuestFilters();
   renderGuestCatalog();
@@ -255,11 +263,11 @@ function renderGuestCart() {
         return `<div class="guest-cart-line">
           <div class="guest-cart-thumb">${image}</div>
           <div><div class="guest-cart-line-name">${guestEscape(item.brand)} ${guestEscape(item.model)}</div><div class="guest-cart-line-meta">Ref. ${guestEscape(item.ref || '—')} / ${guestEscape(getGuestConditionName(item.condition))}</div></div>
-          <div class="guest-cart-line-price">${guestEscape(formatGuestPrice(item.salePrice))}</div>
+          <div class="guest-cart-line-price">${guestEscape(formatGuestItemPrice(item))}</div>
           <button class="guest-cart-remove" type="button" onclick="toggleGuestCart('${guestEscape(item.code)}')" title="${guestEscape(guestText('removeCart'))}" aria-label="${guestEscape(guestText('removeCart'))}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
         </div>`;
       }).join('');
-  document.getElementById('guest-cart-total').textContent = formatGuestPrice(items.reduce((sum, item) => sum + (Number(item.salePrice) || 0), 0));
+  document.getElementById('guest-cart-total').textContent = formatGuestDisplayPrice(items.some(item => guestDisplayPrice(item) == null) ? null : items.reduce((sum, item) => sum + guestDisplayPrice(item), 0), items[0]?.displayCurrency || guestCurrency);
   document.querySelectorAll('.guest-confirm-check').forEach(check => { check.checked = false; check.disabled = items.length === 0; });
   updateGuestSubmitState();
 }
@@ -296,11 +304,116 @@ async function submitGuestPurchaseRequest() {
   saveGuestCart();
   document.getElementById('guest-request-note').value = '';
   closeGuestCart();
+  if(window.ZaikoAPI) await refreshGuestCatalogFromServer();
   renderGuestCatalog();
   const success = document.getElementById('guest-success');
   success.innerHTML = `<i class="fa-solid fa-circle-check" aria-hidden="true"></i><span>${guestEscape(guestText('requestSent')(request.id))}</span>`;
   success.classList.remove('hidden');
   success.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function openGuestRequestHistory() {
+  const version = ++guestHistoryLoadVersion;
+  closeGuestCart();
+  closeGuestDetail();
+  document.getElementById('guest-history-overlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  const body = document.getElementById('guest-history-body');
+  guestRequestHistory = [];
+  body.innerHTML = `<p class="guest-history-message">${guestEscape(guestText('historyLoading'))}</p>`;
+  document.querySelector('#guest-history-overlay .guest-icon-button')?.focus();
+  try {
+    if (window.ZaikoAPI) {
+      // Identity is taken from the authenticated server session, never the URL.
+      const response = await window.ZaikoAPI.request('/guest/purchase-requests');
+      if (version !== guestHistoryLoadVersion) return;
+      guestRequestHistory = (response.items || []).map(record => ({
+        id: record.requestNumber, date: record.requestedAt, status: record.status, note: record.message,
+        items: (record.items?.length ? record.items : [record]).map(line=>({ name:[line.brand,line.modelNumber].filter(Boolean).join(' '),ref:line.referenceNumber,
+          priceMinor:line.requestedPriceMinor,currency:line.requestedCurrency,status:line.status })),
+      }));
+    } else {
+      hydrateGuestDomainState();
+      guestRequestHistory = (APP_DATA.purchaseRequests || []).filter(record => record.guestId === guestAccount?.id).map(record => ({
+        id: record.id, date: record.createdAt || record.date, status: record.status, note: record.note,
+        items: (record.items || []).map(item => ({ name: item.itemName, ref: item.ref,
+          priceMinor: Number(item.salePrice), currency: 'USD' })),
+      }));
+    }
+    renderGuestRequestHistory();
+  } catch {
+    if (version !== guestHistoryLoadVersion) return;
+    body.innerHTML = `<p class="guest-history-message" role="alert">${guestEscape(guestText('historyError'))}</p>`;
+  }
+}
+
+function closeGuestRequestHistory() {
+  ++guestHistoryLoadVersion;
+  document.getElementById('guest-history-overlay').classList.add('hidden');
+  document.body.style.overflow = '';
+  document.getElementById('guest-history-button')?.focus();
+}
+
+function renderGuestRequestHistory() {
+  const statusKeys = { pending: 'historyPending', approved: 'historyApproved', rejected: 'historyRejected',
+    cancelled: 'historyCancelled', expired: 'historyExpired', sold: 'historyConverted',
+    '未対応': 'historyPending', '承認済み': 'historyApproved', '却下': 'historyRejected', '取消': 'historyCancelled', '期限切れ': 'historyExpired', '販売済み': 'historyConverted' };
+  document.getElementById('guest-history-body').innerHTML = guestRequestHistory.length
+    ? guestRequestHistory.map(record => {
+      const date = new Date(record.date);
+      const sentAt = Number.isNaN(date.getTime()) ? (record.date || '—') : date.toLocaleString(guestLanguage === 'ja' ? 'ja-JP' : 'en-US');
+      return `<article class="guest-history-card">
+        <div class="guest-history-heading"><h3>${guestEscape(record.id)}</h3><span class="guest-history-status">${guestEscape(guestText(statusKeys[record.status] || 'historyUnknown'))}</span></div>
+        <div class="guest-history-date">${guestEscape(guestText('requestedAt'))}: ${guestEscape(sentAt)}</div>
+        ${record.items.map(item => {
+          let price = guestText('priceNotRecorded');
+          if (item.priceMinor != null && /^[A-Z]{3}$/.test(item.currency || '')) {
+            price = new Intl.NumberFormat(guestLanguage === 'ja' ? 'ja-JP' : 'en-US', { style: 'currency', currency: item.currency }).format(Number(item.priceMinor));
+          }
+          return `<div class="guest-history-product"><div><strong>${guestEscape(item.name || '—')}</strong><small>Ref. ${guestEscape(item.ref || '—')}</small>${item.status ? `<small>${guestEscape(guestText(statusKeys[item.status] || 'historyUnknown'))}</small>` : ''}</div><div class="guest-history-price"><small>${guestEscape(guestText('historyPrice'))}</small><strong>${guestEscape(price)}</strong></div></div>`;
+        }).join('')}
+        ${record.note ? `<div class="guest-history-note"><strong>${guestEscape(guestText('historyNote'))}</strong><br>${guestEscape(record.note)}</div>` : ''}
+      </article>`;
+    }).join('')
+    : `<p class="guest-history-message">${guestEscape(guestText('historyEmpty'))}</p>`;
+}
+
+function resetGuestDetailImageZoom(frame = document.querySelector('#guest-detail-body .guest-detail-image')) {
+  if (!frame) return;
+  frame.classList.remove('is-zoomed');
+  frame.style.removeProperty('--guest-zoom-x');
+  frame.style.removeProperty('--guest-zoom-y');
+}
+
+function initializeGuestDetailImageZoom() {
+  const frame = document.querySelector('#guest-detail-body .guest-detail-image');
+  const image = frame?.querySelector('img');
+  if (!image) return;
+  image.draggable = false;
+  const updateReady = () => {
+    resetGuestDetailImageZoom(frame);
+    frame.classList.toggle('is-zoomable', image.complete && image.naturalWidth > 0);
+  };
+  const zoomAtPointer = event => {
+    // Touch gestures keep their usual scrolling behaviour.
+    if (event.pointerType !== 'mouse' || !frame.classList.contains('is-zoomable')) return;
+    const bounds = frame.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const percent = (position, start, size) => Math.max(0, Math.min(100, (position - start) / size * 100));
+    frame.style.setProperty('--guest-zoom-x', `${percent(event.clientX, bounds.left, bounds.width)}%`);
+    frame.style.setProperty('--guest-zoom-y', `${percent(event.clientY, bounds.top, bounds.height)}%`);
+    frame.classList.add('is-zoomed');
+  };
+  frame.addEventListener('pointerenter', zoomAtPointer);
+  frame.addEventListener('pointermove', zoomAtPointer);
+  frame.addEventListener('pointerleave', () => resetGuestDetailImageZoom(frame));
+  frame.addEventListener('pointercancel', () => resetGuestDetailImageZoom(frame));
+  image.addEventListener('load', updateReady);
+  image.addEventListener('error', () => {
+    resetGuestDetailImageZoom(frame);
+    frame.classList.remove('is-zoomable');
+  });
+  updateReady();
 }
 
 function openGuestDetail(code) {
@@ -309,20 +422,31 @@ function openGuestDetail(code) {
   const image = item.images?.[0] ? `<img src="${guestEscape(item.images[0])}" alt="${guestEscape(`${item.brand} ${item.model}`)}">` : '<i class="fa-regular fa-clock" aria-hidden="true"></i>';
   document.getElementById('guest-detail-title').textContent = `${item.brand} ${item.model}`;
   document.getElementById('guest-detail-body').innerHTML = `<div class="guest-detail-layout">
-    <div class="guest-detail-image">${image}</div>
+    <div><div class="guest-detail-image">${image}</div>
+      ${(item.images || []).length > 1 ? `<div class="guest-detail-thumbnails">${item.images.map((src,index)=>`<button type="button" data-image-index="${index}" aria-label="${guestLanguage==='en'?'Image':'商品画像'} ${index+1}" aria-pressed="${index===0}"><img src="${guestEscape(src)}" alt="" loading="lazy"></button>`).join('')}</div>` : ''}</div>
     <div><dl class="guest-detail-list">
       <dt>Ref.</dt><dd>${guestEscape(item.ref || '—')}</dd>
-      <dt>コンディション</dt><dd>${guestEscape(getGuestConditionName(item.condition))}</dd>
-      <dt>付属品</dt><dd>${guestEscape((item.accessories || []).join('・') || '—')}</dd>
-      <dt>公開BOX</dt><dd>BOX ${item.publishedBoxNo}${item.publishedBoxName ? ` — ${guestEscape(item.publishedBoxName)}` : ''}</dd>
-      <dt>${guestEscape(guestText('salePrice'))}</dt><dd>${guestEscape(formatGuestPrice(item.salePrice))}</dd>
+      <dt data-i18n="condition">${guestEscape(guestText('condition'))}</dt><dd>${guestEscape(getGuestConditionName(item.condition))}</dd>
+      <dt data-i18n="accessories">${guestEscape(guestText('accessories'))}</dt><dd>${guestEscape((item.accessories || []).join('・') || '—')}</dd>
+      <dt data-i18n="salePrice">${guestEscape(guestText('salePrice'))}</dt><dd>${guestEscape(formatGuestItemPrice(item))}</dd>
     </dl></div>
   </div>`;
+  initializeGuestDetailImageZoom();
+  document.querySelectorAll('#guest-detail-body [data-image-index]').forEach(button=>button.addEventListener('click',()=>{
+    const frame=document.querySelector('#guest-detail-body .guest-detail-image');
+    resetGuestDetailImageZoom(frame);
+    frame?.classList.remove('is-zoomable');
+    const main=document.querySelector('#guest-detail-body .guest-detail-image img');
+    if(main)main.src=item.images[Number(button.dataset.imageIndex)];
+    document.querySelectorAll('#guest-detail-body [data-image-index]').forEach(candidate=>candidate.setAttribute('aria-pressed',String(candidate===button)));
+  }));
+  document.getElementById('guest-detail-overlay').dataset.productCode=String(code);
   document.getElementById('guest-detail-overlay').classList.remove('hidden');
   document.body.style.overflow = 'hidden';
 }
 
 function closeGuestDetail() {
+  resetGuestDetailImageZoom();
   document.getElementById('guest-detail-overlay').classList.add('hidden');
   document.body.style.overflow = '';
 }
@@ -354,8 +478,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadGuestCart();
   refreshGuestPublishedItems();
   initializeGuestFilters();
-  setGuestLanguage('ja');
-  document.getElementById('guest-currency').value = 'JPY';
+  const overseas = guestAccount.regionType === 'overseas';
+  guestCurrency = overseas ? 'USD' : 'JPY';
+  setGuestLanguage(overseas ? 'en' : 'ja');
+  applyGuestPageRoute();
   renderGuestCatalog();
 
   document.querySelectorAll('.guest-modal-overlay').forEach(overlay => {
@@ -363,11 +489,81 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (event.target !== overlay) return;
       if (overlay.id === 'guest-cart-overlay') closeGuestCart();
       if (overlay.id === 'guest-detail-overlay') closeGuestDetail();
+      if (overlay.id === 'guest-history-overlay') closeGuestRequestHistory();
     });
   });
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
     closeGuestCart();
     closeGuestDetail();
+    if (!document.getElementById('guest-history-overlay').classList.contains('hidden')) closeGuestRequestHistory();
   });
 });
+
+let guestCatalogRefreshing=false;
+async function refreshGuestCatalogFromServer() {
+ if (!window.ZaikoAPI || !guestAccount || guestCatalogRefreshing || document.hidden) return;
+ guestCatalogRefreshing=true;
+ try {
+  const before=JSON.stringify((APP_DATA.publishedSnapshot || {}).boxes || []);
+  await window.ZaikoAPI.hydrateGuest();
+  const after=JSON.stringify((APP_DATA.publishedSnapshot || {}).boxes || []);
+  if(before===after)return;
+  refreshGuestPublishedItems();initializeGuestFilters();renderGuestCatalog();
+  const detail=document.getElementById('guest-detail-overlay');
+  if(detail && !detail.classList.contains('hidden') && !guestCatalogItems.some(item=>String(item.code)===detail.dataset.productCode))closeGuestDetail();
+  if(!document.getElementById('guest-cart-overlay').classList.contains('hidden'))renderGuestCart();
+ }catch(error){
+  if(error.status===401){clearGuestSession();location.href='index.html';}
+ }finally{guestCatalogRefreshing=false;}
+}
+document.addEventListener('DOMContentLoaded',()=>{
+ if(window.ZaikoAPI)window.setInterval(refreshGuestCatalogFromServer,30000);
+});
+window.addEventListener('focus',refreshGuestCatalogFromServer);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshGuestCatalogFromServer();});
+
+Object.assign(GUEST_I18N.ja, {
+ inquiry:'お問い合わせ',backToProducts:'商品一覧に戻る',inquiryIntro:'ご質問やご相談をお送りください。管理者が内容を確認し、登録済みの連絡先へご連絡します。',
+ inquirySender:'送信者',inquirySubject:'件名（必須）',inquiryProduct:'管理番号（任意）',inquiryMessage:'お問い合わせ内容（必須）',inquirySend:'お問い合わせを送信',
+ inquirySent:'お問い合わせを送信しました。担当者からの連絡をお待ちください。',inquiryFailed:'送信できませんでした。入力内容は残っています。通信状態を確認し、もう一度お試しください。',inquiryRequired:'件名とお問い合わせ内容を入力してください。',inquirySending:'送信中…',inventorySearch:'在庫検索',
+});
+Object.assign(GUEST_I18N.en, {
+ inquiry:'Contact us',backToProducts:'Back to products',inquiryIntro:'Send us your questions or requests. Our team will review your message and contact you using your registered contact details.',
+ inquirySender:'From',inquirySubject:'Subject (required)',inquiryProduct:'Product number (optional)',inquiryMessage:'Message (required)',inquirySend:'Send inquiry',
+ inquirySent:'Your inquiry has been sent. Please wait for our team to contact you.',inquiryFailed:'Your inquiry could not be sent. Your input has been kept. Check your connection and try again.',inquiryRequired:'Enter a subject and message.',inquirySending:'Sending…',inventorySearch:'Search products',
+});
+function applyGuestPageRoute(focus=false) {
+ const inquiry=location.hash==='#inquiry';
+ document.getElementById('catalog').classList.toggle('hidden',inquiry);
+ document.getElementById('guest-inquiry-page').classList.toggle('hidden',!inquiry);
+ document.getElementById('guest-inquiry-button').setAttribute('aria-current',inquiry?'page':'false');
+ document.getElementById('guest-inquiry-sender').textContent=guestAccount?.name||'';
+ if(focus&&inquiry)document.getElementById('guest-inquiry-title').focus();
+}
+function openGuestInquiry() {
+ closeGuestCart();closeGuestDetail();closeGuestRequestHistory();
+ location.hash='inquiry';applyGuestPageRoute(true);window.scrollTo(0,0);
+}
+function showGuestCatalog() {
+ location.hash='catalog';applyGuestPageRoute();window.scrollTo(0,0);
+}
+window.addEventListener('hashchange',()=>applyGuestPageRoute());
+let guestInquirySending=false,guestInquiryAttempt=null;
+async function submitGuestInquiry(event) {
+ event.preventDefault();
+ const form=document.getElementById('guest-inquiry-form');
+ if(guestInquirySending||!guestAccount||!form.reportValidity())return;
+ const input={subject:document.getElementById('guest-inquiry-subject').value.trim(),productCode:document.getElementById('guest-inquiry-product').value.trim(),message:document.getElementById('guest-inquiry-message').value.trim()};
+ const error=document.getElementById('guest-inquiry-error'),success=document.getElementById('guest-inquiry-success');error.textContent='';success.classList.add('hidden');
+ if(!input.subject||!input.message){error.textContent=guestText('inquiryRequired');return;}
+ const signature=JSON.stringify(input);
+ if(!guestInquiryAttempt||guestInquiryAttempt.signature!==signature)guestInquiryAttempt={signature,id:crypto.randomUUID()};
+ const button=document.getElementById('guest-inquiry-submit');guestInquirySending=true;button.disabled=true;button.querySelector('span').textContent=guestText('inquirySending');
+ try {
+  if(!window.ZaikoAPI)throw new Error('API unavailable');
+  await window.ZaikoAPI.request('/guest/inquiries',{method:'POST',body:JSON.stringify({...input,clientRequestId:guestInquiryAttempt.id})});
+  form.reset();guestInquiryAttempt=null;success.textContent=guestText('inquirySent');success.classList.remove('hidden');success.scrollIntoView({block:'nearest'});
+ } catch {error.textContent=guestText('inquiryFailed');}
+ finally {guestInquirySending=false;button.disabled=false;button.querySelector('span').textContent=guestText('inquirySend');}
+}

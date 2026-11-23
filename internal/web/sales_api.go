@@ -81,6 +81,9 @@ func (s *Server) apiSalesAdjustmentCreate(w http.ResponseWriter, r *http.Request
 		if errors.Is(err, persistence.ErrSaleNotFound) {
 			status, code, message = http.StatusNotFound, "sale_not_found", "元の売上伝票が見つかりません。"
 		}
+		if errors.Is(err, persistence.ErrSalePaymentRequired) {
+			status, code, message = http.StatusConflict, "sale_payment_required", "売上変更は入金確認後に行えます。"
+		}
 		if errors.Is(err, persistence.ErrSalesAdjustmentInvalid) {
 			status, code, message = http.StatusBadRequest, "invalid_sales_adjustment", "対象商品・増減区分・金額・理由を確認してください。"
 		}
@@ -122,6 +125,10 @@ func (s *Server) apiSaleRevision(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, persistence.ErrSaleNotFound):
 			status, code, message = http.StatusNotFound, "sale_not_found", "売上伝票が見つかりません。"
+		case errors.Is(err, persistence.ErrSlipRevisionUnchanged):
+			status, code, message = http.StatusBadRequest, "revision_unchanged", "伝票の内容に変更がありません。保存理由だけでは修正できません。"
+		case errors.Is(err, persistence.ErrSaleAlreadyPaid):
+			status, code, message = http.StatusConflict, "sale_already_paid", "入金確認済みの売上伝票は修正できません。売上変更をご利用ください。"
 		case errors.Is(err, persistence.ErrSaleRevisionInvalid):
 			status, code, message = http.StatusBadRequest, "invalid_sale_revision", "保存理由・明細金額・取引通貨を確認してください。"
 		case errors.Is(err, persistence.ErrBuyerNotFound):
@@ -244,6 +251,11 @@ func (s *Server) apiSalePaid(w http.ResponseWriter, r *http.Request) {
 func writeSaleError(w http.ResponseWriter, err error) {
 	status, code, message := http.StatusConflict, "sale_failed", "売上伝票を処理できませんでした。"
 	switch {
+
+	case errors.Is(err, persistence.ErrAuctionFeeChanged):
+		status, code, message = http.StatusConflict, "auction_fee_changed", "手数料マスタが変更されています。画面を更新して設定・金額を確認してください。"
+	case errors.Is(err, persistence.ErrAuctionFee):
+		status, code, message = http.StatusBadRequest, "invalid_auction_fee", "手数料は円取引のみ対応しています。設定内容と商品金額を確認してください（売上は手数料を下回る金額では登録できません）。"
 	case errors.Is(err, persistence.ErrBuyerNotFound):
 		status, code, message = http.StatusBadRequest, "buyer_not_found", "販売先コードが見つかりません。"
 	case errors.Is(err, persistence.ErrExchangeRate):

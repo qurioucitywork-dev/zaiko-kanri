@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import vm from 'node:vm';
+const source=await readFile(new URL('../public/admin-reference/js/app.js',import.meta.url),'utf8');
+const start=source.indexOf('const _pdfEncoder =');
+const end=source.indexOf('async function _buildCustomsPDF(',start);
+assert.ok(start>0 && end>start);
+const context=vm.createContext({TextEncoder,Uint8Array,Blob});
+vm.runInContext(source.slice(start,end),context);
+assert.equal(vm.runInContext("_pdfHexText('A日本')",context),'<004165E5672C>');
+assert.match(vm.runInContext("_pdfText('CUSTOMS',24,560)",context),/\/F2 9 Tf .* <435553544f4d53> Tj/);
+assert.match(vm.runInContext("_pdfText('日本',24,560)",context),/\/F1 9 Tf .* <65E5672C> Tj/);
+const blob=vm.runInContext("_makeCustomsPDF([{content:_pdfText('CUSTOMS 日本語',24,560,16),images:[]},{content:_pdfText('Page 2',24,560),images:[]}])",context);
+const bytes=Buffer.from(await blob.arrayBuffer());const pdf=bytes.toString('utf8');
+assert.match(pdf,/\/Count 2\b/);
+const objects=new Map([...pdf.matchAll(/(\d+) 0 obj\n([\s\S]*?)\nendobj/g)].map(m=>[Number(m[1]),m[2]]));
+const cid=[...objects.values()].find(o=>o.includes('/Subtype /CIDFontType0'));
+const descriptor=objects.get(Number(cid.match(/\/FontDescriptor (\d+) 0 R/)[1]));
+assert.match(descriptor,/\/Type \/FontDescriptor/);assert.match(descriptor,/\/FontName \/HeiseiKakuGo-W5/);
+const bbox=descriptor.match(/\/FontBBox \[([^\]]+)\]/)[1].split(' ').map(Number);
+assert.ok(bbox.every(Number.isFinite)&&bbox[2]>bbox[0]&&bbox[3]>bbox[1]);
+for(const metric of ['Flags','Ascent','Descent','CapHeight','ItalicAngle','StemV'])assert.ok(descriptor.includes('/'+metric+' '));
+assert.match(cid,/\/DW 1000 \/W \[1 \[277 305/);assert.match(cid,/17 26 668/);
+const xref=Number(pdf.match(/startxref\n(\d+)/)[1]);assert.equal(bytes.subarray(xref,xref+4).toString(),'xref');
+const entries=bytes.subarray(xref).toString().split('\n');const count=Number(entries[1].split(' ')[1]);
+for(let i=1;i<count;i++){const offset=Number(entries[2+i].slice(0,10));assert.ok(bytes.subarray(offset).toString().startsWith(i+' 0 obj\n'));}
+console.log('PASS: valid referenced CID descriptor and bounding box, proportional widths, BOM-free UTF-16BE text, multipage PDF and byte-accurate xref.');

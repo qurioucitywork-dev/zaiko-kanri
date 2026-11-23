@@ -91,7 +91,7 @@ function _stkSyncStateFromSession() {
       code: line.productCode,
       lineId: line.id,
       lineType: line.lineType,
-      state: line.lineType === 'unknown_inventory' ? '不明在庫' : (line.resultStatus === 'verified' ? '棚卸済' : (line.reason ? '不一致' : '未処理')),
+      state: line.approvalStatus === 'pending' ? '承認待ち' : line.lineType === 'unknown_inventory' ? '不明在庫' : (line.resultStatus === 'verified' ? '棚卸済' : (line.reason ? '不一致' : '未処理')),
       reason: line.reason || null,
       note: line.note || null,
       checkedAt: line.checkedAt ? new Date(line.checkedAt).toLocaleString('ja-JP') : null,
@@ -540,7 +540,7 @@ function _stkRenderMismatchTable() {
   const expected = _stkSession ? _stkSnapshotItems() : (APP_DATA.inventory || []);
   const unknown = _stkSession ? _stkUnknownItems() : Object.values(_stkState).filter(s => s.lineType === 'unknown_inventory').map(s => ({ code:s.code, brand:'未登録', model:'—', ref:'—', purchasePrice:0, status:'対象外' }));
   // 管理者かどうかをここで確定する（描画中に変わらないよう1回だけ評価）
-  const admin = typeof isAdmin === 'function' && isAdmin();
+  const admin = (typeof isAdmin === 'function' && isAdmin()) || window.__adminPageAccess?.page === 'stocktake';
 
   // 棚卸済以外を表示（未処理・不一致・承認待ち）
   const unprocessed = expected.filter(i => {
@@ -665,7 +665,7 @@ function stkOpenReason(code, presetReason) {
   // ④ ロールに応じてボタンラベルを切り替え
   const confirmBtn = document.getElementById('stkReasonConfirmBtn');
   if (confirmBtn) {
-    const admin = typeof isAdmin === 'function' && isAdmin();
+    const admin = (typeof isAdmin === 'function' && isAdmin()) || window.__adminPageAccess?.page === 'stocktake';
     if (admin) {
       // 管理者：承認プロセスなしで即時確定
       confirmBtn.innerHTML = '<i class="fa-solid fa-check"></i> 確定（即時処理済み）';
@@ -714,69 +714,26 @@ async function stkConfirmReason() {
   const item = (_stkSession ? [..._stkSnapshotItems(), ..._stkUnknownItems()] : (APP_DATA.inventory || [])).find(i => i.code === code);
 
   // ④ 権限判定：isAdmin() が true なら管理者、それ以外は作業者扱い
-  const admin = typeof isAdmin === 'function' && isAdmin();
+  const admin = (typeof isAdmin === 'function' && isAdmin()) || window.__adminPageAccess?.page === 'stocktake';
 
-  if (admin) {
-    // ── 管理者：承認プロセスをスキップして即時「不一致（処理済み）」に確定 ──
-    _stkState[code] = {
-      ..._stkState[code],
-      state: '不一致',
-      reason: _stkSelectedReason,
-      note,
-    };
-    if (typeof showToast === 'function') {
-      showToast('success', '不一致を確定しました（管理者）',
-        `${_stkSelectedReason} の理由で即時確定しました。`);
-    }
-  } else {
-    // ── 作業者：承認待ちに設定し管理者へ承認申請を送信 ──
-    _stkState[code] = {
-      ..._stkState[code],
-      state: '承認待ち',
-      reason: _stkSelectedReason,
-      note,
-    };
-    if (typeof requestApproval === 'function') {
-      requestApproval(
-        'stocktake_mismatch',
-        '棚卸不一致',
-        {
-          code,
-          brand:       item?.brand  || '—',
-          model:       item?.model  || '—',
-          reason:      _stkSelectedReason,
-          note,
-          status:      item?.status || '—',
-          price:       item?.purchasePrice || 0,
-          requestedBy: typeof currentUser === 'function' ? (currentUser()?.name || '—') : '—',
-        },
-        `商品 ${code}（${item?.brand || ''} ${item?.model || ''}）の不一致理由: ${_stkSelectedReason}`,
-        null
-      );
-    }
-    if (typeof showToast === 'function') {
-      showToast('success', '承認申請を送信しました（作業者）',
-        `${_stkSelectedReason} の理由で記録し、管理者へ承認申請を送信しました。`);
-    }
+  if (!_stkSession || !window.ZaikoAPI?.request) {
+    showToast('error','保存できません','棚卸データを再読み込みしてください。');return;
   }
+  const lineId=_stkState[code]?.lineId;
+  if(!lineId){showToast('error','対象が見つかりません','棚卸を再読み込みしてください。');return;}
+  if(stkConfirmReason.saving)return;
+  stkConfirmReason.saving=true;
+  try {
+    const result=await ZaikoAPI.request('/stocktakes/'+encodeURIComponent(_stkSession.id),{
+      method:'PATCH',body:JSON.stringify({lines:[{id:lineId,reason:_stkSelectedReason,note}]})});
+    _stkSession=result.session;_stkSyncStateFromSession();
+    await ZaikoAPI.hydrateAdmin();
+    showToast('success',admin?'不一致を確定しました':'承認申請を送信しました',admin?'理由を保存しました。':'管理者の承認待ちです。');
+    stkCloseReason();
+    stkRenderTable();stkUpdateSummary();stkUpdateProgress();_stkUpdateMismatchBadge();_stkRenderMismatchTable();
+  } catch(error){showToast('error','不一致を保存できませんでした',error.message);}
+  finally{stkConfirmReason.saving=false;}
 
-  if (_stkSession && window.ZaikoAPI?.request) {
-    try {
-      const state = _stkState[code];
-      const result = await window.ZaikoAPI.request(`/stocktakes/${encodeURIComponent(_stkSession.id)}`, {
-        method:'PATCH', body:JSON.stringify({ lines:[{ id:state.lineId, reason:_stkSelectedReason, note }] })
-      });
-      _stkSession = result.session; _stkSyncStateFromSession();
-    } catch (error) { if (typeof showToast === 'function') showToast('error', '不一致を保存できませんでした', error.message); return; }
-  }
-
-  stkCloseReason();
-  stkRenderTable();
-  stkUpdateSummary();
-  stkUpdateProgress();
-  _stkUpdateMismatchBadge();
-  // 不一致リストを再描画
-  _stkRenderMismatchTable();
 }
 
 /* ============================================================

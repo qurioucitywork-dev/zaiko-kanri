@@ -13,6 +13,7 @@ import (
 )
 
 var ErrSalesAdjustmentInvalid = errors.New("invalid sales adjustment")
+var ErrSalePaymentRequired = errors.New("sale payment confirmation required")
 
 type SalesAdjustmentLineInput struct {
 	Direction             string `json:"direction"`
@@ -164,15 +165,19 @@ func (r *Repository) CreateSalesAdjustment(ctx context.Context, sourceSaleID str
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var sale struct {
 			ID, DisplayCurrency, Status string
+			PaidAt                      *time.Time
 			SaleDate                    time.Time
 		}
 		result := tx.Table("sales_slips").Clauses(clause.Locking{Strength: "UPDATE"}).
-			Select("id,display_currency,status,sale_date").Where("organization_id=? AND id=?", input.OrganizationID, sourceSaleID).Take(&sale)
+			Select("paid_at,id,display_currency,status,sale_date").Where("organization_id=? AND id=?", input.OrganizationID, sourceSaleID).Take(&sale)
 		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
 			return ErrSaleNotFound
 		}
 		if result.Error != nil || sale.Status != "confirmed" {
 			return ErrSalesAdjustmentInvalid
+		}
+		if sale.PaidAt == nil {
+			return ErrSalePaymentRequired
 		}
 		var sourceLines []struct {
 			ID, ProductID, ProductCode, SaleCurrency string
@@ -203,7 +208,7 @@ func (r *Repository) CreateSalesAdjustment(ctx context.Context, sourceSaleID str
 		}
 		reason := salesAdjustmentNotes(input, reasons, productCodes)
 		now := time.Now().UTC()
-		sequence, err := nextDocumentSequence(tx, input.OrganizationID, "sales_adjustment", now.Year(), now)
+		slipNumber, err := nextDailyDocumentNumber(tx, input.OrganizationID, "SS", adjustmentDate, now)
 		if err != nil {
 			return err
 		}
@@ -211,7 +216,6 @@ func (r *Repository) CreateSalesAdjustment(ctx context.Context, sourceSaleID str
 		if err != nil {
 			return err
 		}
-		slipNumber := fmt.Sprintf("SRV-%04d-%04d", now.Year(), sequence)
 		if err := tx.Exec(`INSERT INTO sales_adjustment_slips(id,organization_id,slip_number,source_sales_slip_id,adjustment_date,direction,display_currency,reason,status,created_by,created_at,updated_at)
 			VALUES(?,?,?,?,?,?,?,?,'confirmed',?,?,?)`, adjustmentID, input.OrganizationID, slipNumber, sourceSaleID, adjustmentDate, input.Direction, sale.DisplayCurrency, reason, input.ActorUserID, now, now).Error; err != nil {
 			return err

@@ -3,7 +3,6 @@ package persistence
 import (
 	"context"
 	"errors"
-	"fmt"
 	"math/big"
 	"strings"
 	"time"
@@ -26,6 +25,8 @@ type SaleLineInput struct {
 }
 
 type SaleCreateInput struct {
+	AuctionFeeRule     *AuctionFeeRule        `json:"auctionFeeRule,omitempty"`
+	rebuild            *returnedDraftIdentity // Set only inside the owner-checked resubmission transaction.
 	OrganizationID     string
 	ActorUserID        string
 	BuyerCode          string          `json:"buyerCode"`
@@ -38,24 +39,25 @@ type SaleCreateInput struct {
 }
 
 type SaleLineRecord struct {
-	ID                string `json:"id"`
-	LineNumber        int    `json:"lineNumber"`
-	ProductID         string `json:"productId"`
-	ProductCode       string `json:"productCode"`
-	Brand             string `json:"brand"`
-	ModelNumber       string `json:"modelNumber"`
-	UnitPriceMinor    int64  `json:"unitPriceMinor"`
-	SaleCurrency      string `json:"saleCurrency"`
-	SubtotalMinor     int64  `json:"subtotalMinor"`
-	TaxAmountMinor    int64  `json:"taxAmountMinor"`
-	TotalMinor        int64  `json:"totalMinor"`
-	ConvertedTotalJPY int64  `json:"convertedTotalJpy"`
-	FXRateSnapshotID  string `json:"fxRateSnapshotId"`
-	FXRateScaled      int64  `json:"fxRateScaled"`
-	FXScale           int64  `json:"fxScale"`
-	ReferenceNumber   string `json:"referenceNumber"`
-	SerialNumber      string `json:"serialNumber"`
-	Accessories       string `json:"accessories"`
+	AuctionFee        AuctionFeeSnapshot `gorm:"type:jsonb" json:"auctionFee"`
+	ID                string             `json:"id"`
+	LineNumber        int                `json:"lineNumber"`
+	ProductID         string             `json:"productId"`
+	ProductCode       string             `json:"productCode"`
+	Brand             string             `json:"brand"`
+	ModelNumber       string             `json:"modelNumber"`
+	UnitPriceMinor    int64              `json:"unitPriceMinor"`
+	SaleCurrency      string             `json:"saleCurrency"`
+	SubtotalMinor     int64              `json:"subtotalMinor"`
+	TaxAmountMinor    int64              `json:"taxAmountMinor"`
+	TotalMinor        int64              `json:"totalMinor"`
+	ConvertedTotalJPY int64              `json:"convertedTotalJpy"`
+	FXRateSnapshotID  string             `json:"fxRateSnapshotId"`
+	FXRateScaled      int64              `json:"fxRateScaled"`
+	FXScale           int64              `json:"fxScale"`
+	ReferenceNumber   string             `json:"referenceNumber"`
+	SerialNumber      string             `json:"serialNumber"`
+	Accessories       string             `json:"accessories"`
 }
 
 type SaleSlipRecord struct {
@@ -160,6 +162,14 @@ func lookupBuyerRole(tx *gorm.DB, organizationID, buyerCode string) (string, err
 }
 
 func productBelongsToBuyer(tx *gorm.DB, organizationID, productID, buyerRoleID string) (bool, error) {
+	// Unreviewed guest requests cannot be shipped or sold through another workflow.
+	var pending int64
+	if err := tx.Table("purchase_requests").Where("organization_id=? AND product_id=? AND status='pending'", organizationID, productID).Count(&pending).Error; err != nil {
+		return false, err
+	}
+	if pending > 0 {
+		return false, nil
+	}
 	var count int64
 	err := tx.Raw(`SELECT COUNT(*) FROM (
 		SELECT 1 FROM purchase_requests WHERE organization_id=? AND product_id=? AND buyer_role_id=? AND status='approved'
@@ -191,11 +201,15 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 		if err != nil {
 			return err
 		}
+		feeRule, err := resolveAuctionFee(tx, input.OrganizationID, buyerRoleID, "sales", input.AuctionFeeRule)
+		if err != nil {
+			return err
+		}
 		rateBase := input.DisplayCurrency
 		if rateBase == "JPY" {
 			rateBase = "USD"
 		}
-		rate, err := latestFX(tx, input.OrganizationID, rateBase)
+		rate, err := returnedDraftFX(tx, input.OrganizationID, rateBase, input.rebuild)
 		if err != nil {
 			return err
 		}
@@ -208,19 +222,15 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 			taxMode = "out_of_scope"
 			taxRateBasisPoints = 0
 		}
-		sequence, err := nextDocumentSequence(tx, input.OrganizationID, "sale", date.Year(), now)
+		var slipNumber string
+		saleID, slipNumber, err = returnedDraftNumber(tx, input.OrganizationID, "sales_slips", "UD", "sal", date, now, input.rebuild)
 		if err != nil {
 			return err
 		}
-		saleID, err = database.NewID("sal")
-		if err != nil {
-			return err
-		}
-		slipNumber := fmt.Sprintf("SI-%04d-%04d", date.Year(), sequence)
 		if err := tx.Exec(`INSERT INTO sales_slips(
 			id,organization_id,slip_number,buyer_role_id,sale_date,display_currency,tax_mode,
 			tax_rate_basis_points,status,notes,created_by,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?,?,'draft',?,?,?,?)`, saleID, input.OrganizationID, slipNumber, buyerRoleID,
+		) VALUES(?,?,?,?,?,?,?,?,'draft',?,?,?,?) ON CONFLICT (id) DO UPDATE SET buyer_role_id=EXCLUDED.buyer_role_id,sale_date=EXCLUDED.sale_date,display_currency=EXCLUDED.display_currency,tax_mode=EXCLUDED.tax_mode,tax_rate_basis_points=EXCLUDED.tax_rate_basis_points,notes=EXCLUDED.notes,status=EXCLUDED.status,updated_at=EXCLUDED.updated_at`, saleID, input.OrganizationID, slipNumber, buyerRoleID,
 			date, input.DisplayCurrency, taxMode, taxRateBasisPoints, strings.TrimSpace(input.Notes),
 			input.ActorUserID, now, now).Error; err != nil {
 			return err
@@ -255,7 +265,7 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 				}
 			}
 			price := line.UnitPriceMinor
-			if price == 0 {
+			if price == 0 && !(input.rebuild != nil && index < len(input.rebuild.lineIDs) && input.rebuild.auctionFees[input.rebuild.lineIDs[index]].Rule != nil) {
 				if product.BaseSaleCurrency == input.DisplayCurrency {
 					price = product.BaseSalePriceMinor
 				} else if product.BaseSaleCurrency == "JPY" || input.DisplayCurrency == "JPY" {
@@ -278,6 +288,10 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 			if price < 0 {
 				return ErrSaleState
 			}
+			price, feeSnapshot, err := calculateAuctionFee(price, input.DisplayCurrency, "sales", feeRule)
+			if err != nil {
+				return err
+			}
 			tax := int64(0)
 			if taxMode == "taxable" {
 				tax = mulDivRound(price, int64(taxRateBasisPoints), 10000)
@@ -287,12 +301,15 @@ func (r *Repository) CreateSale(ctx context.Context, input SaleCreateInput) (Sal
 			if err != nil {
 				return err
 			}
-			lineID, _ := database.NewID("sln")
+			lineID, _ := returnedDraftLineID(input.rebuild, index, "sln")
 			if err := tx.Exec(`INSERT INTO sales_lines(
 				id,sales_slip_id,line_number,product_id,quantity,unit_price_minor,sale_currency,subtotal_minor,
 				tax_amount_minor,total_minor,converted_total_jpy,fx_rate_snapshot_id,fx_rate_scaled,fx_scale,created_at
 			) VALUES(?,?,?,?,1,?,?,?,?,?,?,?,?,?,?)`, lineID, saleID, index+1, product.ID, price,
 				input.DisplayCurrency, price, tax, total, convertedJPY, rate.ID, rate.RateScaled, rate.Scale, now).Error; err != nil {
+				return err
+			}
+			if err := saveAuctionFeeSnapshot(tx, "sales_lines", lineID, returnedAuctionFee(input.rebuild, index, feeSnapshot)); err != nil {
 				return err
 			}
 			if product.InventoryStatus == "in_stock" {
@@ -355,7 +372,7 @@ func (r *Repository) SaleSlip(ctx context.Context, organizationID, saleID string
 		return SaleSlipRecord{}, result.Error
 	}
 	if err := r.db.WithContext(ctx).Table("sales_lines AS l").
-		Select(`l.id,l.line_number,l.product_id,p.product_code,p.brand,p.model_number,p.reference_number,
+		Select(`l.auction_fee,l.id,l.line_number,l.product_id,p.product_code,p.brand,p.model_number,p.reference_number,
 			p.serial_number,p.accessories,l.unit_price_minor,l.sale_currency,l.subtotal_minor,l.tax_amount_minor,
 			l.total_minor,l.converted_total_jpy,l.fx_rate_snapshot_id,l.fx_rate_scaled,l.fx_scale`).
 		Joins("JOIN products p ON p.id=l.product_id").Where("l.sales_slip_id=?", saleID).

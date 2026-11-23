@@ -50,8 +50,8 @@ func (s *Server) apiReturnCreate(w http.ResponseWriter, r *http.Request) {
 	input.SupplierCode = strings.ToUpper(strings.TrimSpace(input.SupplierCode))
 	input.PurchaseSlipNo = strings.TrimSpace(input.PurchaseSlipNo)
 	if (input.OperationType != "return" && input.OperationType != "takeout" && input.OperationType != "purchase_return") ||
-		len(input.ProductCodes) == 0 || len(input.ProductCodes) > 100 {
-		writeAPIError(w, http.StatusBadRequest, "invalid_return", "処理区分と1～100件の商品を指定してください。")
+		len(input.ProductCodes)+len(input.AdjustmentLines) == 0 || len(input.ProductCodes)+len(input.AdjustmentLines) > 100 {
+		writeAPIError(w, http.StatusBadRequest, "invalid_return", "処理区分と1～100件の商品・金額調整明細を指定してください。")
 		return
 	}
 	if input.OperationType == "purchase_return" && (input.SupplierCode == "" || input.PurchaseSlipNo == "") {

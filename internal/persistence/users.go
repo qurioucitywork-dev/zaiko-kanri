@@ -19,10 +19,11 @@ var (
 )
 
 var accountCodePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@+-]{2,319}$`)
-var staffCodePattern = regexp.MustCompile(`^BUY-[0-9]{3,}$`)
+var staffCodePattern = regexp.MustCompile(`^(?:[0-9]{4}|BUY-[0-9]{3,})$`)
 var guestCodePattern = regexp.MustCompile(`^G[0-9]{3,}$`)
 
 type UserRecord struct {
+	StaffProfileID  string     `json:"staffProfileId,omitempty"`
 	ID              string     `json:"id"`
 	Username        string     `json:"username"`
 	DisplayName     string     `json:"displayName"`
@@ -53,6 +54,8 @@ type UserCreateInput struct {
 }
 
 type UserUpdateInput struct {
+	Password        *string `json:"password"`
+	Username        *string `json:"username"`
 	DisplayName     *string `json:"displayName"`
 	Email           *string `json:"email"`
 	IsActive        *bool   `json:"isActive"`
@@ -63,11 +66,10 @@ func (r *Repository) Users(ctx context.Context, organizationID string, includeIn
 	var records []UserRecord
 	query := r.db.WithContext(ctx).Table("users AS u").
 		Select(`u.id,u.username,u.display_name,u.email,u.role_key AS role,u.is_active,
-			COALESCE(sp.staff_code,'') AS staff_code,COALESCE(sp.is_purchase_staff,FALSE) AS is_purchase_staff,
+			'' AS staff_profile_id,'' AS staff_code,FALSE AS is_purchase_staff,
 			COALESCE(ga.guest_code,'') AS guest_code,COALESCE(br.role_code,'') AS buyer_code,
 			COALESCE(bp.partner_code,'') AS partner_code,COALESCE(bp.legal_name,'') AS company_name,
 			u.last_login_at,u.created_at,u.updated_at`).
-		Joins("LEFT JOIN staff_profiles sp ON sp.user_id=u.id AND sp.organization_id=u.organization_id").
 		Joins("LEFT JOIN guest_accounts ga ON ga.user_id=u.id AND ga.organization_id=u.organization_id").
 		Joins("LEFT JOIN partner_roles br ON br.id=ga.buyer_role_id AND br.organization_id=u.organization_id").
 		Joins("LEFT JOIN business_partners bp ON bp.id=br.partner_id AND bp.organization_id=u.organization_id").
@@ -111,6 +113,14 @@ func validateUserCreate(input UserCreateInput) error {
 	return nil
 }
 
+func normalizeStaffCode(code string) string {
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if regexp.MustCompile("^[0-9]{1,4}$").MatchString(code) {
+		return strings.Repeat("0", 4-len(code)) + code
+	}
+	return code
+}
+
 func nextAccountCode(tx *gorm.DB, organizationID, kind string) (string, error) {
 	var next int
 	switch kind {
@@ -122,7 +132,10 @@ func nextAccountCode(tx *gorm.DB, organizationID, kind string) (string, error) {
 			FROM staff_profiles WHERE organization_id=?`, organizationID).Scan(&next).Error; err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("BUY-%03d", next), nil
+		if next > 9999 {
+			return "", ErrUserInvalid
+		}
+		return fmt.Sprintf("%04d", next), nil
 	case "guest":
 		if err := tx.Exec(`SELECT pg_advisory_xact_lock(hashtext(?))`, organizationID+":guest_code").Error; err != nil {
 			return "", err
@@ -142,13 +155,17 @@ func (r *Repository) CreateUser(ctx context.Context, organizationID, actorUserID
 	input.DisplayName = strings.TrimSpace(input.DisplayName)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.Role = strings.ToLower(strings.TrimSpace(input.Role))
-	input.StaffCode = strings.ToUpper(strings.TrimSpace(input.StaffCode))
+	input.StaffCode = normalizeStaffCode(input.StaffCode)
 	input.GuestCode = strings.ToUpper(strings.TrimSpace(input.GuestCode))
 	input.BuyerCode = strings.ToUpper(strings.TrimSpace(input.BuyerCode))
 	if err := validateUserCreate(input); err != nil {
 		return UserRecord{}, err
 	}
-	hash, err := database.HashPassword(input.Password)
+	hashPassword := database.HashPassword
+	if input.Role == database.RoleGuest {
+		hashPassword = database.HashGuestPassword
+	}
+	hash, err := hashPassword(input.Password)
 	if err != nil {
 		return UserRecord{}, err
 	}
@@ -197,32 +214,13 @@ func (r *Repository) CreateUser(ctx context.Context, organizationID, actorUserID
 			) VALUES(?,?,?,?,?,'active',?,?)`, guestID, organizationID, input.GuestCode, userID, buyer.RoleID, now, now).Error
 		}
 
-		if input.StaffCode == "" {
-			input.StaffCode, err = nextAccountCode(tx, organizationID, "staff")
-			if err != nil {
-				return err
-			}
-		}
-		if !staffCodePattern.MatchString(input.StaffCode) {
-			return ErrUserInvalid
-		}
 		if err := tx.Exec(`INSERT INTO users(
 			id,organization_id,username,password_hash,display_name,email,role_key,is_active,created_at,updated_at
 		) VALUES(?,?,?,?,?,?,?,TRUE,?,?)`, userID, organizationID, input.Username, hash, input.DisplayName,
 			input.Email, input.Role, now, now).Error; err != nil {
 			return err
 		}
-		staffID, idErr := database.NewID("stf")
-		if idErr != nil {
-			return idErr
-		}
-		purchaseStaff := true
-		if input.IsPurchaseStaff != nil {
-			purchaseStaff = *input.IsPurchaseStaff
-		}
-		return tx.Exec(`INSERT INTO staff_profiles(
-			id,organization_id,user_id,staff_code,is_purchase_staff,created_at,updated_at
-		) VALUES(?,?,?,?,?,?,?)`, staffID, organizationID, userID, input.StaffCode, purchaseStaff, now, now).Error
+		return nil
 	})
 	if err != nil {
 		return UserRecord{}, err
@@ -235,12 +233,35 @@ func (r *Repository) UpdateUser(ctx context.Context, organizationID, userID, act
 	if err != nil {
 		return UserRecord{}, err
 	}
-	if input.DisplayName == nil && input.Email == nil && input.IsActive == nil && input.IsPurchaseStaff == nil {
+	if input.Username == nil && input.DisplayName == nil && input.Email == nil && input.IsActive == nil && input.IsPurchaseStaff == nil && input.Password == nil {
 		return UserRecord{}, ErrUserInvalid
+	}
+
+	var passwordHash string
+	if input.Password != nil {
+		hashPassword := database.HashPassword
+		if before.Role == database.RoleGuest {
+			hashPassword = database.HashGuestPassword
+		}
+		passwordHash, err = hashPassword(*input.Password)
+		if err != nil {
+			return UserRecord{}, err
+		}
 	}
 	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now().UTC()
 		updates := map[string]any{"updated_at": now}
+		if input.Password != nil {
+			updates["password_hash"] = passwordHash
+		}
+
+		if input.Username != nil {
+			value := strings.TrimSpace(*input.Username)
+			if !accountCodePattern.MatchString(value) || before.Role == database.RoleGuest {
+				return ErrUserInvalid
+			}
+			updates["username"] = value
+		}
 		if input.DisplayName != nil {
 			value := strings.TrimSpace(*input.DisplayName)
 			if value == "" || len([]rune(value)) > 200 {
@@ -280,12 +301,8 @@ func (r *Repository) UpdateUser(ctx context.Context, organizationID, userID, act
 		if err := tx.Table("users").Where("organization_id=? AND id=? AND deleted_at IS NULL", organizationID, userID).Updates(updates).Error; err != nil {
 			return err
 		}
-		if input.IsPurchaseStaff != nil {
-			if before.Role == database.RoleGuest {
-				return ErrUserInvalid
-			}
-			if err := tx.Table("staff_profiles").Where("organization_id=? AND user_id=?", organizationID, userID).
-				Updates(map[string]any{"is_purchase_staff": *input.IsPurchaseStaff, "updated_at": now}).Error; err != nil {
+		if input.Password != nil {
+			if err := tx.Exec("DELETE FROM sessions WHERE user_id=?", userID).Error; err != nil {
 				return err
 			}
 		}
@@ -307,7 +324,15 @@ func (r *Repository) ChangeUserPassword(ctx context.Context, organizationID, use
 	if len(password) < 8 || len(password) > 256 {
 		return ErrUserInvalid
 	}
-	hash, err := database.HashPassword(password)
+	user, err := r.User(ctx, organizationID, userID)
+	if err != nil {
+		return err
+	}
+	hashPassword := database.HashPassword
+	if user.Role == database.RoleGuest {
+		hashPassword = database.HashGuestPassword
+	}
+	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}

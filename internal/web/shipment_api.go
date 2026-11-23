@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/qurioucitywork-dev/zaiko-kanri/internal/database"
 	"github.com/qurioucitywork-dev/zaiko-kanri/internal/persistence"
 )
 
@@ -77,9 +78,12 @@ func (s *Server) apiShipmentConfirm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiShipmentReturnScan(w http.ResponseWriter, r *http.Request) {
-	user, ok := requireAPIAdmin(w, r, "出荷伝票の商品返却")
-	if !ok {
-		return
+	user, _ := currentUser(r.Context())
+	// Taking unsold goods back to stock does not require worker approval.
+	if user.Role != database.RoleWorker {
+		if _, ok := requireAPIAdmin(w, r, "出荷伝票の商品返却"); !ok {
+			return
+		}
 	}
 	var input struct {
 		Code string `json:"code"`
@@ -99,6 +103,8 @@ func (s *Server) apiShipmentReturnScan(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusNotFound, "shipment_product_not_found", "この出荷伝票に含まれない商品です。")
 		case errors.Is(err, persistence.ErrShipmentState):
 			writeAPIError(w, http.StatusConflict, "shipment_not_confirmed", "確定済みの出荷伝票だけ返却処理できます。")
+		case errors.Is(err, persistence.ErrShipmentLineCompleted):
+			writeAPIError(w, http.StatusConflict, "shipment_line_completed", "この商品の処理は対象の出荷伝票では完了しています。現在の出荷伝票を確認してください。")
 		case errors.Is(err, persistence.ErrShipmentReturnState):
 			writeAPIError(w, http.StatusConflict, "shipment_return_state", "この商品は出荷済ではないため在庫中へ変更できません。")
 		default:
@@ -112,6 +118,8 @@ func (s *Server) apiShipmentReturnScan(w http.ResponseWriter, r *http.Request) {
 func writeShipmentError(w http.ResponseWriter, err error) {
 	status, code, message := http.StatusConflict, "shipment_failed", "出荷伝票を処理できませんでした。"
 	switch {
+	case errors.Is(err, persistence.ErrShipmentPrice):
+		status, code, message = http.StatusBadRequest, "invalid_shipment_price", "各商品の売価を正しく指定してください。"
 	case errors.Is(err, persistence.ErrBuyerNotFound):
 		status, code, message = http.StatusBadRequest, "buyer_not_found", "販売先コードが見つかりません。"
 	case errors.Is(err, persistence.ErrShipmentNotFound):
@@ -120,4 +128,42 @@ func writeShipmentError(w http.ResponseWriter, err error) {
 		status, code, message = http.StatusConflict, "product_unavailable", "明細の商品は出荷できない状態か、別取引で使用中です。"
 	}
 	writeAPIError(w, status, code, message)
+}
+
+func (s *Server) apiShipmentRevision(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireAPIAdmin(w, r, "出荷伝票の修正")
+	if !ok {
+		return
+	}
+	var input persistence.ShipmentRevisionInput
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&input); err != nil {
+		writeAPIError(w, 400, "invalid_json", "修正内容を確認してください。")
+		return
+	}
+	input.OrganizationID, input.ActorUserID = user.OrganizationID, user.ID
+	before, err := s.repository.ShipmentSlip(r.Context(), user.OrganizationID, r.PathValue("id"))
+	if err != nil {
+		writeShipmentError(w, err)
+		return
+	}
+	record, err := s.repository.ReviseShipment(r.Context(), r.PathValue("id"), input)
+	if err != nil {
+		switch {
+		case errors.Is(err, persistence.ErrSlipRevisionUnchanged):
+			writeAPIError(w, 409, "unchanged", "伝票内容に変更がありません。")
+		case errors.Is(err, persistence.ErrShipmentRevisionInvalid):
+			writeAPIError(w, 400, "invalid_revision", "日付・金額・保存理由を確認してください。")
+		case errors.Is(err, persistence.ErrShipmentState):
+			writeAPIError(w, 409, "shipment_changed", "伝票が更新されたか、変更できない状態です。再読み込みしてください。")
+		default:
+			writeShipmentError(w, err)
+		}
+		return
+	}
+	beforeJSON, _ := json.Marshal(before)
+	afterJSON, _ := json.Marshal(record)
+	_ = s.apiWriteAudit(r.Context(), database.AuditEntry{OrganizationID: user.OrganizationID, ActorUserID: user.ID, TargetType: "shipment_slip", TargetID: record.ID, Action: "shipment.revised", BeforeJSON: string(beforeJSON), AfterJSON: string(afterJSON), Reason: strings.TrimSpace(input.Reason), Result: "success", RequestID: requestID(r.Context()), IPAddress: clientIP(r), UserAgent: r.UserAgent()})
+	writeJSON(w, http.StatusOK, record)
 }

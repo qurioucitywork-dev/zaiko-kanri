@@ -41,12 +41,12 @@ func (r *Repository) SeedPreviewInventory(ctx context.Context) error {
 				id,organization_id,slip_number,supplier_role_id,purchase_staff_profile_id,purchase_date,status,
 				is_simple,notes,confirmed_at,confirmed_by,created_by,created_at,updated_at
 			) VALUES('purchase_preview_001',?,?,?,?,?,'confirmed',TRUE,'',?,?,?, ?,?)
-			ON CONFLICT (organization_id,slip_number) DO NOTHING`,
-			organizationID, "PI-2026-0001", supplierRoleID, staffID, "2026-07-26", now, adminID, adminID, now, now).Error; err != nil {
+			ON CONFLICT DO NOTHING`,
+			organizationID, "PI-260726001", supplierRoleID, staffID, "2026-07-26", now, adminID, adminID, now, now).Error; err != nil {
 			return err
 		}
 		var purchaseID string
-		if err := tx.Raw(`SELECT id FROM purchase_slips WHERE organization_id=? AND slip_number='PI-2026-0001'`, organizationID).
+		if err := tx.Raw(`SELECT id FROM purchase_slips WHERE organization_id=? AND id='purchase_preview_001'`, organizationID).
 			Scan(&purchaseID).Error; err != nil {
 			return err
 		}
